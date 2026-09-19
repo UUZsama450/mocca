@@ -1,0 +1,34 @@
+.DS_Store
+.idea/
+.vscode/
+build/
+DerivedData/
+work/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# Local archives and generated diagnostics
+*.zip
+*.xcresult
+*.trace
+*.ips
+
+# Signing material and machine-local configuration
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.csr
+.env
+.env.*
+!.env.example
+Secrets.xcconfig
+Local.xcconfig
+
+# Machine-specific deployment receipts (retained in local development history)
+CandidateTests/device-4982-results/

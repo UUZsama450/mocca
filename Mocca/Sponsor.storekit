@@ -1,0 +1,87 @@
+{
+  "identifier" : "C4811000-0000-4000-8000-000000000001",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "6",
+      "familyShareable" : false,
+      "internalID" : "C4811000-0000-4000-8000-000000000011",
+      "localizations" : [
+        {
+          "description" : "自愿赞助，可重复购买；首次解锁 💧 小水滴与 🍬 糖果永久装饰，无功能加成。",
+          "displayName" : "小小投喂",
+          "locale" : "zh_CN"
+        },
+        {
+          "description" : "Repeatable; first unlocks lasting 💧+🍬 decor.",
+          "displayName" : "Small Tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.uuzsama450.mocca.support.small",
+      "referenceName" : "Mocca Small Support",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "18",
+      "familyShareable" : false,
+      "internalID" : "C4811000-0000-4000-8000-000000000012",
+      "localizations" : [
+        {
+          "description" : "自愿赞助，可重复购买；首次解锁 💧 小水滴与 🧋 奶茶永久装饰，无功能加成。",
+          "displayName" : "暖心投喂",
+          "locale" : "zh_CN"
+        },
+        {
+          "description" : "Repeatable; first unlocks lasting 💧+🧋 decor.",
+          "displayName" : "Warm Tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.uuzsama450.mocca.support.medium",
+      "referenceName" : "Mocca Medium Support",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "50",
+      "familyShareable" : false,
+      "internalID" : "C4811000-0000-4000-8000-000000000013",
+      "localizations" : [
+        {
+          "description" : "自愿赞助，可重复购买；首次解锁 💧 小水滴与 🍱 大餐永久装饰，无功能加成。",
+          "displayName" : "超级投喂",
+          "locale" : "zh_CN"
+        },
+        {
+          "description" : "Repeatable; first unlocks lasting 💧+🍱 decor.",
+          "displayName" : "Special Tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.uuzsama450.mocca.support.large",
+      "referenceName" : "Mocca Large Support",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "4811",
+    "_developerTeamID" : "Z44VFV3SBB",
+    "_failTransactionsEnabled" : false,
+    "_locale" : "zh_CN",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "CHN",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

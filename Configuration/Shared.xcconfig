@@ -1,0 +1,7 @@
+// Defaults for builds from source. Both Debug and Release use this file.
+MOCCA_BUNDLE_IDENTIFIER = org.example.mocca
+MOCCA_DEVELOPMENT_TEAM =
+MOCCA_ENABLE_SPONSORSHIP = NO
+
+// Optional, machine-local overrides. This file is ignored by Git.
+#include? "Local.xcconfig"

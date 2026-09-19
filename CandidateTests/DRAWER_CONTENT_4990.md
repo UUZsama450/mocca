@@ -1,0 +1,19 @@
+# Drawer and chat content computation cleanup — 4990
+
+Source baseline: the phone's migration/test app 0.1.0 (4989), bundle `com.uuzsama450.mocca.migration`. All 41 recorded build inputs matched the retained 4989 artifact manifest before creating `codex/drawer-content-cleanup-4990` from `0425a289c37a9d4a9d3e36d75ed8e9ec04f21f03`. Formal app 4957 is a separate bundle.
+
+Changes:
+
+- Resolve the title query once per filtering pass. Each sidebar list evaluation shares one filtered array between the empty check and dated/undated rows; content search skips that filtering. Date membership, date/title ordering, row IDs, selection and unread logic stay the same.
+- Partition assistant attachments once, preserving the input order within ordinary attachments and web-search images. Both wide and bubble layouts reuse the resulting arrays. User attachments keep their existing path.
+- Collect horizontal-rule objects from the actual installed native text storage when its render signature changes. Width measurement reuses those references and still corrects their bounds before either local or shared size-cache returns. The width/scale rounding, 0.5-point tolerance and layout/display invalidations remain the same. No cross-view attributed-text cache is introduced.
+
+The two product Swift files total +41/-35 lines (net +6). This removes repeated work rather than targeting a line-count quota. Four build settings change 4989 to 4990. The RootView region before MessageRow, including drawer animation, gesture and chat viewport/replacement handling, is byte-identical to 4989. Storage/model files are unchanged.
+
+Offline validation: `CandidateTests/check_drawer_content_cleanup.py` extracts both baseline and candidate Swift functions and runs them with Foundation plus small UIKit-shaped mocks. 1524 checks passed, covering empty/title/content/group/assistant filtering, date sorting with ties, attachment partition order, actual attachment reference identity, replacement/removal, empty text, width/scale changes, and local/shared-cache A→B→A correction. Source checks verify guarded list calculation, application-time collection and correction before cache returns. These checks do not establish real TextKit heights, SwiftUI pixels or frame time.
+
+Existing shared deletion/version handoff checks: 55 passed, including 24576 selector combinations. 24 ordinary-entry lifecycle checks also passed. Signed Release verification is recorded under `work/verification`.
+
+Physical feedback (2026-09-10): the user reported “我感觉区别不大” and chose to retain 4990 for now. This supports retaining the computation cleanup, with no clear subjective smoothness improvement demonstrated. It is not an itemized pass of the full visual/interaction matrix. Remaining comparisons include the same empty chat, a short user/assistant exchange, long assistant prose, and a reply containing horizontal rules while opening, closing and reversing the sidebar; text selection, last-line visibility, attachment expansion, title/content searches and dated/undated lists also remain outside an explicit itemized acceptance.
+
+Deployment completed: generic signed Release succeeded; main app and extension both 0.1.0 (4990), arm64, strict signatures, matching dSYM UUIDs and current iPhone provisioning verified. Same-bundle overwrite succeeded. Device readback is migration 4990/formal 4957. Normal launch with no diagnostic arguments succeeded; main PID 53649 and extension PID 53650 both resolve to installed bundle BF969DF8-C859-4A66-B70E-9BC2F4DF30BA. Machine record: `work/verification/result-4990.json`. No uninstall, data clearing or new chat snapshot was performed; byte-identical chat preservation was not measured. The signed 4989 rollback artifact remains in the original candidate. No simulator or chat-store copy is part of this test.

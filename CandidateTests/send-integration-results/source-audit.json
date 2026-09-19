@@ -1,0 +1,12 @@
+{
+  "baseline": "b4a4207",
+  "verified_experiment": "7ede749",
+  "compared_product_files": 136,
+  "candidate_mismatches": [],
+  "changed_product_files": [
+    "Mocca/AppModel.swift"
+  ],
+  "appmodel_sha256": "2bf93d80b43d5de934e62d88ece8ce355f13e3d6ab4e2b65a928b1a6b82c2f02",
+  "build_number": 4981,
+  "phone_operations": false
+}

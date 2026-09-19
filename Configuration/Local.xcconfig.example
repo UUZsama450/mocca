@@ -1,0 +1,7 @@
+// Copy this file to Local.xcconfig in the same directory.
+// Choose your own unique app identifier and Apple development team.
+MOCCA_BUNDLE_IDENTIFIER = org.example.yourname.mocca
+MOCCA_DEVELOPMENT_TEAM = YOUR_TEAM_ID
+
+// Opt in only for sponsorship development or a configured store release.
+MOCCA_ENABLE_SPONSORSHIP = NO

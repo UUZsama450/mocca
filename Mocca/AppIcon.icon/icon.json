@@ -1,0 +1,195 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000",
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 1
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.3
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "display-p3:0.81435,0.68484,0.28098,1.00000"
+          },
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "dots.png",
+          "name" : "点点点",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 0.96,
+            "translation-in-points" : [
+              -69.83319335937506,
+              -15.605224609375
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "display-p3:0.08009,0.07948,0.07842,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "bubble.png",
+          "name" : "气泡",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 0.89,
+            "translation-in-points" : [
+              -57.82130859375013,
+              -28.8011474609375
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.00000,0.53333,1.00000,0.28020"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:1.00000,1.00000,1.00000,0.44282"
+              }
+            }
+          ],
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "bubble.png",
+          "name" : "气泡",
+          "opacity-specializations" : [
+            {
+              "value" : 0.35
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.92
+            }
+          ],
+          "position" : {
+            "scale" : 0.92,
+            "translation-in-points" : [
+              -87.18362304687514,
+              -4.985224609374939
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "display-p3:0.58107,0.39766,0.10264,1.00000"
+          },
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "whiskers.png",
+          "name" : "胡子",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -8.581308593750123,
+              -29.6792138671874
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "display-p3:0.96783,0.81064,0.32670,1.00000"
+          },
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "eyes.png",
+          "name" : "眼睛",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 0.97,
+            "translation-in-points" : [
+              11.336293945312377,
+              -69.12158203125
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "display-p3:0.10298,0.10227,0.10401,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "cat-face.png",
+          "name" : "猫脸",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 0.92,
+            "translation-in-points" : [
+              5.960000000000036,
+              -52.08660888671875
+            ]
+          }
+        },
+        {
+          "blend-mode" : "hard-light",
+          "fill" : {
+            "solid" : "display-p3:0.76060,0.82657,0.84929,1.00000"
+          },
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "cat-face.png",
+          "name" : "猫脸",
+          "opacity" : 0.92,
+          "position" : {
+            "scale" : 0.93,
+            "translation-in-points" : [
+              -36.36130859374998,
+              -53.08660888671875
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : "none",
+          "glass" : false,
+          "hidden" : true,
+          "image-name" : "background.png",
+          "name" : "背景",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.35
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

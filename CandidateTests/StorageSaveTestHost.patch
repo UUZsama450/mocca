@@ -1,0 +1,239 @@
+--- a/Mocca.xcodeproj/project.pbxproj
++++ b/Mocca.xcodeproj/project.pbxproj
+@@ -7,6 +7,8 @@
+ 	objects = {
+ 
+ /* Begin PBXBuildFile section */
++		D10000000000000000000001 /* Slice1UITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000003 /* Slice1UITests.swift */; };
++		D10000000000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* XCTest.framework */; };
+ 		0F470D14F2CFC89633A2875E /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 292DE7838791E7B84FB42163 /* Foundation.framework */; };
+ 		A1C0DE120000000000000002 /* AIMessageReactionCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE120000000000000001 /* AIMessageReactionCodec.swift */; };
+ 		1A57A5D201B7C0DEA1140001 /* AssistantModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A57A5D201B7C0DEA1140002 /* AssistantModels.swift */; };
+@@ -57,6 +59,13 @@
+ /* End PBXBuildFile section */
+ 
+ /* Begin PBXContainerItemProxy section */
++		D1000000000000000000000C /* PBXContainerItemProxy */ = {
++			isa = PBXContainerItemProxy;
++			containerPortal = 4559C2DD6AB52C9B2B4CB89C /* Project object */;
++			proxyType = 1;
++			remoteGlobalIDString = 1663B7E9B93BAE2DD2AEB49C;
++			remoteInfo = Mocca;
++		};
+ 		B10000000000000000000020 /* PBXContainerItemProxy */ = {
+ 			isa = PBXContainerItemProxy;
+ 			containerPortal = 4559C2DD6AB52C9B2B4CB89C /* Project object */;
+@@ -81,6 +90,9 @@
+ /* End PBXCopyFilesBuildPhase section */
+ 
+ /* Begin PBXFileReference section */
++		D10000000000000000000003 /* Slice1UITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Slice1UITests.swift; sourceTree = "<group>"; };
++		D10000000000000000000004 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
++		D10000000000000000000005 /* Slice1UITests.xctest */ = {isa = PBXFileReference; explicitFileType = "wrapper.cfbundle"; includeInIndex = 0; path = Slice1UITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+ 		174FAD6002EC9DD090C5EBEC /* ProviderModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProviderModels.swift; sourceTree = "<group>"; };
+ 		A1C0DE120000000000000001 /* AIMessageReactionCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIMessageReactionCodec.swift; sourceTree = "<group>"; };
+ 		1A57A5D201B7C0DEA1140002 /* AssistantModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AssistantModels.swift; sourceTree = "<group>"; };
+@@ -134,6 +146,14 @@
+ /* End PBXFileReference section */
+ 
+ /* Begin PBXFrameworksBuildPhase section */
++		D10000000000000000000006 /* Frameworks */ = {
++			isa = PBXFrameworksBuildPhase;
++			buildActionMask = 2147483647;
++			files = (
++				D10000000000000000000002 /* XCTest.framework in Frameworks */,
++			);
++			runOnlyForDeploymentPostprocessing = 0;
++		};
+ 		DA52DAF9F7CB3E84BDED11AB /* Frameworks */ = {
+ 			isa = PBXFrameworksBuildPhase;
+ 			buildActionMask = 2147483647;
+@@ -156,6 +176,7 @@
+ 			isa = PBXGroup;
+ 			children = (
+ 				1A88E447692AF1FC2AE14FDD /* iOS */,
++				D10000000000000000000004 /* XCTest.framework */,
+ 			);
+ 			name = Frameworks;
+ 			sourceTree = "<group>";
+@@ -173,6 +194,7 @@
+ 			children = (
+ 				D9C529652339093513C3A838 /* Mocca.app */,
+ 				B10000000000000000000004 /* GenerationActivityExtension.appex */,
++				D10000000000000000000005 /* Slice1UITests.xctest */,
+ 			);
+ 			name = Products;
+ 			sourceTree = "<group>";
+@@ -184,6 +206,7 @@
+ 				0CC2F74B9D4CEAF03116E959 /* Frameworks */,
+ 				757D0256A3C25A5676E516C9 /* Mocca */,
+ 				B10000000000000000000025 /* GenerationActivityExtension */,
++				D10000000000000000000007 /* Slice1UITests */,
+ 			);
+ 			sourceTree = "<group>";
+ 		};
+@@ -249,9 +272,35 @@
+ 			path = GenerationActivityExtension;
+ 			sourceTree = "<group>";
+ 		};
++		D10000000000000000000007 /* Slice1UITests */ = {
++			isa = PBXGroup;
++			children = (
++				D10000000000000000000003 /* Slice1UITests.swift */,
++			);
++			path = Slice1UITests;
++			sourceTree = "<group>";
++		};
+ /* End PBXGroup section */
+ 
+ /* Begin PBXNativeTarget section */
++		D10000000000000000000008 /* Slice1UITests */ = {
++			isa = PBXNativeTarget;
++			buildConfigurationList = D1000000000000000000000F /* Build configuration list for PBXNativeTarget "Slice1UITests" */;
++			buildPhases = (
++				D1000000000000000000000A /* Sources */,
++				D10000000000000000000006 /* Frameworks */,
++				D10000000000000000000009 /* Resources */,
++			);
++			buildRules = (
++			);
++			dependencies = (
++				D1000000000000000000000B /* PBXTargetDependency */,
++			);
++			name = Slice1UITests;
++			productName = Slice1UITests;
++			productReference = D10000000000000000000005 /* Slice1UITests.xctest */;
++			productType = "com.apple.product-type.bundle.unit-test";
++		};
+ 		1663B7E9B93BAE2DD2AEB49C /* Mocca */ = {
+ 			isa = PBXNativeTarget;
+ 			buildConfigurationList = C46C43E8B643642F23EE32D2 /* Build configuration list for PBXNativeTarget "Mocca" */;
+@@ -298,6 +347,10 @@
+ 				LastSwiftUpdateCheck = 2630;
+ 				LastUpgradeCheck = 2630;
+ 				TargetAttributes = {
++					D10000000000000000000008 = {
++						CreatedOnToolsVersion = 26.3;
++						TestTargetID = 1663B7E9B93BAE2DD2AEB49C;
++					};
+ 					B10000000000000000000026 = {
+ 						CreatedOnToolsVersion = 26.0;
+ 					};
+@@ -320,11 +373,19 @@
+ 			targets = (
+ 				1663B7E9B93BAE2DD2AEB49C /* Mocca */,
+ 				B10000000000000000000026 /* GenerationActivityExtension */,
++				D10000000000000000000008 /* Slice1UITests */,
+ 			);
+ 		};
+ /* End PBXProject section */
+ 
+ /* Begin PBXResourcesBuildPhase section */
++		D10000000000000000000009 /* Resources */ = {
++			isa = PBXResourcesBuildPhase;
++			buildActionMask = 2147483647;
++			files = (
++			);
++			runOnlyForDeploymentPostprocessing = 0;
++		};
+ 		E2AF96F451E7C198EEE29F97 /* Resources */ = {
+ 			isa = PBXResourcesBuildPhase;
+ 			buildActionMask = 2147483647;
+@@ -367,6 +428,14 @@
+ /* End PBXShellScriptBuildPhase section */
+ 
+ /* Begin PBXSourcesBuildPhase section */
++		D1000000000000000000000A /* Sources */ = {
++			isa = PBXSourcesBuildPhase;
++			buildActionMask = 2147483647;
++			files = (
++				D10000000000000000000001 /* Slice1UITests.swift in Sources */,
++			);
++			runOnlyForDeploymentPostprocessing = 0;
++		};
+ 		1CD75AF8DB34EDB38F12AEF1 /* Sources */ = {
+ 			isa = PBXSourcesBuildPhase;
+ 			buildActionMask = 2147483647;
+@@ -426,6 +495,11 @@
+ /* End PBXSourcesBuildPhase section */
+ 
+ /* Begin PBXTargetDependency section */
++		D1000000000000000000000B /* PBXTargetDependency */ = {
++			isa = PBXTargetDependency;
++			target = 1663B7E9B93BAE2DD2AEB49C /* Mocca */;
++			targetProxy = D1000000000000000000000C /* PBXContainerItemProxy */;
++		};
+ 		B10000000000000000000027 /* PBXTargetDependency */ = {
+ 			isa = PBXTargetDependency;
+ 			target = B10000000000000000000026 /* GenerationActivityExtension */;
+@@ -434,6 +508,54 @@
+ /* End PBXTargetDependency section */
+ 
+ /* Begin XCBuildConfiguration section */
++		D1000000000000000000000D /* Debug */ = {
++			isa = XCBuildConfiguration;
++			buildSettings = {
++				BUNDLE_LOADER = "$(TEST_HOST)";
++				CODE_SIGN_STYLE = Automatic;
++				DEVELOPMENT_TEAM = Z44VFV3SBB;
++				GENERATE_INFOPLIST_FILE = YES;
++				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
++				LD_RUNPATH_SEARCH_PATHS = (
++					"$(inherited)",
++					"@executable_path/Frameworks",
++					"@loader_path/Frameworks",
++				);
++				PRODUCT_BUNDLE_IDENTIFIER = com.uuzsama450.mocca.slice1-uitests;
++				PRODUCT_NAME = "$(TARGET_NAME)";
++				SDKROOT = iphoneos;
++				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
++				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
++				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
++				SWIFT_VERSION = 6.0;
++				TARGETED_DEVICE_FAMILY = 1;
++				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mocca.app/Mocca";
++			};
++			name = Debug;
++		};
++		D1000000000000000000000E /* Release */ = {
++			isa = XCBuildConfiguration;
++			buildSettings = {
++				BUNDLE_LOADER = "$(TEST_HOST)";
++				CODE_SIGN_STYLE = Automatic;
++				DEVELOPMENT_TEAM = Z44VFV3SBB;
++				GENERATE_INFOPLIST_FILE = YES;
++				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
++				LD_RUNPATH_SEARCH_PATHS = (
++					"$(inherited)",
++					"@executable_path/Frameworks",
++					"@loader_path/Frameworks",
++				);
++				PRODUCT_BUNDLE_IDENTIFIER = com.uuzsama450.mocca.slice1-uitests;
++				PRODUCT_NAME = "$(TARGET_NAME)";
++				SDKROOT = iphoneos;
++				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
++				SWIFT_VERSION = 6.0;
++				TARGETED_DEVICE_FAMILY = 1;
++				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mocca.app/Mocca";
++			};
++			name = Release;
++		};
+ 		B10000000000000000000030 /* Debug */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+@@ -663,6 +785,15 @@
+ /* End XCBuildConfiguration section */
+ 
+ /* Begin XCConfigurationList section */
++		D1000000000000000000000F /* Build configuration list for PBXNativeTarget "Slice1UITests" */ = {
++			isa = XCConfigurationList;
++			buildConfigurations = (
++				D1000000000000000000000D /* Debug */,
++				D1000000000000000000000E /* Release */,
++			);
++			defaultConfigurationIsVisible = 0;
++			defaultConfigurationName = Debug;
++		};
+ 		2DEAAE6DA895033BED4503C2 /* Build configuration list for PBXProject "Mocca" */ = {
+ 			isa = XCConfigurationList;
+ 			buildConfigurations = (

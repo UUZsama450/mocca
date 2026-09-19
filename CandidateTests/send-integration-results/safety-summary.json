@@ -1,0 +1,47 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "x86_64",
+        "deviceName": "Mocca 4981 Send Integration QA",
+        "modelName": "iPhone 17 Pro",
+        "osBuildNumber": "23C54",
+        "osVersion": "26.2",
+        "platform": "iOS Simulator"
+      },
+      "expectedFailures": 0,
+      "failedTests": 0,
+      "passedTests": 25,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "Slice1Validation · Built with macOS 26.5.2",
+  "expectedFailures": 0,
+  "failedTests": 0,
+  "finishTime": 1788875146.867,
+  "passedTests": 25,
+  "result": "Passed",
+  "skippedTests": 0,
+  "startTime": 1788874794.979,
+  "statistics": [],
+  "testFailures": [],
+  "title": "Test - Slice1Validation",
+  "topInsights": [
+    {
+      "category": "Longest Test Runs",
+      "impact": "28% of duration",
+      "text": "1 longest test run with outlier durations exceeding 1.86s (three standard deviations)"
+    }
+  ],
+  "totalTestCount": 25,
+  "publicationSanitization": {
+    "omittedFields": [
+      "devicesAndConfigurations[].device.deviceId"
+    ],
+    "testResultsChanged": false
+  }
+}

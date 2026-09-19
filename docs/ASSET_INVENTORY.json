@@ -1,0 +1,733 @@
+{
+  "audit_date": "2026-09-20",
+  "scope": "Tracked PNG/SVG in the 5058 publication-preparation tree; source evidence is not blanket brand authorization.",
+  "upstream_revisions": {
+    "kelivo": "5abbcf58fd9731691b9c3fcb15abf9e0120aac70",
+    "kelivo_historical": "04664e2d6d483c60e2f01e60e601956db81a2cd8",
+    "lobe_icons": "a94750e3f5f8fc33757b839d85030e742284e43a"
+  },
+  "assets": [
+    {
+      "path": "Mocca/AppIcon.icon/Assets/background.png",
+      "sha256": "461fa732930cb2c9eadfeff154b9c0d692fca09e5a5d5296c2b082849a8537c8",
+      "category": "project-icon",
+      "usage": "隐藏但仍被编辑文件引用的背景层",
+      "source": "项目制作并整理；维护者于 2026-09-20 确认制作来源，本地留档",
+      "rights_status": "项目品牌素材；不声明人工手绘或第三方背书"
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/bubble.png",
+      "sha256": "78c6431aec947710ee58c12de163921a95ddad7f534f6fd49e31176853e1aebe",
+      "category": "project-icon",
+      "usage": "当前猫猫 App 图标图层",
+      "source": "项目制作并整理；维护者于 2026-09-20 确认制作来源，本地留档",
+      "rights_status": "项目品牌素材；不声明人工手绘或第三方背书"
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/cat-face.png",
+      "sha256": "6011bd8b8fb4eebd2fe80b35f932f6497405b8f399ab005abd53ef21444a2f40",
+      "category": "project-icon",
+      "usage": "当前猫猫 App 图标图层",
+      "source": "项目制作并整理；维护者于 2026-09-20 确认制作来源，本地留档",
+      "rights_status": "项目品牌素材；不声明人工手绘或第三方背书"
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/dots.png",
+      "sha256": "17086632e8c78206501e5d806a929aee93c7524a2792ca32a295b9eb04a30617",
+      "category": "project-icon",
+      "usage": "当前猫猫 App 图标图层",
+      "source": "项目制作并整理；维护者于 2026-09-20 确认制作来源，本地留档",
+      "rights_status": "项目品牌素材；不声明人工手绘或第三方背书"
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/eyes.png",
+      "sha256": "63f1221583ef873f752379c1e302c0dde26d9bb7efb95be126ad64dee6b95c25",
+      "category": "project-icon",
+      "usage": "当前猫猫 App 图标图层",
+      "source": "项目制作并整理；维护者于 2026-09-20 确认制作来源，本地留档",
+      "rights_status": "项目品牌素材；不声明人工手绘或第三方背书"
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/whiskers.png",
+      "sha256": "5351ae61f395f00beabd93219f6f5e41a858beb3f25233fb90ce40fd04ad6a61",
+      "category": "project-icon",
+      "usage": "当前猫猫 App 图标图层",
+      "source": "项目制作并整理；维护者于 2026-09-20 确认制作来源，本地留档",
+      "rights_status": "项目品牌素材；不声明人工手绘或第三方背书"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar.png",
+      "sha256": "1f58adc11de14cf30f5b05b38b60f517e648804d3b334aaf5c29f39cea7e3291",
+      "category": "project-avatar-alias",
+      "usage": "保留旧 asset:AssistantAvatar 名称及 About 回退；图片内容为当前默认机器人头像",
+      "source": "经维护者确认替换；三张 PNG 与 DefaultAssistantAvatar 对应尺寸逐字节一致",
+      "rights_status": "项目制作素材；旧粉色图不再随此文件分发"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar@2x.png",
+      "sha256": "95450f85151d2b6124a1ddc9f39da93d96313a12f5f3baa33f894ea2c70263a6",
+      "category": "project-avatar-alias",
+      "usage": "保留旧 asset:AssistantAvatar 名称及 About 回退；图片内容为当前默认机器人头像",
+      "source": "经维护者确认替换；三张 PNG 与 DefaultAssistantAvatar 对应尺寸逐字节一致",
+      "rights_status": "项目制作素材；旧粉色图不再随此文件分发"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar@3x.png",
+      "sha256": "cb9096576cc1e270f2147d7a514ffb0c2122e04a9e4522255e06015c49d2def0",
+      "category": "project-avatar-alias",
+      "usage": "保留旧 asset:AssistantAvatar 名称及 About 回退；图片内容为当前默认机器人头像",
+      "source": "经维护者确认替换；三张 PNG 与 DefaultAssistantAvatar 对应尺寸逐字节一致",
+      "rights_status": "项目制作素材；旧粉色图不再随此文件分发"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/DefaultAssistantAvatar.imageset/DefaultAssistantAvatar.png",
+      "sha256": "1f58adc11de14cf30f5b05b38b60f517e648804d3b334aaf5c29f39cea7e3291",
+      "category": "project-avatar",
+      "usage": "默认助手头像",
+      "source": "项目于 2026-08-20 制作；当前六张尺寸图与 4800 候选逐字节一致，制作与导入记录本地留档",
+      "rights_status": "项目制作素材；保留自定义头像优先级"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/DefaultAssistantAvatar.imageset/DefaultAssistantAvatar@2x.png",
+      "sha256": "95450f85151d2b6124a1ddc9f39da93d96313a12f5f3baa33f894ea2c70263a6",
+      "category": "project-avatar",
+      "usage": "默认助手头像",
+      "source": "项目于 2026-08-20 制作；当前六张尺寸图与 4800 候选逐字节一致，制作与导入记录本地留档",
+      "rights_status": "项目制作素材；保留自定义头像优先级"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/DefaultAssistantAvatar.imageset/DefaultAssistantAvatar@3x.png",
+      "sha256": "cb9096576cc1e270f2147d7a514ffb0c2122e04a9e4522255e06015c49d2def0",
+      "category": "project-avatar",
+      "usage": "默认助手头像",
+      "source": "项目于 2026-08-20 制作；当前六张尺寸图与 4800 候选逐字节一致，制作与导入记录本地留档",
+      "rights_status": "项目制作素材；保留自定义头像优先级"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/DefaultUserAvatar.imageset/DefaultUserAvatar.png",
+      "sha256": "ec25e1f67b011771c4944dd3af163ecececeff47244cb0531f472eb610787410",
+      "category": "project-avatar",
+      "usage": "默认用户头像",
+      "source": "项目于 2026-08-20 制作；当前六张尺寸图与 4800 候选逐字节一致，制作与导入记录本地留档",
+      "rights_status": "项目制作素材；保留自定义头像优先级"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/DefaultUserAvatar.imageset/DefaultUserAvatar@2x.png",
+      "sha256": "a4f0b18a7f17df63fa960736e039dda6ab9769aa780e112c02fc46f6dd937d88",
+      "category": "project-avatar",
+      "usage": "默认用户头像",
+      "source": "项目于 2026-08-20 制作；当前六张尺寸图与 4800 候选逐字节一致，制作与导入记录本地留档",
+      "rights_status": "项目制作素材；保留自定义头像优先级"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/DefaultUserAvatar.imageset/DefaultUserAvatar@3x.png",
+      "sha256": "4ccbf821a9aa84fe0a9388c1668c227513296dc9f5a7abd081638cb5de0e38ef",
+      "category": "project-avatar",
+      "usage": "默认用户头像",
+      "source": "项目于 2026-08-20 制作；当前六张尺寸图与 4800 候选逐字节一致，制作与导入记录本地留档",
+      "rights_status": "项目制作素材；保留自定义头像优先级"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderAIHubMix.imageset/aihubmix-color.svg",
+      "sha256": "f0184fed247fa103db45322e04b5f31b6bab7063ae19f8ebd61bf149bb627b2f",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/aihubmix-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/aihubmix-color.svg"
+        },
+        "lobe": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/aihubmix-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/aihubmix-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderAlibabaCloud.imageset/alibabacloud-color.svg",
+      "sha256": "12dec5017d6e9de1ed7c7d872d31bf38943a095705d394cd1a8c473d952043d0",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/alibabacloud-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/alibabacloud-color.svg"
+        },
+        "lobe": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/alibabacloud-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/alibabacloud-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderByteDance.imageset/bytedance-color.svg",
+      "sha256": "98ba636bfab6fde03c75aee70cd1d7575f743bd383e0779384b3abf497679507",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/bytedance-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/bytedance-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/bytedance-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/bytedance-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderClaude.imageset/claude-color.svg",
+      "sha256": "7473b3ed6919108a75de8f71a3996ea28ff916aadd65decaf81f21e3d1e75df2",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/claude-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/claude-color.svg"
+        },
+        "lobe": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/claude-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/claude-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderDeepSeek.imageset/deepseek-color.svg",
+      "sha256": "315469d407c9a4fb13a6a7bb5fea41f4ebf51a63dd0fce8f7dcb17ea3fe4a40e",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/deepseek-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/deepseek-color.svg"
+        },
+        "lobe": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/deepseek-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/deepseek-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderGemini.imageset/gemini-color.svg",
+      "sha256": "e6679530137fd9d53c7790130c08f1ddbffbc4850513b5bf0e7bf1d0c2cbdd32",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/gemini-color.svg",
+      "source_comparison": "由旧图改编：保留星形轮廓、展开弧线参数、简化渐变；修改见本地 9ec0df2",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/gemini-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/gemini-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "different",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/gemini-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderGrok.imageset/grok.svg",
+      "sha256": "151c57145a3fdebca04d880b7eb091c32b2104f166b983f0824852decee64978",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/grok.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/grok.svg"
+        },
+        "lobe": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/grok.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/grok.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderMocca.imageset/mocca.png",
+      "sha256": "7b38a95ae79c6aabf9f1c04929401119bf8820541510321b89861ad8b73db109",
+      "category": "legacy-upstream-brand",
+      "usage": "旧备份中显式品牌配置仍可显示；不再提供新选择或自动推断",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/kelivo.png",
+      "source_comparison": "逐字节一致，文件名虽为 Mocca，实际是 Kelivo 图案",
+      "rights_status": "Kelivo 品牌素材，不列为 Mocca 自有视觉；保留兼容引用，独立的商标条件仍适用"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderOpenAI.imageset/openai.svg",
+      "sha256": "308cf6f9301da0edd8e92a9a948d80a43ca9f635dd3650857e50c749ae3a5a33",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/openai.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/openai.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/openai.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/openai.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderOpenRouter.imageset/openrouter.svg",
+      "sha256": "9397f793c513eab9fe28dec817a0cb57abc22ab858459072cc16d28c9c33a7f4",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/openrouter.svg",
+      "source_comparison": "与 2026-08-31 的固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/openrouter.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/openrouter.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/openrouter.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderSiliconFlow.imageset/siliconflow-color.svg",
+      "sha256": "a02d8d7ccb81739fbc720e2e5daaf149013dd5088605dc2dce1b71df0784d424",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/siliconflow-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/siliconflow-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/siliconflow-color.svg"
+        },
+        "lobe-exact": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/siliconcloud-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderTensdaq.imageset/tensdaq-color.svg",
+      "sha256": "8d18498c0cbeb8fcd970e0ea5e76407e82214ca34b5ee57f5ce1f056ae6e30f0",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/tensdaq-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/tensdaq-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/tensdaq-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/ProviderZhipu.imageset/zhipu-color.svg",
+      "sha256": "11458b1c8248002dea8780be1b665f1c12080cf46ebc56ca665d6dac76bbe998",
+      "category": "service-logo",
+      "usage": "服务商标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/zhipu-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/zhipu-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/zhipu-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/zhipu-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchBing.imageset/bing-color.svg",
+      "sha256": "32f40ba4a10feca6c017ad17985229577a80fe039dd51fe2e86d996d3450437f",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/bing-color.svg",
+      "source_comparison": "全部 path 命令匹配；本地已修正 XML 结构/布局，上游原件 XML 无法直接解析",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "xml-comparison-unavailable: mismatched tag: line 3, column 2711",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/bing-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/bing-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "xml-comparison-unavailable: mismatched tag: line 3, column 2711",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/bing-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchBocha.imageset/bocha-color.svg",
+      "sha256": "f021fad98e822286da6fc2602fc5eaacf2339fa817de9b91485dce4228a140be",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/bocha-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/bocha-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/bocha-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/bocha-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchBrave.imageset/brave-color.svg",
+      "sha256": "c07f520677e764764ee25dfd56d42a8ae9be267a1ecbce0826ce63325f641d64",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/brave-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/brave-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/brave-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/brave-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchDuckDuckGo.imageset/duckduckgo-color.svg",
+      "sha256": "c364a8f93619468e4c2487d717a224ed9f494ed54e336a7fdae47f5e0fa0839f",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/duckduckgo-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/duckduckgo-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/duckduckgo-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchExa.imageset/exa-color.svg",
+      "sha256": "4fbf68721dd62af721d695b1c4855e228ba6483d93f1474c178e52a74f51ffa7",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/exa-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/exa-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/exa-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/exa-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchJina.imageset/jina-color.svg",
+      "sha256": "16bd1037dbf6340ab866c56d62e5910d92d821505b9c81fc903b56e96f2f18ad",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/jina-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/jina-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/jina-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchLinkUp.imageset/linkup.svg",
+      "sha256": "ae10144200793c8aa340452fcc1a9c292e2ccaf3a2cad00121f8867d6cbc4709",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/linkup.svg",
+      "source_comparison": "全部 path 命令匹配；本地已修正 XML 结构/布局，上游原件 XML 无法直接解析",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "xml-comparison-unavailable: mismatched tag: line 8, column 2",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/linkup.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "xml-comparison-unavailable: mismatched tag: line 8, column 2",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/linkup.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchMetaso.imageset/metaso-color.svg",
+      "sha256": "efebfcf52da0c5518e1d4498f6a882cf47efb51e2412a2d2e83fb9cb66828794",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/metaso-color.svg",
+      "source_comparison": "绘图子节点匹配；根尺寸/标题等有差异",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/metaso-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "drawing-tree-match",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/metaso-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchOllama.imageset/ollama.svg",
+      "sha256": "16b636eea2547cb2af5207f1050b32fd810ff2220f055699d6534d6f1c57832e",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/ollama.svg",
+      "source_comparison": "绘图子节点匹配；根尺寸/标题等有差异",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/ollama.svg"
+        },
+        "lobe": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/ollama.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "drawing-tree-match",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/ollama.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchPerplexity.imageset/perplexity-color.svg",
+      "sha256": "0ce6199794b72a2786be7d2e794cd7b8794c3e59e0b5193fb44459f7e0293f57",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/perplexity-color.svg",
+      "source_comparison": "绘图子节点匹配；根尺寸/标题等有差异",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/perplexity-color.svg"
+        },
+        "lobe": {
+          "comparison": "drawing-tree-match",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/perplexity-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "drawing-tree-match",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/perplexity-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchQuerit.imageset/querit-color.svg",
+      "sha256": "4c5880df74be7ed2f955f3832f150fbf9186c0e9bd3cbf8e50bb74bcbc57667e",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/querit-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/querit-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/querit-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchSearXNG.imageset/searxng-color.svg",
+      "sha256": "514f0a45b14791d718025d1825d18c9b3b5765354d21c3560a54fb74f352a0eb",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/searxng-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/searxng-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/searxng-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/searxng-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchSerper.imageset/serper.svg",
+      "sha256": "afbe4581175f77a50c627a21fb7cf76d7568e603c4fa7d0299fda037e875d92f",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/serper.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/serper.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/serper.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchTavily.imageset/tavily-color.svg",
+      "sha256": "e0af07fdc28df8c9beee547e9c052a66d63d55fe1a31020908af5965076ecc03",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/tavily-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/tavily-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/tavily-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/tavily-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    },
+    {
+      "path": "Mocca/Assets.xcassets/SearchZhipu.imageset/zhipu-color.svg",
+      "sha256": "11458b1c8248002dea8780be1b665f1c12080cf46ebc56ca665d6dac76bbe998",
+      "category": "service-logo",
+      "usage": "搜索服务标识",
+      "source_url": "https://github.com/chevey339/kelivo/blob/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/zhipu-color.svg",
+      "source_comparison": "与固定 Kelivo 版本逐字节一致",
+      "upstream_checks": {
+        "kelivo": {
+          "comparison": "byte-identical",
+          "url": "https://raw.githubusercontent.com/chevey339/kelivo/5abbcf58fd9731691b9c3fcb15abf9e0120aac70/assets/icons/zhipu-color.svg"
+        },
+        "lobe": {
+          "comparison": "different",
+          "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/zhipu-color.svg"
+        },
+        "kelivo-20260831": {
+          "comparison": "byte-identical",
+          "url": "https://github.com/chevey339/kelivo/blob/04664e2d6d483c60e2f01e60e601956db81a2cd8/assets/icons/zhipu-color.svg"
+        }
+      },
+      "rights_status": "文件来源已核对；品牌名称/商标条件独立于源码许可证，未逐品牌作出授权结论"
+    }
+  ]
+}
