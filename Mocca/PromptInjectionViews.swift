@@ -38,7 +38,7 @@ struct InstructionInjectionPage: View {
                                 L10n.lookup("启用"),
                                 isOn: Binding(
                                     get: { model.isInstructionActive(injection.id) },
-                                    set: { _ in model.toggleInstructionActive(injection.id) }
+                                    set: { model.setInstructionActive(injection.id, enabled: $0) }
                                 )
                             )
                             .labelsHidden()
@@ -158,7 +158,7 @@ struct WorldBookPage: View {
                                 L10n.lookup("对当前助手启用"),
                                 isOn: Binding(
                                     get: { model.isWorldBookActive(book.id) },
-                                    set: { _ in model.toggleWorldBookActive(book.id) }
+                                    set: { model.setWorldBookActive(book.id, enabled: $0) }
                                 )
                             )
                             .labelsHidden()

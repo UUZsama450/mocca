@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import StoreKit
 
 enum SponsorTier: String, CaseIterable, Identifiable, Sendable {
@@ -442,10 +443,21 @@ enum SponsorEasterEggPersistence {
 @Observable
 final class SponsorStore {
     static let shared = SponsorStore()
+    private static let productLogger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.uuzsama450.mocca",
+        category: "SponsorProducts"
+    )
 
     private(set) var productsByID: [String: Product] = [:]
     private(set) var statistics = SponsorStatistics()
     private(set) var isLoadingProducts = false
+    private var productLoadingErrorKey: String?
+    var productLoadingMessage: String? {
+        productLoadingErrorKey.map { L10n.lookup($0) }
+    }
+    var hasMissingProducts: Bool {
+        !SponsorTier.productIDs.isSubset(of: Set(productsByID.keys))
+    }
     private(set) var purchasingTier: SponsorTier?
     private(set) var isRestoringPurchases = false
     private var statusKey: String?
@@ -457,6 +469,7 @@ final class SponsorStore {
     private(set) var celebration: SponsorCelebration?
 
     private var isPrepared = false
+    @ObservationIgnored private var productLoadingTask: Task<Void, Never>?
     private var handledTransactionIDs = Set<UInt64>()
 
     func product(for tier: SponsorTier) -> Product? {
@@ -465,9 +478,12 @@ final class SponsorStore {
 
     func prepare() async {
         guard AppBuildConfiguration.sponsorshipEnabled else { return }
-        guard !isPrepared else { return }
+        // A failed or incomplete request must not be cached for the app's lifetime.
+        if hasMissingProducts {
+            await loadProducts()
+        }
+        guard !Task.isCancelled, !isPrepared else { return }
         isPrepared = true
-        await loadProducts()
         await refreshStatistics()
     }
 
@@ -545,20 +561,46 @@ final class SponsorStore {
     }
 
     private func loadProducts() async {
+        if let productLoadingTask {
+            await productLoadingTask.value
+            return
+        }
+
         isLoadingProducts = true
-        defer { isLoadingProducts = false }
+        productLoadingErrorKey = nil
+        // The store owns the request so leaving the page cannot cancel a request
+        // that a newly opened page is still waiting for. All callers share it.
+        let task = Task { @MainActor in
+            defer {
+                self.isLoadingProducts = false
+                self.productLoadingTask = nil
+            }
+            await self.fetchProducts()
+        }
+        productLoadingTask = task
+        await task.value
+    }
+
+    private func fetchProducts() async {
+        let requestedIDs = SponsorTier.productIDs
+        Self.productLogger.notice("Requesting products: bundle=\(Bundle.main.bundleIdentifier ?? "unknown", privacy: .public) ids=\(requestedIDs.sorted().joined(separator: ","), privacy: .public)")
         do {
-            let products = try await Product.products(for: SponsorTier.productIDs)
+            let products = try await Product.products(for: requestedIDs)
             productsByID = Dictionary(uniqueKeysWithValues: products.map { ($0.id, $0) })
+            let missingIDs = requestedIDs.subtracting(productsByID.keys)
+            Self.productLogger.notice("Products received: ids=\(products.map(\.id).sorted().joined(separator: ","), privacy: .public) missing=\(missingIDs.sorted().joined(separator: ","), privacy: .public)")
             if products.isEmpty {
-                setStatus("投喂项目还没有从 App Store 载入。", isError: true)
-            } else if products.count == SponsorTier.allCases.count, statusIsError {
-                statusKey = nil
-                statusIsError = false
+                productLoadingErrorKey = "投喂项目还没有从 App Store 载入。"
+            } else if !missingIDs.isEmpty {
+                productLoadingErrorKey = "部分投喂项目暂时没有载入，请重新载入。"
             }
         } catch {
-            productsByID = [:]
-            setStatus("投喂项目暂时无法载入，请稍后重试。", isError: true)
+            // Keep any products already loaded when a retry has a transient error.
+            // Product loading must not replace purchase/restore status messages.
+            productLoadingErrorKey = "投喂项目暂时无法载入，请稍后重试。"
+            let failure = error as NSError
+            let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError
+            Self.productLogger.error("Product request failed: domain=\(failure.domain, privacy: .public) code=\(failure.code) underlyingDomain=\(underlying?.domain ?? "none", privacy: .public) underlyingCode=\(underlying?.code ?? 0)")
         }
     }
 

@@ -328,6 +328,10 @@ struct AssistantEditorView: View {
     @State private var maxTokensValue: Int
     @State private var avatarSelection: PhotosPickerItem?
     @State private var backgroundSelection: PhotosPickerItem?
+    @State private var backgroundSelectionTask: Task<Void, Never>?
+    @State private var backgroundSelectionSequence: UInt64 = 0
+    @State private var pendingBackgroundCrop: BackgroundCropRequest?
+    @State private var showBackgroundImportError = false
     @State private var didSave = false
     @State private var editorIsActive = true
     @State private var selectedTab: AssistantEditorTab = .basic
@@ -461,6 +465,16 @@ struct AssistantEditorView: View {
                     && !(modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
             }
         }
+        .sheet(item: $pendingBackgroundCrop) { request in
+            BackgroundImageCropEditor(image: request.image, destination: .assistant(profile.id)) { image in
+                await saveCroppedBackground(image, requestID: request.id)
+            }
+        }
+        .alert(L10n.lookup("无法读取图片"), isPresented: $showBackgroundImportError) {
+            Button(L10n.lookup("好"), role: .cancel) {}
+        } message: {
+            Text(L10n.lookup("请选择其他图片或重试，原背景保持不变。"))
+        }
         .onChange(of: avatarSelection) { _, item in
             guard let item else { return }
             avatarSelection = nil
@@ -480,16 +494,22 @@ struct AssistantEditorView: View {
         .onChange(of: backgroundSelection) { _, item in
             guard let item else { return }
             backgroundSelection = nil
-            Task { @MainActor in
-                guard let data = try? await item.loadTransferable(type: Data.self),
-                      editorIsActive,
-                      let image = UIImage(data: data),
-                      let reference = AssistantMediaStore.saveBackground(image, assistantID: profile.id)
-                else { return }
-                if profile.background != originalBackground {
-                    AssistantMediaStore.remove(profile.background)
+            cancelPendingBackgroundSelection()
+            let sequence = backgroundSelectionSequence
+            backgroundSelectionTask = Task { @MainActor in
+                defer {
+                    if sequence == backgroundSelectionSequence { backgroundSelectionTask = nil }
                 }
-                profile.background = reference
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let image = await BackgroundCropImageIO.prepare(data) else {
+                    if !Task.isCancelled, editorIsActive, sequence == backgroundSelectionSequence {
+                        showBackgroundImportError = true
+                    }
+                    return
+                }
+                guard !Task.isCancelled, editorIsActive,
+                      sequence == backgroundSelectionSequence else { return }
+                pendingBackgroundCrop = BackgroundCropRequest(image: image)
             }
         }
         .interactiveDismissDisabled(hasUnsavedChanges)
@@ -504,6 +524,7 @@ struct AssistantEditorView: View {
         .onAppear { editorIsActive = true }
         .onDisappear {
             editorIsActive = false
+            cancelPendingBackgroundSelection()
             if !didSave {
                 cleanupTemporaryMedia()
             }
@@ -730,8 +751,12 @@ struct AssistantEditorView: View {
                         color: actionColor
                     )
                 }
+                if backgroundSelectionTask != nil {
+                    ProgressView(L10n.lookup("正在读取图片…"))
+                }
                 if hasBackground {
                     Button(role: .destructive) {
+                        cancelPendingBackgroundSelection()
                         if profile.background != originalBackground {
                             AssistantMediaStore.remove(profile.background)
                         }
@@ -827,6 +852,26 @@ struct AssistantEditorView: View {
         persistedProfileBaseline.memories = persisted.memories
         persistedProfileBaseline.recentContextSummaryInstruction =
             persisted.recentContextSummaryInstruction
+    }
+
+    private func cancelPendingBackgroundSelection() {
+        backgroundSelectionSequence &+= 1
+        backgroundSelectionTask?.cancel()
+        backgroundSelectionTask = nil
+        pendingBackgroundCrop = nil
+    }
+
+    private func saveCroppedBackground(_ image: UIImage, requestID: UUID) async -> Bool {
+        guard editorIsActive, pendingBackgroundCrop?.id == requestID else { return false }
+        let ownerID = profile.id
+        guard let reference = await BackgroundCropImageIO.save(image, destination: .assistant(ownerID)) else { return false }
+        guard editorIsActive, profile.id == ownerID, pendingBackgroundCrop?.id == requestID else {
+            AssistantMediaStore.remove(reference)
+            return false
+        }
+        if profile.background != originalBackground { AssistantMediaStore.remove(profile.background) }
+        profile.background = reference
+        return true
     }
 
     private func save() {
@@ -4109,8 +4154,14 @@ struct AssistantLocalToolsView: View {
         List {
             Section {
                 Toggle(L10n.lookup("联网搜索"), isOn: $profile.searchEnabled)
+                Picker(L10n.lookup("搜索方式"), selection: $profile.searchMode) {
+                    ForEach(AssistantSearchMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .disabled(!profile.searchEnabled)
             } footer: {
-                Text(L10n.lookup("Claude/Gemini 使用内置搜索；其他供应商通过 Tavily API 搜索（需在设置中配置 Key）"))
+                Text(profile.searchMode.explanation)
             }
 
             Section(L10n.lookup("本地工具")) {

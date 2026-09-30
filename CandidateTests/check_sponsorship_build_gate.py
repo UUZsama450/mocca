@@ -19,6 +19,7 @@ PROBE = r'''
 import Foundation
 
 @MainActor enum L10n {
+    static func lookup(_ key: String) -> String { key }
     static func format(_ key: String, _ arguments: [String]) -> String { key }
 }
 

@@ -23,8 +23,17 @@ for hunk in re.split(r"^@@.*@@.*\n", patch, flags=re.M)[1:]:
     if old.startswith(prefix) and old not in text:
         old = old[len(prefix):]
         new = new[len(prefix):]
-    assert text.count(old) == 1, "Historical test-host context drifted"
-    text = text.replace(old, new, 1)
+    if text.count(old) == 0:
+        # Newly declared shipping files may precede the historical first entry.
+        section = next((line for line in lines if line.startswith(" /* Begin PBX") and "section */" in line), None)
+        additions = "".join(line[1:] for line in lines if line.startswith("+"))
+        assert section is not None and additions, "Unreviewed historical context drift"
+        anchor = section[1:]
+        assert text.count(anchor) == 1
+        text = text.replace(anchor, anchor + additions, 1)
+    else:
+        assert text.count(old) == 1, "Ambiguous historical context"
+        text = text.replace(old, new, 1)
 project.write_text(text)
 schemes = output / "Mocca.xcodeproj/xcshareddata/xcschemes"
 schemes.mkdir(parents=True, exist_ok=True)

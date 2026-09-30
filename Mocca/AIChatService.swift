@@ -67,7 +67,7 @@ struct ChatRequestOptions: @unchecked Sendable {
     var thinkingBudget: Int?
     /// Tool definitions (function calling). Each element is a tool spec dict.
     var tools: [[String: Any]]?
-    /// When true, inject provider-native search (Claude web_search / Gemini google_search).
+    /// Enable server-side web search for this assistant request.
     var builtInSearch: Bool
     /// Stable conversation identity for provider-side sticky routing and prompt caching.
     var sessionID: String?
@@ -325,9 +325,15 @@ enum AIChatServiceError: LocalizedError {
     case generatedImageSaveFailed
     case providerStreamError(String)
     case imageRequestTimedOut(Int)
+    case unsupportedBuiltInSearch
+    case searchServiceNotConfigured
+    case clientSearchNotSupported
 
     var errorDescription: String? {
         switch self {
+        case .searchServiceNotConfigured: ErrorLocalization.lookup("请先在设置中配置应用搜索服务，或在助手设置中选择模型内置搜索。")
+        case .clientSearchNotSupported: ErrorLocalization.lookup("此模型未启用工具调用，无法使用应用搜索服务。请检查模型能力设置，或选择支持内置搜索的模型。")
+        case .unsupportedBuiltInSearch: ErrorLocalization.lookup("当前接口暂无法使用模型内置搜索。请改用应用搜索服务，或切换到支持此功能的模型与接口。")
         case .invalidURL: ErrorLocalization.lookup("服务商地址无效")
         case .missingAPIKey: ErrorLocalization.lookup("请先填写 API Key")
         case let .httpStatus(code, detail):
@@ -344,6 +350,58 @@ enum AIChatServiceError: LocalizedError {
         case .imageRequestTimedOut(let imageCount):
             ErrorLocalization.format("图片请求等待超时（本轮实际发送了 %@ 张图片）。可以重试，或关闭“持续发送历史图片”后再发送。", [String(describing: imageCount)])
         }
+    }
+}
+
+/// Converts provider citation metadata into links the existing Markdown renderer can open.
+/// Kept separate from client tool calls: server tools are already executed upstream.
+struct NativeSearchCitations {
+    private var seenURLs = Set<String>()
+
+    mutating func annotations(_ values: [[String: Any]]) -> String? {
+        let links = values.compactMap { value -> String? in
+            let citation = value["url_citation"] as? [String: Any] ?? value
+            guard let raw = citation["url"] as? String,
+                  let url = URL(string: raw),
+                  ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+                  let host = url.host, !host.isEmpty,
+                  seenURLs.insert(url.absoluteString).inserted else { return nil }
+            let title = (citation["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = (title?.isEmpty == false ? title! : host)
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "[", with: "\\[")
+                .replacingOccurrences(of: "]", with: "\\]")
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\r", with: " ")
+            let target = url.absoluteString.replacingOccurrences(of: ">", with: "%3E")
+                .replacingOccurrences(of: "<", with: "%3C")
+            return "[\(label)](<\(target)>)"
+        }
+        return links.isEmpty ? nil : " " + links.joined(separator: " · ") + " "
+    }
+
+    mutating func responsesEvent(_ event: [String: Any]) -> String? {
+        var values: [[String: Any]] = []
+        if let annotation = event["annotation"] as? [String: Any] { values.append(annotation) }
+        var items: [[String: Any]] = []
+        if let item = event["item"] as? [String: Any] { items.append(item) }
+        if let response = event["response"] as? [String: Any] {
+            items += response["output"] as? [[String: Any]] ?? []
+        }
+        for item in items {
+            for part in item["content"] as? [[String: Any]] ?? [] {
+                values += part["annotations"] as? [[String: Any]] ?? []
+            }
+        }
+        return annotations(values)
+    }
+
+    mutating func grounding(_ metadata: [String: Any]) -> String? {
+        let values = (metadata["groundingChunks"] as? [[String: Any]] ?? []).compactMap { chunk -> [String: Any]? in
+            guard let web = chunk["web"] as? [String: Any], let uri = web["uri"] as? String else { return nil }
+            return ["url": uri, "title": web["title"] as? String ?? ""]
+        }
+        return annotations(values)
     }
 }
 
@@ -398,13 +456,19 @@ enum AIChatService {
                     let stream: AsyncThrowingStream<ChatStreamEvent, Error>
                     switch provider.type {
                     case .openAI:
-                        stream = usesOpenAIResponses(provider: provider, modelID: modelID)
+                        stream = usesOpenAIResponses(provider: provider, modelID: modelID, builtInSearch: options.builtInSearch)
                             ? openAIResponsesStream(provider: provider, modelID: modelID, messages: messages, options: options)
-                            : openAIStream(provider: provider, modelID: modelID, messages: messages, options: options)
+                            : (options.builtInSearch
+                                ? openAIStreamWithTools(provider: provider, modelID: modelID, messages: messages, options: options)
+                                : openAIStream(provider: provider, modelID: modelID, messages: messages, options: options))
                     case .claude:
-                        stream = claudeStream(provider: provider, modelID: modelID, messages: messages, options: options)
+                        stream = options.builtInSearch
+                            ? claudeStreamWithTools(provider: provider, modelID: modelID, messages: messages, options: options)
+                            : claudeStream(provider: provider, modelID: modelID, messages: messages, options: options)
                     case .google:
-                        stream = googleStream(provider: provider, modelID: modelID, messages: messages, options: options)
+                        stream = options.builtInSearch
+                            ? googleStreamWithTools(provider: provider, modelID: modelID, messages: messages, options: options)
+                            : googleStream(provider: provider, modelID: modelID, messages: messages, options: options)
                     }
 
                     for try await chunk in stream {
@@ -475,7 +539,7 @@ enum AIChatService {
                         let stream: AsyncThrowingStream<ChatStreamEvent, Error>
                         switch provider.type {
                         case .openAI:
-                            stream = usesOpenAIResponses(provider: provider, modelID: modelID)
+                            stream = usesOpenAIResponses(provider: provider, modelID: modelID, builtInSearch: options.builtInSearch)
                                 ? openAIResponsesStream(provider: provider, modelID: modelID, messages: conversationMessages, options: roundOptions)
                                 : openAIStreamWithTools(provider: provider, modelID: modelID, messages: conversationMessages, options: roundOptions)
                         case .claude:
@@ -853,10 +917,13 @@ enum AIChatService {
 
     private static func usesOpenAIResponses(
         provider: ProviderConfiguration,
-        modelID: String
+        modelID: String,
+        builtInSearch: Bool = false
     ) -> Bool {
         guard provider.type == .openAI else { return false }
         if provider.useResponsesAPI { return true }
+        if builtInSearch, !provider.isOpenRouter,
+           URL(string: provider.baseURL)?.host?.lowercased() == "api.openai.com" { return true }
         guard
               let host = URL(string: provider.baseURL)?.host?.lowercased(),
               host == "api.openai.com",
@@ -911,6 +978,7 @@ enum AIChatService {
                     applyCustomHeaders(provider, modelID: modelID, to: &request)
                     applyClaudePromptCaching(provider, modelID: modelID, into: &body)
                     mergeCustomBody(provider, modelID: modelID, into: &body)
+                    try applyBuiltInSearch(provider, modelID: modelID, enabled: options.builtInSearch, into: &body)
                     applyOpenRouterReasoning(
                         provider,
                         thinkingBudget: options.thinkingBudget,
@@ -950,6 +1018,8 @@ enum AIChatService {
                         return .generatedImage(data, mimeType: "image/\(format == "jpg" ? "jpeg" : format)")
                     }
 
+                    var searchCitations = NativeSearchCitations()
+
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
                         guard line.hasPrefix("data:") else { continue }
@@ -962,7 +1032,14 @@ enum AIChatService {
                             continue
                         }
 
+                        if let links = searchCitations.responsesEvent(object) {
+                            continuation.yield(.text(links))
+                        }
                         switch type {
+                        case "error", "response.failed":
+                            let response = object["response"] as? [String: Any] ?? object
+                            let error = response["error"] as? [String: Any] ?? response
+                            throw AIChatServiceError.providerStreamError(error["message"] as? String ?? ErrorLocalization.lookup("服务商中断了回复"))
                         case "response.output_text.delta":
                             if let delta = object["delta"] as? String, !delta.isEmpty {
                                 let event = ChatStreamEvent.text(delta)
@@ -1596,6 +1673,7 @@ enum AIChatService {
                     applyCustomHeaders(provider, modelID: modelID, to: &request)
                     applyClaudePromptCaching(provider, modelID: modelID, into: &body)
                     mergeCustomBody(provider, modelID: modelID, into: &body)
+                    try applyBuiltInSearch(provider, modelID: modelID, enabled: options.builtInSearch, into: &body)
                     applyOpenRouterImageOutput(provider, modelID: modelID, body: &body, request: &request)
                     applyOpenRouterReasoning(
                         provider,
@@ -1621,6 +1699,8 @@ enum AIChatService {
 
                     var toolCallAccumulator: [String: (name: String, args: String)] = [:]
                     var openRouterReasoningDetails: [[String: Any]] = []
+
+                    var searchCitations = NativeSearchCitations()
 
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
@@ -1649,6 +1729,10 @@ enum AIChatService {
                               let choice = choices.first else { continue }
                         let delta = choice["delta"] as? [String: Any]
                             ?? choice["message"] as? [String: Any] ?? [:]
+
+                        if let links = searchCitations.annotations(delta["annotations"] as? [[String: Any]] ?? []) {
+                            continuation.yield(.text(links))
+                        }
 
                         if provider.isOpenRouter,
                            let details = delta["reasoning_details"] as? [[String: Any]],
@@ -1814,13 +1898,11 @@ enum AIChatService {
                         }
                         allClaudeTools.append(contentsOf: claudeTools)
                     }
-                    if options.builtInSearch {
-                        allClaudeTools.append(["type": "web_search_20250305", "name": "web_search"])
-                    }
                     if !allClaudeTools.isEmpty { body["tools"] = allClaudeTools }
                     applyCustomHeaders(provider, modelID: modelID, to: &request)
                     applyClaudePromptCaching(provider, modelID: modelID, into: &body)
                     mergeCustomBody(provider, modelID: modelID, into: &body)
+                    try applyBuiltInSearch(provider, modelID: modelID, enabled: options.builtInSearch, into: &body)
                     request.httpBody = try JSONSerialization.data(
                         withJSONObject: body,
                         options: [.sortedKeys]
@@ -1836,6 +1918,8 @@ enum AIChatService {
                     var currentToolArgsBuffer = ""
                     var pendingToolCalls: [ToolCallInfo] = []
 
+                    var searchCitations = NativeSearchCitations()
+
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
                         guard line.hasPrefix("data:") else { continue }
@@ -1847,7 +1931,16 @@ enum AIChatService {
 
                         let eventType = object["type"] as? String ?? ""
 
+                        if let delta = object["delta"] as? [String: Any],
+                           delta["type"] as? String == "citations_delta",
+                           let citation = delta["citation"] as? [String: Any],
+                           let links = searchCitations.annotations([citation]) {
+                            continuation.yield(.text(links))
+                        }
                         switch eventType {
+                        case "error":
+                            let error = object["error"] as? [String: Any] ?? [:]
+                            throw AIChatServiceError.providerStreamError(error["message"] as? String ?? ErrorLocalization.lookup("服务商中断了回复"))
                         case "message_start":
                             if let message = object["message"] as? [String: Any],
                                let usage = message["usage"] as? [String: Any] {
@@ -2012,9 +2105,6 @@ enum AIChatService {
                     if !generationConfig.isEmpty { body["generationConfig"] = generationConfig }
 
                     var geminiToolsArray: [[String: Any]] = []
-                    if options.builtInSearch {
-                        geminiToolsArray.append(["google_search": [:] as [String: Any]])
-                    }
                     if let tools = options.tools, !tools.isEmpty {
                         let declarations: [[String: Any]] = tools.compactMap { tool in
                             guard let fn = tool["function"] as? [String: Any] else { return nil }
@@ -2032,6 +2122,7 @@ enum AIChatService {
                     }
                     applyCustomHeaders(provider, modelID: modelID, to: &request)
                     mergeCustomBody(provider, modelID: modelID, into: &body)
+                    try applyBuiltInSearch(provider, modelID: modelID, enabled: options.builtInSearch, into: &body)
                     request.httpBody = try JSONSerialization.data(
                         withJSONObject: body,
                         options: [.sortedKeys]
@@ -2042,6 +2133,8 @@ enum AIChatService {
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var pendingToolCalls: [ToolCallInfo] = []
+
+                    var searchCitations = NativeSearchCitations()
 
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
@@ -2070,6 +2163,10 @@ enum AIChatService {
                                     pendingToolCalls.append(ToolCallInfo(id: id, name: name, arguments: args))
                                 }
                             }
+                        }
+                        if let metadata = candidates?.first?["groundingMetadata"] as? [String: Any],
+                           let links = searchCitations.grounding(metadata) {
+                            continuation.yield(.text(links))
                         }
                         if let usage = object["usageMetadata"] as? [String: Any] {
                             let event = ChatStreamEvent.usage(StreamUsage(
@@ -2174,6 +2271,38 @@ enum AIChatService {
             return selected.key.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return provider.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func applyBuiltInSearch(
+        _ provider: ProviderConfiguration,
+        modelID: String,
+        enabled: Bool,
+        into body: inout [String: Any]
+    ) throws {
+        guard enabled else { return }
+        var tools = body["tools"] as? [[String: Any]] ?? []
+        let searchTool: [String: Any]
+        switch provider.type {
+        case .claude:
+            guard !tools.contains(where: { ($0["type"] as? String)?.hasPrefix("web_search_") == true }) else { return }
+            searchTool = ["type": "web_search_20250305", "name": "web_search"]
+        case .google:
+            guard !tools.contains(where: { $0["google_search"] != nil || $0["googleSearch"] != nil }) else { return }
+            searchTool = ["google_search": [String: Any]()]
+        case .openAI:
+            if provider.isOpenRouter {
+                guard !tools.contains(where: { $0["type"] as? String == "openrouter:web_search" }) else { return }
+                searchTool = ["type": "openrouter:web_search", "parameters": ["engine": "native"]]
+            } else {
+                guard usesOpenAIResponses(provider: provider, modelID: modelID, builtInSearch: true) else {
+                    throw AIChatServiceError.unsupportedBuiltInSearch
+                }
+                guard !tools.contains(where: { ["web_search", "web_search_preview"].contains($0["type"] as? String ?? "") }) else { return }
+                searchTool = ["type": "web_search"]
+            }
+        }
+        tools.append(searchTool)
+        body["tools"] = tools
     }
 
     private static func applyClaudePromptCaching(

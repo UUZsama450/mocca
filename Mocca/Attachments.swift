@@ -497,6 +497,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 /// composer 上方的待发附件条。
 struct PendingAttachmentsStrip: View {
     @Environment(AppModel.self) private var model
+    @State private var imagePreview: MessageImagePreviewPresentation?
 
     var body: some View {
         if !model.pendingAttachments.isEmpty {
@@ -504,7 +505,23 @@ struct PendingAttachmentsStrip: View {
                 HStack(spacing: 8) {
                     ForEach(model.pendingAttachments) { attachment in
                         ZStack(alignment: .topTrailing) {
-                            AttachmentThumbnail(attachment: attachment, size: 58)
+                            if attachment.kind == .image {
+                                Button {
+                                    let images = model.pendingAttachments.filter { $0.kind == .image }
+                                    guard let index = images.firstIndex(where: { $0.id == attachment.id }) else { return }
+                                    imagePreview = MessageImagePreviewPresentation(
+                                        images: images,
+                                        initialIndex: index
+                                    )
+                                } label: {
+                                    AttachmentThumbnail(attachment: attachment, size: 58)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(L10n.lookup("预览图片"))
+                                .accessibilityValue(attachment.fileName ?? L10n.lookup("图片"))
+                            } else {
+                                AttachmentThumbnail(attachment: attachment, size: 58)
+                            }
                             Button {
                                 model.removePendingAttachment(attachment.id)
                             } label: {
@@ -521,6 +538,13 @@ struct PendingAttachmentsStrip: View {
                 .padding(.top, 6)
                 .padding(.horizontal, 2)
             }
+            .fullScreenCover(item: $imagePreview) { presentation in
+                MessageImageViewer(
+                    images: presentation.images,
+                    initialIndex: presentation.initialIndex
+                )
+                .presentationBackground(.clear)
+            }
         }
     }
 }
@@ -530,14 +554,8 @@ struct AttachmentThumbnail: View {
     var size: CGFloat = 58
 
     var body: some View {
-        if attachment.kind == .image,
-           let url = attachment.localURL,
-           let image = UIImage(contentsOfFile: url.path) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        if attachment.kind == .image {
+            MessageImageThumbnail(url: attachment.localURL, size: size, cornerRadius: 12)
         } else {
             VStack(spacing: 4) {
                 Image(systemName: "doc.fill")
@@ -1089,8 +1107,7 @@ private struct MessageImageViewer: View {
 
     @ViewBuilder
     private func imagePage(_ attachment: MessageAttachment) -> some View {
-        if let url = attachment.localURL,
-           let image = UIImage(contentsOfFile: url.path) {
+        MessageImagePage(url: attachment.localURL) { image, url in
             ZoomableMessageImageView(
                 image: image,
                 accessibilityLabel: attachment.fileName ?? L10n.lookup("图片"),
@@ -1118,14 +1135,6 @@ private struct MessageImageViewer: View {
                 }
             )
             .ignoresSafeArea()
-        } else {
-            VStack(spacing: 12) {
-                Image(systemName: "photo.badge.exclamationmark")
-                    .font(.system(size: 38, weight: .medium))
-                Text(L10n.lookup("图片无法读取"))
-                    .font(.system(size: 15, weight: .medium))
-            }
-            .foregroundStyle(.white.opacity(0.72))
         }
     }
 
@@ -1183,6 +1192,73 @@ private struct MessageImageViewer: View {
             guard generation == noticeGeneration else { return }
             withAnimation(.easeOut(duration: 0.18)) {
                 notice = nil
+            }
+        }
+    }
+}
+
+/// The loaded image belongs to this page and URL, not to a control animation.
+/// Retaining its identity also preserves UIKit's zoom when controls or notices change.
+private struct MessageImagePage<Content: View>: View {
+    let url: URL?
+    @ViewBuilder let content: (UIImage, URL) -> Content
+    @State private var result: LoadResult?
+
+    private struct LoadResult {
+        let url: URL
+        let image: UIImage?
+    }
+
+    var body: some View {
+        Group {
+            if let url, let result, result.url == url {
+                if let image = result.image {
+                    content(image, url)
+                } else {
+                    unavailableImage
+                }
+            } else if url != nil {
+                ProgressView(L10n.lookup("正在读取图片…"))
+                    .tint(.white)
+                    .foregroundStyle(.white)
+            } else {
+                unavailableImage
+            }
+        }
+        .task(id: url) {
+            guard let url else { return }
+            let image = await MessageImageLoader.image(at: url)
+            guard !Task.isCancelled else { return }
+            result = LoadResult(url: url, image: image)
+        }
+    }
+
+    private var unavailableImage: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo.badge.exclamationmark")
+                .font(.system(size: 38, weight: .medium))
+            Text(L10n.lookup("图片无法读取"))
+                .font(.system(size: 15, weight: .medium))
+        }
+        .foregroundStyle(.white.opacity(0.72))
+    }
+}
+
+private enum MessageImageLoader {
+    private static let queue = DispatchQueue(
+        label: "com.mocca.image-viewer-decoding",
+        qos: .userInitiated
+    )
+
+    static func image(at url: URL) async -> UIImage? {
+        guard !Task.isCancelled else { return nil }
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                let image = autoreleasepool {
+                    guard let original = UIImage(contentsOfFile: url.path) else { return nil as UIImage? }
+                    return original.preparingForDisplay() ?? original
+                }
+                continuation.resume(returning: image)
             }
         }
     }
@@ -1454,7 +1530,7 @@ private struct ZoomableMessageImageView: UIViewRepresentable {
             case .ended:
                 onDismissEnded(translation, recognizer.velocity(in: scrollView).y)
             case .cancelled, .failed:
-                onDismissEnded(translation, 0)
+                onDismissEnded(0, 0)
             default:
                 break
             }

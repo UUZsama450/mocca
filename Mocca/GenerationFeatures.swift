@@ -19,6 +19,11 @@ enum ExternalImageGenerationCodec {
     private static let fullRegex = try! NSRegularExpression(pattern: fullPattern)
 
     static func parse(_ text: String) -> Parsed {
+        // Finalization uses this parser too. Ordinary replies still receive
+        // the same whitespace cleanup without two full regular-expression scans.
+        guard text.contains(openingMarker) else {
+            return Parsed(displayText: cleanedDisplayText(text), requests: [])
+        }
         let nsText = text as NSString
         let matches = fullRegex.matches(
             in: text,
@@ -508,6 +513,29 @@ final class IOSBackgroundGenerationManager {
         }
     }
 
+    func stageCompletedMessageWithoutBlockingMain(runID: UUID, message: ChatMessage) async -> Bool {
+        guard let run = runs[runID], message.id == runID,
+              message.conversationID == run.conversationID,
+              let writer = run.completionWriter else { return false }
+        let result = await withCheckedContinuation { continuation in
+            writer.enqueueCompletedMessage(message) { result in
+                continuation.resume(returning: result)
+            }
+        }
+        // Cancellation/deletion may retire the run while its write completes.
+        // Never restore an old Run value over newer activity/commit state.
+        guard var current = runs[runID], current.completionWriter === writer else { return false }
+        switch result {
+        case .success:
+            current.journaledMessage = message
+            runs[runID] = current
+            return true
+        case .failure(let error):
+            NSLog("[background-generation] pending journal completion failed: %@", error.localizedDescription)
+            return false
+        }
+    }
+
     func markConversationStoreCommitted(runID: UUID, message: ChatMessage) {
         guard var run = runs[runID],
               message.id == runID,
@@ -525,7 +553,8 @@ final class IOSBackgroundGenerationManager {
     ) {
         guard let run = runs.removeValue(forKey: runID) else { return }
         let settings = IOSBackgroundGenerationPersistence.load()
-        let body = Self.notificationText(notificationMessage, limit: 120)
+        let body = run.activityID != nil || settings.notificationsEnabled
+            ? Self.notificationText(notificationMessage, limit: 120) : ""
         let storeContainsFinalMessage =
             run.committedMessage == completedMessage
         let completionIsDurable =
@@ -553,8 +582,9 @@ final class IOSBackgroundGenerationManager {
 
     func fail(runID: UUID, partialMessage: String) {
         guard let run = runs.removeValue(forKey: runID) else { return }
-        let body = Self.notificationText(partialMessage, limit: 120)
         let settings = IOSBackgroundGenerationPersistence.load()
+        let body = run.activityID != nil || settings.notificationsEnabled
+            ? Self.notificationText(partialMessage, limit: 120) : ""
         let completionIsDurable =
             run.journaledMessage != nil || run.committedMessage != nil
         finalizePersistenceArtifacts(

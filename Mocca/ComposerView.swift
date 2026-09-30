@@ -8,6 +8,20 @@ import UIKit
 enum ComposerTextSelectionInteractionGate {
     private static weak var focusedResponder: UIResponder?
 
+    /// Capture only our concrete editor. Keyboard animation readers must not
+    /// inherit the curve of a search field or a text field in a sheet.
+    static var focusedComposerInput: ComposerInputTextView? {
+        focusedResponder = nil
+        defer { focusedResponder = nil }
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.moccaCaptureComposerSelectionResponder(_:)),
+            to: nil, from: nil, for: nil
+        )
+        guard let input = focusedResponder as? ComposerInputTextView,
+              input.isFirstResponder, input.window != nil else { return nil }
+        return input
+    }
+
     static var ownsCurrentTouch: Bool {
         focusedResponder = nil
         defer { focusedResponder = nil }
@@ -250,6 +264,9 @@ struct ComposerView: View {
         .modifier(StableComposerRenderGroupModifier(
             enabled: model.preferences.useLiquidGlassComposer
         ))
+        // Resolve keyboard motion once for the whole composer. A replacement
+        // editor must enter at the shell's current position, not its endpoint.
+        .geometryGroup()
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
         .onAppear {

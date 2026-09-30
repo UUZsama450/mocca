@@ -3,11 +3,10 @@ import Observation
 import SwiftUI
 import UIKit
 
-/// Ordinary edits retain the viewport session; navigation and paging replace it.
+/// Conversation return identity fences mutations; each mutation also has its own request ID.
 struct ChatViewportSessionID: Hashable {
     let conversationID: UUID
     let positionRequest: Int
-    let lazyWindowGeneration: UInt64
 }
 
 enum MessageContentMutationRegionID: Hashable {

@@ -1,12 +1,12 @@
 # Mocca
 
-**用 SwiftUI 构建的原生 iPhone AI 聊天应用。**
+**用 SwiftUI 和 UIKit 构建的原生 iPhone AI 聊天应用。**
 
 [English](README.md) · 简体中文
 
 连接自己的模型，用助手整理对话，把聊天记录保存在自己的设备上。
 
-> 本仓库正在进行发布准备。开发基线为 1.0（5058），与 App Store 送审的 5057 分开记录。正式版本可用后再补充下载入口。详见[源码基线](docs/SOURCE_BASELINE.md)。
+> 本私有源码仓库更新至开发版 **1.0（5128）**，包含 UIKit 聊天列表、侧栏改进和生成结束时的工作量优化。详见[本次变更与验证](docs/SNAPSHOT_5128.md)及[源码基线](docs/SOURCE_BASELINE.md)。本次源码更新不创建可下载的应用版本。
 
 ## 主要功能
 
@@ -41,7 +41,7 @@ Mocca 不附带 API Key 或第三方服务额度。模型能力、服务可用�
 
 ## 来源与致谢
 
-Mocca 来自 [Kelivo](https://github.com/chevey339/kelivo) 项目及其产品与数据生态，在此基础上以独立名称发展原生 SwiftUI iPhone 应用。感谢 Kelivo 及其贡献者的原始工作。
+Mocca 来自 [Kelivo](https://github.com/chevey339/kelivo) 项目及其产品与数据生态，在此基础上以独立名称发展原生 iPhone 应用。感谢 Kelivo 及其贡献者的原始工作。
 
 Mocca 是非官方的独立项目。部分旧名称有意保留，用于兼容备份与既有数据。来源与修改记录见 [NOTICE.md](NOTICE.md)，第三方资源说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 

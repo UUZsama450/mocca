@@ -1,6 +1,16 @@
-# Source baseline for publication preparation
+# Source baseline
 
-This is an independent local publication snapshot based on development build 5058, not an App Store release. Its initial history starts with the prepared source tree from local commit `027ed5f17c00ec33ff1aee7525469f98164b8d6b`. Earlier development history remains in the original local repository. The commit identifiers below are provenance references; they are not commits included in this new repository. See [repository guide](REPOSITORY_GUIDE.md) for current scope and verification.
+## Current snapshot 5128
+
+The private repository now tracks development build **1.0 (5128)**. The update starts from the existing published 5058 tree and brings in the product changes through local source commit `c1adc019f68d2da5435d92c1c4fceb61dc8645f3`, whose 151 product inputs match the frozen 5128 build inputs. Earlier experimental commits and generated device records are not imported into this repository.
+
+This remains a portable source variant: configurable app identity, sponsorship off by default, reviewed assets and neutral synthetic fixtures are retained from the first publication. The source project sets version 5128 explicitly for both app and extension, Debug and Release. It is not byte-identical to a signed device archive. See [5128 changes and verification](SNAPSHOT_5128.md) and the [repository guide](REPOSITORY_GUIDE.md).
+
+The original source history and publication history are separate. Local commit identifiers in this document describe provenance; they are not necessarily reachable in this repository. Updates are manually selected and synchronized to the existing private repository.
+
+## Initial snapshot 5058
+
+The initial independent publication snapshot was based on development build 5058, not an App Store release. It began with the prepared source tree from local commit `027ed5f17c00ec33ff1aee7525469f98164b8d6b`. The following sections retain the initial preparation's historical context and verification; they do not describe fresh 5128 test runs.
 
 | Source | Commit | Meaning |
 | --- | --- | --- |
@@ -28,14 +38,14 @@ This tree differs from the installed 5058. It does not replace the frozen 5058 b
 - Sponsorship implementation, saved decorations and historical test coverage; new builds gate commerce explicitly.
 - Stable Keychain service names and backup compatibility identifiers; app signing identity is configurable.
 
-## Remaining before remote publication or binary distribution
+## Historical publication checklist from the first preparation
 
 - Review the independent repository's exact tree, history and author metadata before uploading it. Removing a current file does not remove it from Git history.
 - Configure the intended GitHub repository and verify its visibility and source links.
 - For a distributed binary, verify the exact corresponding source, release signing and distribution documents separately. This development snapshot is not the submitted 5057 source.
 - Public-safe screenshots and confirmed download links, when available.
 
-Older checklists and candidate notes describe their own point in time; they are not a current release dashboard. This snapshot is prepared for the private [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Public source release and binary distribution are separate steps.
+Older checklists and candidate notes describe their own point in time; they are not a current release dashboard. The prepared snapshot was uploaded to the private [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Public source release and binary distribution are separate steps.
 
 ## Validation for the first preparation pass
 

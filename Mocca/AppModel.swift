@@ -143,10 +143,51 @@ private struct SelectedMessageProjection {
 }
 
 private struct SelectedMessageProjectionCache {
+    struct RawStructure {
+        let id: UUID
+        let versionGroupID: String?
+        let version: Int
+        let createdAt: Date
+
+        init(_ message: ChatMessage) {
+            id = message.id
+            versionGroupID = message.versionGroupID
+            version = message.version
+            createdAt = message.createdAt
+        }
+
+        func matches(_ message: ChatMessage) -> Bool {
+            guard id == message.id, version == message.version,
+                  createdAt == message.createdAt else { return false }
+            switch (versionGroupID, message.versionGroupID) {
+            case (nil, nil): return true
+            case let (lhs?, rhs?): return lhs.utf8.elementsEqual(rhs.utf8)
+            default: return false
+            }
+        }
+    }
+
     let conversationID: UUID
     let messageRevision: UInt64
     let versionSelections: [String: Int]
+    let rawStructure: [RawStructure]
+    let selectedRawIndices: [Int]
     let projection: [SelectedMessageProjection]
+
+    func refreshingContent(from messages: [ChatMessage], revision: UInt64) -> Self? {
+        guard rawStructure.count == messages.count,
+              zip(rawStructure, messages).allSatisfy({ $0.matches($1) }) else { return nil }
+        return Self(
+            conversationID: conversationID, messageRevision: revision,
+            versionSelections: versionSelections, rawStructure: rawStructure,
+            selectedRawIndices: selectedRawIndices,
+            projection: zip(projection, selectedRawIndices).map { previous, index in
+                SelectedMessageProjection(groupKey: previous.groupKey,
+                                          message: messages[index],
+                                          firstRawIndex: previous.firstRawIndex)
+            }
+        )
+    }
 }
 
 private enum ConversationPersistenceState {
@@ -154,24 +195,78 @@ private enum ConversationPersistenceState {
     case blocked(reason: String)
 }
 
+private struct ConversationSaveIdentity: Sendable {
+    let conversationCount: Int
+    let messageCount: Int
+    let conversationIDs: Set<UUID>
+    let messageIDs: Set<UUID>
+
+    static func capture(_ snapshot: ConversationSnapshot) -> Self {
+        Self(
+            conversationCount: snapshot.conversations.count,
+            messageCount: snapshot.messagesByConversation.values.reduce(0) { $0 + $1.count },
+            conversationIDs: Set(snapshot.conversations.map(\.id)),
+            messageIDs: Set(snapshot.messagesByConversation.values.joined().lazy.map(\.id))
+        )
+    }
+}
+
 private final class ConversationStoreSaveRequest: @unchecked Sendable {
     let snapshot: ConversationSnapshot
     let preserveExistingBackup: Bool
-    let authorizedDestructiveReduction: Bool
+    let previousIdentity: ConversationSaveIdentity
+    let allowDestructiveConversationReduction: Bool
+    let allowDestructiveMessageReduction: Bool
+
+    var authorizedDestructiveReduction: Bool {
+        allowDestructiveConversationReduction || allowDestructiveMessageReduction
+    }
 
     init(
         snapshot: ConversationSnapshot,
         preserveExistingBackup: Bool,
-        authorizedDestructiveReduction: Bool
+        previousIdentity: ConversationSaveIdentity,
+        allowDestructiveConversationReduction: Bool,
+        allowDestructiveMessageReduction: Bool
     ) {
         self.snapshot = snapshot
         self.preserveExistingBackup = preserveExistingBackup
-        self.authorizedDestructiveReduction = authorizedDestructiveReduction
+        self.previousIdentity = previousIdentity
+        self.allowDestructiveConversationReduction = allowDestructiveConversationReduction
+        self.allowDestructiveMessageReduction = allowDestructiveMessageReduction
+    }
+
+    func validationFailure(for identity: ConversationSaveIdentity) -> String? {
+        if !ConversationPersistencePolicy.permitsConversationCountChange(
+            from: previousIdentity.conversationCount, to: identity.conversationCount,
+            allowDestructiveReduction: allowDestructiveConversationReduction
+        ) {
+            return "检测到聊天数量从 \(previousIdentity.conversationCount) 段异常降到 \(identity.conversationCount) 段，已拒绝覆盖旧存档。请重新打开 App 后重试。"
+        }
+        if !ConversationPersistencePolicy.permitsRetainedIDs(
+            from: previousIdentity.conversationIDs, to: identity.conversationIDs,
+            allowDestructiveReduction: allowDestructiveConversationReduction
+        ) {
+            return "检测到未授权的聊天身份替换，已拒绝覆盖旧存档。请重新打开 App 后重试。"
+        }
+        if !ConversationPersistencePolicy.permitsMessageCountChange(
+            from: previousIdentity.messageCount, to: identity.messageCount,
+            allowDestructiveReduction: allowDestructiveMessageReduction
+        ) {
+            return "检测到聊天消息从 \(previousIdentity.messageCount) 条异常降到 \(identity.messageCount) 条，已拒绝覆盖旧存档。请重新打开 App 后重试。"
+        }
+        if !ConversationPersistencePolicy.permitsRetainedIDs(
+            from: previousIdentity.messageIDs, to: identity.messageIDs,
+            allowDestructiveReduction: allowDestructiveMessageReduction
+        ) {
+            return "检测到未授权的消息身份替换，已拒绝覆盖旧存档。请重新打开 App 后重试。"
+        }
+        return nil
     }
 }
 
 private enum ConversationStoreSaveOutcome: Sendable {
-    case success
+    case success(ConversationSaveIdentity)
     case failure(String)
 }
 
@@ -247,6 +342,14 @@ private final class ConversationStoreSaveExecutor: @unchecked Sendable {
         if let latchedFailureDescription {
             return .failure(latchedFailureDescription)
         }
+        // Snapshot capture/submission stays ordered on MainActor. The full ID
+        // walk and its existing reduction checks belong to this same serial
+        // lane as the durable write, so an awaited stream save frees the UI.
+        let identity = ConversationSaveIdentity.capture(request.snapshot)
+        if let reason = request.validationFailure(for: identity) {
+            latchedFailureDescription = reason
+            return .failure(reason)
+        }
         do {
             try store.save(
                 request.snapshot,
@@ -254,7 +357,7 @@ private final class ConversationStoreSaveExecutor: @unchecked Sendable {
                 authorizedDestructiveReduction:
                     request.authorizedDestructiveReduction
             )
-            return .success
+            return .success(identity)
         } catch {
             let description = error.localizedDescription
             latchedFailureDescription = description
@@ -268,10 +371,6 @@ private struct PreparedConversationSave {
     let request: ConversationStoreSaveRequest
     let epoch: UInt64
     let sequence: UInt64
-    let conversationCount: Int
-    let messageCount: Int
-    let conversationIDs: Set<UUID>
-    let messageIDs: Set<UUID>
 }
 
 struct ResolvedChatModelContext: Sendable {
@@ -854,11 +953,6 @@ final class AppModel {
     private static let messageWindowInitialTextBudget = 20_000
     private static let messageWindowPageSize = 20
     private static let messageWindowLoadedMax = 360
-    // Explicit long-distance bottom navigation needs a small, fully concrete
-    // destination window. Twelve minimum-height message rows plus their normal
-    // spacing cover a phone viewport, while keeping request-time eager layout
-    // strictly bounded for long or attachment-heavy conversations.
-    private static let messageWindowBottomNavigationMax = 12
     private static let messageWindowConcreteMax = 12
     // Keep the first visible text and completion flush immediate, but publish
     // the middle of a reply in slightly larger display batches. This lowers
@@ -995,6 +1089,8 @@ final class AppModel {
     // do not regroup and resort the full persisted transcript. The cache is
     // deliberately single-entry; validity follows this conversation's message
     // revision and chosen versions, not unrelated conversation mutations.
+    // Content-only revisions reuse the checked grouping/selection indices and
+    // read fresh message values, without retaining another full raw transcript.
     @ObservationIgnored private var selectedMessageProjectionCache:
         SelectedMessageProjectionCache?
     // Repeated transcript reads usually ask for the same conversation. Keep
@@ -1361,9 +1457,15 @@ final class AppModel {
         }
         migrateUnclassifiedConversationsIfNeeded()
         let calendarEventsAtLaunch = calendarEvents
-        Task { @MainActor in
-            await refreshEnabledMCPServers()
-            await MoccaCalendarNotificationScheduler.reschedule(events: calendarEventsAtLaunch)
+        var shouldStartServices = true
+        #if DEBUG
+        shouldStartServices = !Self.nativeReadingFixtureRequested
+        #endif
+        if shouldStartServices {
+            Task { @MainActor in
+                await refreshEnabledMCPServers()
+                await MoccaCalendarNotificationScheduler.reschedule(events: calendarEventsAtLaunch)
+            }
         }
     }
 
@@ -1804,6 +1906,20 @@ final class AppModel {
         return messageWindow(for: selectedConversationID, projection: projection).startIndex
     }
 
+    // Paging needs only the canonical window boundaries. Reuse the cached
+    // projection instead of copying up to 360 ChatMessages per edge callback.
+    // The send-presentation owner excludes paging while its row is hidden.
+    var messageWindowBoundary: (firstID: UUID?, lastID: UUID?, count: Int) {
+        let projection = selectedMessageProjection(for: selectedConversationID)
+        let window = messageWindow(for: selectedConversationID, projection: projection)
+        guard window.count > 0 else { return (nil, nil, 0) }
+        return (
+            projection[window.startIndex].message.id,
+            projection[window.endIndex - 1].message.id,
+            window.count
+        )
+    }
+
     var messageWindowEndIndex: Int {
         let projection = selectedMessageProjection(for: selectedConversationID)
         return messageWindow(for: selectedConversationID, projection: projection).endIndex
@@ -1953,24 +2069,6 @@ final class AppModel {
     }
 
     @discardableResult
-    func loadLatestBottomNavigationWindow() -> Bool {
-        releaseConcreteConversationEntryWindow()
-        let conversationID = selectedConversationID
-        let totalCount = selectedMessages(for: conversationID).count
-        guard totalCount > 0 else { return false }
-        let count = min(totalCount, Self.messageWindowBottomNavigationMax)
-        let next = MessageWindowState(
-            startIndex: totalCount - count,
-            count: count
-        )
-        guard messageWindowsByConversation[conversationID] != next else {
-            return false
-        }
-        messageWindowsByConversation[conversationID] = next
-        return true
-    }
-
-    @discardableResult
     private func resetMessageWindowToLatest(for conversationID: UUID) -> Bool {
         let allMessages = selectedMessages(for: conversationID)
         let next = Self.initialMessageWindow(for: allMessages)
@@ -2018,23 +2116,6 @@ final class AppModel {
             startIndex: nextStart,
             count: max(1, nextCount)
         )
-    }
-
-    /// Limit only the presentation window; the canonical transcript is unchanged.
-    /// A single oversized target is unavoidable, but never eagerly lay out its
-    /// oversized neighbours along with it.
-    @discardableResult
-    func limitMessageWindowForConcreteLayout(around messageID: UUID) -> Bool {
-        let conversationID = selectedConversationID
-        let allMessages = selectedMessages(for: conversationID)
-        let current = messageWindow(for: conversationID, messages: allMessages)
-        guard let next = Self.boundedConcreteMessageWindow(
-            messages: allMessages,
-            current: current,
-            targetID: messageID
-        ) else { return false }
-        messageWindowsByConversation[conversationID] = next
-        return true
     }
 
     private static func boundedConcreteMessageWindow(
@@ -2174,7 +2255,10 @@ final class AppModel {
         rawMessages suppliedMessages: [ChatMessage]? = nil
     ) -> [SelectedMessageProjection] {
         let rawMessages = suppliedMessages ?? conversationMessageStore[conversationID] ?? []
-        guard !rawMessages.isEmpty else { return [] }
+        guard !rawMessages.isEmpty else {
+            if suppliedMessages == nil { selectedMessageProjectionCache = nil }
+            return []
+        }
         let selections = conversation(for: conversationID)?.versionSelections ?? [:]
         let messageRevision = suppliedMessages == nil
             ? conversationMessageStore.revision(for: conversationID) : 0
@@ -2182,11 +2266,14 @@ final class AppModel {
         // Read the canonical observable inputs above even on a cache hit so a
         // view that uses this projection remains subscribed to their changes.
         if suppliedMessages == nil,
-           let selectedMessageProjectionCache,
-           selectedMessageProjectionCache.conversationID == conversationID,
-           selectedMessageProjectionCache.messageRevision == messageRevision,
-           selectedMessageProjectionCache.versionSelections == selections {
-            return selectedMessageProjectionCache.projection
+           let cached = selectedMessageProjectionCache,
+           cached.conversationID == conversationID,
+           cached.versionSelections == selections {
+            if cached.messageRevision == messageRevision { return cached.projection }
+            if let refreshed = cached.refreshingContent(from: rawMessages, revision: messageRevision) {
+                selectedMessageProjectionCache = refreshed
+                return refreshed.projection
+            }
         }
 
         var order: [String] = []
@@ -2200,6 +2287,7 @@ final class AppModel {
             grouped[groupKey, default: []].append((rawIndex, message))
         }
 
+        var selectedRawIndices: [Int] = []
         let projection: [SelectedMessageProjection] = order.compactMap { groupKey in
             guard let entries = grouped[groupKey], !entries.isEmpty else { return nil }
             let sorted = entries.sorted { lhs, rhs in
@@ -2215,6 +2303,7 @@ final class AppModel {
             let selected = selectedVersion.flatMap { version in
                 sorted.first(where: { $0.message.version == version })
             } ?? sorted.last!
+            selectedRawIndices.append(selected.rawIndex)
             return SelectedMessageProjection(
                 groupKey: groupKey,
                 message: selected.message,
@@ -2226,6 +2315,8 @@ final class AppModel {
                 conversationID: conversationID,
                 messageRevision: messageRevision,
                 versionSelections: selections,
+                rawStructure: rawMessages.map(SelectedMessageProjectionCache.RawStructure.init),
+                selectedRawIndices: selectedRawIndices,
                 projection: projection
             )
         }
@@ -2404,6 +2495,43 @@ final class AppModel {
     }
 
     #if DEBUG
+    static var nativeReadingFixtureRequested: Bool {
+        NativeReadingFixtures.requestedName != nil
+    }
+
+    func prepareNativeReadingFixture() {
+        guard let name = NativeReadingFixtures.requestedName,
+              streamingConversationIDs.isEmpty else { return }
+        if ProcessInfo.processInfo.arguments.contains("-nativeChatLocalHTTPFixture") {
+            // DEBUG + the exact isolated fixture bundle gate above. Only HTTP
+            // replies are synthetic; the real composer/send/stream path runs.
+            // Keep this provider and its fixture-only key in memory.
+            let providerID = UUID(uuidString: "50770000-0000-4000-9000-000000000001")!
+            let modelID = "native-chat-local-fixture"
+            providers = [ProviderConfiguration(
+                id: providerID, enabled: true, name: "本机试用验收",
+                type: .openAI, apiKey: "fixture-only",
+                baseURL: "http://127.0.0.1:18437/v1", chatPath: "/chat/completions",
+                models: [ModelConfiguration(id: modelID)]
+            )]
+            selectedModel = ModelSelection(providerID: providerID, modelID: modelID)
+        }
+        let fixture = NativeReadingFixtures.make(name, assistantID: currentAssistantID)
+        let fixtureID = fixture.conversation.id
+        // Trial fixtures remain in memory in the dedicated test bundle. Do not
+        // stop a live run, save, or replace any nonfixture conversation.
+        conversations.removeAll { $0.id == fixtureID }
+        conversations.insert(fixture.conversation, at: 0)
+        conversationMessageStore[fixtureID] = fixture.messages
+        messageWindowsByConversation[fixtureID] = nil
+        selectedConversationID = fixtureID
+        draft = ""
+        pendingAttachments = []
+        isDrawerPresented = false
+        isFirstRunModelSetupPresented = false
+        conversationBottomReturnRequest += 1
+    }
+
     func prepareNavigationStressPreview() {
         stopAllStreaming()
         // Keep repeated simulator runs deterministic instead of accumulating
@@ -5240,14 +5368,20 @@ final class AppModel {
     }
 
     func toggleInstructionActive(_ id: UUID) {
+        setInstructionActive(id, enabled: !isInstructionActive(id))
+    }
+
+    func setInstructionActive(_ id: UUID, enabled: Bool) {
+        guard instructionInjections.contains(where: { $0.id == id }),
+              isInstructionActive(id) != enabled else { return }
         let previousFingerprints =
             recentMemoryReadOnlyPromptContextFingerprints()
         let key = currentAssistantID.uuidString
         var set = activeInstructionIDsByAssistant[key] ?? []
-        if set.contains(id) {
-            set.remove(id)
-        } else {
+        if enabled {
             set.insert(id)
+        } else {
+            set.remove(id)
         }
         activeInstructionIDsByAssistant[key] = set
         PromptInjectionPersistence.saveActiveInstructionIDs(activeInstructionIDsByAssistant)
@@ -5289,14 +5423,20 @@ final class AppModel {
     }
 
     func toggleWorldBookActive(_ id: UUID) {
+        setWorldBookActive(id, enabled: !isWorldBookActive(id))
+    }
+
+    func setWorldBookActive(_ id: UUID, enabled: Bool) {
+        guard worldBooks.contains(where: { $0.id == id }),
+              isWorldBookActive(id) != enabled else { return }
         let previousFingerprints =
             recentMemoryReadOnlyPromptContextFingerprints()
         let key = currentAssistantID.uuidString
         var set = activeWorldBookIDsByAssistant[key] ?? []
-        if set.contains(id) {
-            set.remove(id)
-        } else {
+        if enabled {
             set.insert(id)
+        } else {
+            set.remove(id)
         }
         activeWorldBookIDsByAssistant[key] = set
         PromptInjectionPersistence.saveActiveWorldBookIDs(activeWorldBookIDsByAssistant)
@@ -5376,9 +5516,9 @@ final class AppModel {
             : themeAccentUIColor
     }
 
-    func setDrawerPresented(_ presented: Bool) {
+    func setDrawerPresented(_ presented: Bool, playHaptic: Bool = true) {
         guard isDrawerPresented != presented else { return }
-        if preferences.hapticsOnDrawer {
+        if playHaptic && preferences.hapticsOnDrawer {
             performHaptic(.soft)
         }
         isDrawerPresented = presented
@@ -5502,8 +5642,20 @@ final class AppModel {
         )
     }
 
+    private func adoptAssistantForConversationEntry(_ conversation: Conversation) {
+        guard conversation.groupAssistantIDs.count < 2,
+              let ownerID = conversation.assistantID,
+              ownerID != currentAssistantID.uuidString,
+              let owner = assistantProfile(id: ownerID) else { return }
+        // Concrete navigation keeps its destination even when assistant-switch
+        // preferences normally create a new chat. No conversation owner changes.
+        currentAssistantID = owner.id
+        AssistantPersistence.saveCurrentAssistantID(owner.id)
+    }
+
     func selectConversation(_ id: UUID, closeDrawer: Bool? = nil) {
-        guard conversations.contains(where: { $0.id == id }) else { return }
+        guard let conversation = conversations.first(where: { $0.id == id }) else { return }
+        adoptAssistantForConversationEntry(conversation)
         pendingMessageTargetNavigationRequest = nil
         let isSwitchingConversation = selectedConversationID != id
         conversationBottomReturnTargetID = isSwitchingConversation ? id : nil
@@ -5524,7 +5676,7 @@ final class AppModel {
         usesCoveredViewportTransition: Bool = false,
         closeDrawer: Bool? = nil
     ) -> Bool {
-        guard conversations.contains(where: { $0.id == id }),
+        guard let conversation = conversations.first(where: { $0.id == id }),
               let target = conversationMessageStore[id]?.first(where: {
                   $0.id == messageID && $0.conversationID == id
               }) else {
@@ -5579,6 +5731,7 @@ final class AppModel {
 
         // This selection owns a concrete message target, not the usual
         // return-to-bottom behavior.
+        adoptAssistantForConversationEntry(conversation)
         conversationBottomReturnTargetID = nil
         selectedConversationID = id
         conversationBottomReturnRequest += 1
@@ -7018,22 +7171,26 @@ final class AppModel {
         ProviderPersistence.saveFavoriteProviderIDs(favoriteProviderIDs)
     }
 
-    func presentBottomTools() {
-        bottomTools.reset()
-        let assistantKey = currentAssistantID.uuidString
-        let activeInstructionIDs = activeInstructionIDsByAssistant[assistantKey] ?? []
-        let activeWorldBookIDs = activeWorldBookIDsByAssistant[assistantKey] ?? []
-        bottomTools.instructions = instructionInjections.map { injection in
+    // Read through to the saved state so nested settings and assistant changes
+    // remain visible without reopening the tools sheet. Only navigation and
+    // the unsaved group selection belong to BottomToolsModel.
+    var bottomToolInstructions: [InstructionToolItem] {
+        let activeIDs = activeInstructionIDsByAssistant[currentAssistantID.uuidString] ?? []
+        return instructionInjections.map { injection in
             InstructionToolItem(
                 id: injection.id,
                 title: injection.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "未命名指令"
                     : injection.title,
                 group: injection.group,
-                selected: activeInstructionIDs.contains(injection.id)
+                selected: activeIDs.contains(injection.id)
             )
         }
-        bottomTools.worldBooks = worldBooks.map { book in
+    }
+
+    var bottomToolWorldBooks: [WorldBookToolItem] {
+        let activeIDs = activeWorldBookIDsByAssistant[currentAssistantID.uuidString] ?? []
+        return worldBooks.map { book in
             let description = book.description.trimmingCharacters(in: .whitespacesAndNewlines)
             return WorldBookToolItem(
                 id: book.id,
@@ -7042,10 +7199,13 @@ final class AppModel {
                     : book.name,
                 detail: description.isEmpty ? "\(book.entries.count) 个条目" : description,
                 enabled: book.enabled,
-                selected: activeWorldBookIDs.contains(book.id)
+                selected: activeIDs.contains(book.id)
             )
         }
-        bottomTools.assistants = assistants.map { AssistantToolItem(profile: $0) }
+    }
+
+    func presentBottomTools() {
+        bottomTools.reset()
         if let conversation = selectedConversation, conversation.groupAssistantIDs.count >= 2 {
             bottomTools.selectedAssistantIDs = Set(conversation.groupAssistantIDs.compactMap(UUID.init(uuidString:)))
             bottomTools.isEditingGroupChat = true
@@ -7421,7 +7581,8 @@ final class AppModel {
             conversations[index].updatedAt = now
             conversations[index].providerID = providerID
             conversations[index].modelID = context.selection.modelID
-            if conversations[index].groupAssistantIDs.count < 2 {
+            if conversations[index].groupAssistantIDs.count < 2,
+               conversations[index].assistantID == nil {
                 conversations[index].assistantID = replyAssistant.id.uuidString
             }
         }
@@ -8533,13 +8694,17 @@ final class AppModel {
             )
         }
 
-        let hasBuiltInSearch = assistant.searchEnabled && (provider.type == .claude || provider.type == .google)
+        let hasBuiltInSearch = assistant.searchEnabled && assistant.searchMode.usesBuiltInSearch(providerType: provider.type)
         let needsClientSearch = assistant.searchEnabled && !hasBuiltInSearch
 
         let supportsTools = ModelCapabilityRegistry.supportsTools(modelID: selection.modelID)
         let selectedSearchService = preferences.searchServices.first(where: {
             $0.id == preferences.selectedSearchServiceID
         }) ?? preferences.searchServices.first
+        if needsClientSearch && assistant.searchMode == .searchService {
+            guard selectedSearchService != nil else { throw AIChatServiceError.searchServiceNotConfigured }
+            guard supportsTools else { throw AIChatServiceError.clientSearchNotSupported }
+        }
         let usesClientSearch = needsClientSearch && supportsTools && selectedSearchService != nil
         let mcpDefinitions = mcpToolDefinitions(for: assistant, supportsTools: supportsTools)
         var fileAwareAssistant = assistant
@@ -8715,10 +8880,16 @@ final class AppModel {
                 for: completed
             )
         }
-        IOSBackgroundGenerationManager.shared.stageCompletedMessage(
+        _ = await IOSBackgroundGenerationManager.shared.stageCompletedMessageWithoutBlockingMain(
             runID: assistantMessage.id,
             message: completed
         )
+        guard !Task.isCancelled else {
+            // Finalization has released the active streaming message ID. Own
+            // this run's cleanup if a stop arrives during the awaited journal.
+            IOSBackgroundGenerationManager.shared.cancel(runID: assistantMessage.id)
+            throw CancellationError()
+        }
         let notificationBody = completed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? (completed.attachments.isEmpty ? "回复已完成" : "图片已生成")
             : completed.text
@@ -9355,6 +9526,15 @@ final class AppModel {
             streamDisplayBatchCharactersByMessageID.removeValue(forKey: messageID)
         case .ended:
             guard let rawText = rawStreamingTextByMessageID[messageID] else { return }
+            if streamDidPublishFirstVisibleTextMessageIDs.contains(messageID) {
+                // The cadence filters the latest buffer when it publishes; an
+                // already-visible reply needs no eager display-only parse here.
+                startStreamingDisplayCadenceIfNeeded(
+                    conversationID: conversationID,
+                    messageID: messageID
+                )
+                return
+            }
             let filtered = filteredStreamingDisplayText(rawText)
             scheduleStreamingTextDisplay(
                 conversationID: conversationID,
@@ -9421,6 +9601,11 @@ final class AppModel {
                 messageID,
                 default: conversationMessages[index].text
             ].append(chunk)
+            // Keep receiving raw text while hidden. Resume or finalization will
+            // filter it when needed, including before the first visible prefix.
+            guard streamDisplaySuspensionLedgersByMessageID[messageID]?.isSuspended != true else {
+                return
+            }
             guard !streamDidPublishFirstVisibleTextMessageIDs.contains(messageID) else {
                 // After the immediate first visible prefix, raw provider
                 // events only extend the authoritative buffer. The existing
@@ -11580,6 +11765,11 @@ final class AppModel {
     private func replyAssistantsForCurrentSend() -> [AssistantProfile] {
         guard let conversation = selectedConversation,
               conversation.groupAssistantIDs.count >= 2 else {
+            // A stale UI assistant must never migrate an existing chat or use
+            // another assistant's settings. Retain the legacy unassigned path.
+            if let ownerID = selectedConversation?.assistantID {
+                return assistantProfile(id: ownerID).map { [$0] } ?? []
+            }
             return [currentAssistant]
         }
 
@@ -11679,6 +11869,14 @@ final class AppModel {
         ) else {
             return nil
         }
+        _ = await IOSBackgroundGenerationManager.shared.stageCompletedMessageWithoutBlockingMain(
+            runID: messageID, message: completedMessage
+        )
+        try Task.checkCancellation()
+        guard activeStreamingMessageIDsByConversation[conversationID] == messageID,
+              conversationMessageStore[conversationID]?.contains(where: {
+                  $0.id == messageID && $0.status == .complete
+              }) == true else { throw CancellationError() }
         let saveApplication = await saveWithoutBlockingMain()
         try Task.checkCancellation()
         guard activeStreamingMessageIDsByConversation[conversationID] == messageID,
@@ -11809,7 +12007,7 @@ final class AppModel {
             )
         }
         touchConversation(conversationID)
-        if !cancelled, let completedMessage {
+        if !cancelled, !defersPersistence, let completedMessage {
             IOSBackgroundGenerationManager.shared.stageCompletedMessage(
                 runID: messageID,
                 message: completedMessage
@@ -12136,70 +12334,6 @@ final class AppModel {
             return nil
         }
         let candidateSnapshot = persistableConversationSnapshot()
-        let candidateMessageCount = candidateSnapshot.messagesByConversation.values.reduce(0) {
-            $0 + $1.count
-        }
-        let candidateConversationIDs = Set(
-            candidateSnapshot.conversations.map(\.id)
-        )
-        let candidateMessageIDs = Set(
-            candidateSnapshot.messagesByConversation.values
-                .joined().lazy
-                .map(\.id)
-        )
-        if !ConversationPersistencePolicy.permitsConversationCountChange(
-            from: lastPersistedConversationCount,
-            to: candidateSnapshot.conversations.count,
-            allowDestructiveReduction: allowDestructiveConversationReduction
-        ) {
-            let reason = """
-            检测到聊天数量从 \(lastPersistedConversationCount) 段异常降到 \
-            \(candidateSnapshot.conversations.count) 段，已拒绝覆盖旧存档。请重新打开 App 后重试。
-            """
-            blockConversationPersistence(reason)
-            presentConversationPersistenceErrorIfForeground()
-            return nil
-        }
-        if !ConversationPersistencePolicy.permitsRetainedIDs(
-            from: lastPersistedConversationIDs,
-            to: candidateConversationIDs,
-            allowDestructiveReduction: allowDestructiveConversationReduction
-        ) {
-            let reason = """
-            检测到未授权的聊天身份替换，已拒绝覆盖旧存档。\
-            请重新打开 App 后重试。
-            """
-            blockConversationPersistence(reason)
-            presentConversationPersistenceErrorIfForeground()
-            return nil
-        }
-        if !ConversationPersistencePolicy.permitsMessageCountChange(
-            from: lastPersistedMessageCount,
-            to: candidateMessageCount,
-            allowDestructiveReduction: allowDestructiveMessageReduction
-        ) {
-            let reason = """
-            检测到聊天消息从 \(lastPersistedMessageCount) 条异常降到 \
-            \(candidateMessageCount) 条，已拒绝覆盖旧存档。请重新打开 App 后重试。
-            """
-            blockConversationPersistence(reason)
-            presentConversationPersistenceErrorIfForeground()
-            return nil
-        }
-        if !ConversationPersistencePolicy.permitsRetainedIDs(
-            from: lastPersistedMessageIDs,
-            to: candidateMessageIDs,
-            allowDestructiveReduction: allowDestructiveMessageReduction
-        ) {
-            let reason = """
-            检测到未授权的消息身份替换，已拒绝覆盖旧存档。\
-            请重新打开 App 后重试。
-            """
-            blockConversationPersistence(reason)
-            presentConversationPersistenceErrorIfForeground()
-            return nil
-        }
-
         conversationSaveSequence &+= 1
         return PreparedConversationSave(
             executor: conversationStoreSaveExecutor,
@@ -12207,16 +12341,17 @@ final class AppModel {
                 snapshot: candidateSnapshot,
                 preserveExistingBackup:
                     conversationStoreShouldPreserveExistingBackup,
-                authorizedDestructiveReduction:
-                    allowDestructiveConversationReduction
-                    || allowDestructiveMessageReduction
+                previousIdentity: ConversationSaveIdentity(
+                    conversationCount: lastPersistedConversationCount,
+                    messageCount: lastPersistedMessageCount,
+                    conversationIDs: lastPersistedConversationIDs,
+                    messageIDs: lastPersistedMessageIDs
+                ),
+                allowDestructiveConversationReduction: allowDestructiveConversationReduction,
+                allowDestructiveMessageReduction: allowDestructiveMessageReduction
             ),
             epoch: conversationPersistenceEpoch,
-            sequence: conversationSaveSequence,
-            conversationCount: candidateSnapshot.conversations.count,
-            messageCount: candidateMessageCount,
-            conversationIDs: candidateConversationIDs,
-            messageIDs: candidateMessageIDs
+            sequence: conversationSaveSequence
         )
     }
 
@@ -12233,14 +12368,14 @@ final class AppModel {
             return .superseded
         }
         switch outcome {
-        case .success:
+        case .success(let identity):
             lastAppliedConversationSaveSequence = prepared.sequence
             conversationStoreShouldPreserveExistingBackup = false
-            unsavedDraftConversationIDs.subtract(prepared.conversationIDs)
-            lastPersistedConversationCount = prepared.conversationCount
-            lastPersistedMessageCount = prepared.messageCount
-            lastPersistedConversationIDs = prepared.conversationIDs
-            lastPersistedMessageIDs = prepared.messageIDs
+            unsavedDraftConversationIDs.subtract(identity.conversationIDs)
+            lastPersistedConversationCount = identity.conversationCount
+            lastPersistedMessageCount = identity.messageCount
+            lastPersistedConversationIDs = identity.conversationIDs
+            lastPersistedMessageIDs = identity.messageIDs
             return .committed
 
         case let .failure(description):
@@ -12264,6 +12399,14 @@ final class AppModel {
                 (conversationMessageStore[$0] ?? []).isEmpty
             }
         )
+        // The usual completion has no empty draft to omit. Preserve the
+        // existing value buffers instead of rebuilding both containers.
+        if omittedDraftIDs.isEmpty {
+            return ConversationSnapshot(
+                conversations: conversations,
+                messagesByConversation: messagesByConversation
+            )
+        }
         return ConversationSnapshot(
             conversations: conversations.filter {
                 !omittedDraftIDs.contains($0.id)
@@ -12283,6 +12426,129 @@ final class AppModel {
         }
     }
 }
+
+#if DEBUG
+
+/// Synthetic in-memory messages for the real Mocca MessageRow. No provider,
+/// attachment, URL, or remote citation is needed by these rendering fixtures.
+enum NativeReadingFixtures {
+    static let testBundleID = "com.mocca.local.history-native-reading5075"
+    static let launchFlag = "-previewNativeReadingFixture"
+
+    enum Name: String, CaseIterable {
+        case short, complex, window500, versions
+    }
+
+    struct Fixture {
+        let conversation: Conversation
+        let messages: [ChatMessage]
+        let selectedIDs: [UUID]
+        let longMessageIDs: Set<UUID>
+    }
+
+    static var requestedName: Name? {
+        guard Bundle.main.bundleIdentifier == testBundleID else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: launchFlag), index + 1 < args.count else { return nil }
+        return Name(rawValue: args[index + 1])
+    }
+
+    static func messageID(_ index: Int, variant: Int = 0) -> UUID {
+        UUID(uuidString: "50750000-0000-4000-8\(variant)00-\(String(format: "%012d", index))")!
+    }
+
+    static func make(_ name: Name, assistantID: UUID) -> Fixture {
+        let number = Name.allCases.firstIndex(of: name)! + 1
+        let conversationID = UUID(uuidString: "50750000-0000-4000-9000-\(String(format: "%012d", number))")!
+        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        var conversation = Conversation(
+            id: conversationID, title: "实验阅读 fixture · \(name.rawValue)",
+            createdAt: date, updatedAt: date, assistantID: assistantID.uuidString
+        )
+        let count: Int
+        switch name {
+        case .short: count = 2
+        case .complex: count = 24
+        case .window500: count = 500
+        case .versions: count = 8
+        }
+        var longIDs = Set<UUID>()
+        var messages = (0..<count).map { index -> ChatMessage in
+            let role: ChatMessage.Role = index.isMultiple(of: 2) ? .user : .assistant
+            let body: String
+            switch name {
+            case .short:
+                body = index == 0 ? "短聊天：检查独立阅读入口。" : "两条消息即可显示完整；关闭后主聊天保持原状。"
+            case .window500:
+                // Compact enough for bounded real gestures to cross the 360-row
+                // cap. Unequal prose lengths still exercise real preferred sizing.
+                body = index.isMultiple(of: 29)
+                    ? (0..<(2 + index % 3)).map { "第 \($0) 段：这条消息稍长，用真实文本排版产生不同高度。" }.joined(separator: "\n\n")
+                    : "第 \(index) 条：" + String(repeating: "按顺序阅读。", count: 1 + index % 3)
+            case .complex:
+                if [3, 9, 17, 23].contains(index) {
+                    longIDs.insert(messageID(index))
+                    body = complexBody(index)
+                } else {
+                    body = (0..<(1 + index % 4)).map { "段落 \($0)：中文、é、🙂 与 **粗体**、`inline code`。" }.joined(separator: "\n\n")
+                }
+            case .versions:
+                body = "选中版本 fixture，逻辑序号 \(index)，默认版本 0。"
+            }
+            return ChatMessage(
+                id: messageID(index), conversationID: conversationID, role: role,
+                text: "[NR5075 \(name.rawValue) \(index) BEGIN]\n\n\(body)\n\n[NR5075 \(index) END]",
+                createdAt: date.addingTimeInterval(Double(index)),
+                updatedAt: date.addingTimeInterval(Double(index)), status: .complete
+            )
+        }
+        var selectedIDs = messages.map(\.id)
+        if name == .versions {
+            let group = "native-reading-selected-version-3"
+            messages[3].versionGroupID = group
+            for version in 1...2 {
+                let message = ChatMessage(
+                    id: messageID(3, variant: version), conversationID: conversationID,
+                    role: .assistant, text: "[NR5075 SELECTED VERSION \(version)]\n\n" + complexBody(17),
+                    createdAt: date.addingTimeInterval(3 + Double(version) / 10),
+                    updatedAt: date.addingTimeInterval(3 + Double(version) / 10),
+                    versionGroupID: group, version: version
+                )
+                messages.insert(message, at: 3 + version)
+            }
+            // Explicitly choose version 1 although version 2 is newer.
+            conversation.versionSelections[group] = 1
+            selectedIDs[3] = messageID(3, variant: 1)
+            longIDs.insert(selectedIDs[3])
+        }
+        return Fixture(conversation: conversation, messages: messages,
+                       selectedIDs: selectedIDs, longMessageIDs: longIDs)
+    }
+
+    private static func complexBody(_ index: Int) -> String {
+        switch index {
+        case 3:
+            return "# 长正文\n\n" + (0..<48).map {
+                "第 \($0) 段。春天的风吹过山坡，河水绕过村庄。中文与 é、🙂、**粗体** 混合，宽度改变时应重新测量，段落不应互相覆盖。"
+            }.joined(separator: "\n\n")
+        case 9:
+            return "## 真实 Markdown 表格\n\n| 序号 | 说明 | 状态 |\n| --- | --- | --- |\n"
+                + (0..<32).map { "| \($0) | " + String(repeating: "表格文字自然换行。", count: 1 + $0 % 4) + " | 完成 |" }.joined(separator: "\n")
+                + "\n\n表格之后的普通正文，应独立布局。"
+        case 17:
+            return "## 真实代码块\n\n```swift\n" + (0..<12).map {
+                "let row\($0) = \"中文 code \($0)\" // " + String(repeating: "wide", count: 2 + $0 % 7)
+            }.joined(separator: "\n") + "\n```\n\n代码块之后的段落，用于发现高度或复用错误。"
+        default:
+            return (0..<10).map { section in
+                "## 混合布局 \(section)\n\n> 引用与 **加粗**。\n\n- 列表第一项\n- 第二项有 `inline code`\n\n"
+                + "普通段落。" + String(repeating: "段落长度不同，保留自然换行。", count: 1 + section % 4)
+                + "\n\n---"
+            }.joined(separator: "\n\n")
+        }
+    }
+}
+#endif
 
 /// Presentation only; image bytes remain ordinary persisted message attachments.
 enum NativeImageReplyPresentation {

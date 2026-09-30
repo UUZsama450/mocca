@@ -53,6 +53,7 @@ enum AttachmentStore {
 '''
 support += block(attachment, '    static func saveGeneratedImage(') + '\n}\n'
 support += block(app, 'enum NativeImageReplyPresentation {') + '\n'
+support += (ROOT / 'Mocca/OffscreenStreamingDisplayPolicy.swift').read_text()
 support += '''
 enum IOSBackgroundGenerationManager {
     static let shared = IOSBackgroundGenerationManagerImpl()
@@ -72,6 +73,7 @@ final class MessageHost {
         set { messagesByConversation = newValue }
     }
     var rawStreamingTextByMessageID: [UUID: String] = [:]
+    var streamDisplaySuspensionLedgersByMessageID: [UUID: StreamingTextDisplaySuspensionLedger] = [:]
     var streamDidPublishFirstVisibleTextMessageIDs = Set<UUID>()
     func startStreamingDisplayCadenceIfNeeded(conversationID: UUID, messageID: UUID) {}
     func filteredStreamingDisplayText(_ text: String) -> (text: String, codecDuration: Double, filterInputUTF16: Int) { (text, 0, text.utf16.count) }

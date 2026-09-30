@@ -280,6 +280,65 @@ struct MessageCitationSource: Hashable, Identifiable {
 }
 
 @MainActor
+final class MessageCitationPreparationCache {
+    private struct Row: Equatable {
+        let id: UUID
+        let role: ChatMessage.Role
+        let results: [String]
+
+        static func == (lhs: Row, rhs: Row) -> Bool {
+            // Canonically equivalent Unicode can still encode different URLs.
+            lhs.id == rhs.id && lhs.role == rhs.role
+                && lhs.results.elementsEqual(rhs.results) {
+                    $0.utf8.elementsEqual($1.utf8)
+                }
+        }
+    }
+
+    private struct Input: Equatable {
+        let conversationID: UUID
+        let retentionTurns: Int
+        let rows: [Row]
+    }
+
+    private var input: Input?
+    private var prepared: [UUID: [MessageCitationSource]] = [:]
+
+    func sourcesByMessageID(
+        conversationID: UUID,
+        from messages: [ChatMessage],
+        retentionTurns: Int
+    ) -> [UUID: [MessageCitationSource]] {
+        // Ordinary chats need neither a snapshot nor citation bookkeeping.
+        guard messages.contains(where: {
+            $0.role == .assistant && $0.toolEvents.contains { $0.resultText != nil }
+        }) else {
+            input = nil
+            prepared = [:]
+            return [:]
+        }
+
+        // Citation parsing reads only assistant result text. Preserve row order,
+        // identities and roles because they determine output keys and expiry.
+        // Body/reasoning updates can then reuse the last window's preparation.
+        let next = Input(
+            conversationID: conversationID,
+            retentionTurns: retentionTurns,
+            rows: messages.map {
+                Row(id: $0.id, role: $0.role, results: $0.role == .assistant
+                    ? $0.toolEvents.compactMap(\.resultText) : [])
+            }
+        )
+        if input == next { return prepared }
+        prepared = MessageCitationSource.sourcesByMessageID(
+            from: messages, retentionTurns: retentionTurns
+        )
+        input = next
+        return prepared
+    }
+}
+
+@MainActor
 private final class CitationFaviconLoader {
     static let shared = CitationFaviconLoader()
 
@@ -586,6 +645,7 @@ struct MessageMarkdownView: View {
     var compactMaximumWidth: CGFloat?
     var allowsTextSelection = true
     var prefersUnifiedNativeSelection = false
+    var preparesDisclosureContent = false
     var foregroundColor: Color = Color(uiColor: .label)
     var largeHeadingColor: Color?
     var smallHeadingColor: Color?
@@ -602,7 +662,10 @@ struct MessageMarkdownView: View {
 
     private var blocks: [MarkdownRenderBlock] {
         isStreaming
-            ? MarkdownRenderParser.parse(text)
+            ? MarkdownRenderParser.parse(
+                text,
+                previewsIncompleteEmphasis: rendersMarkdown && !isUserMessage
+            )
             : MarkdownRenderCache.blocks(for: text)
     }
 
@@ -703,6 +766,7 @@ struct MessageMarkdownView: View {
                     selectionTintColor: UIColor(selectionTintColor),
                     widthPolicy: resolvedCompactMaximumWidth.map { .fit(maxWidth: $0) } ?? .fill,
                     allowsSelection: allowsTextSelection && !isStreaming,
+                    preparesDisclosureContent: preparesDisclosureContent,
                     usesSharedMeasurementCache: !isStreaming,
                     preparationSource: !isStreaming && text.utf16.count >= 2_048 ? text : nil,
                     onBlankLongPress: onBlankLongPress,
@@ -764,6 +828,7 @@ struct MessageMarkdownView: View {
                         selectionTintColor: UIColor(selectionTintColor),
                         widthPolicy: resolvedCompactMaximumWidth.map { .fit(maxWidth: $0) } ?? .fill,
                         allowsSelection: allowsTextSelection && !isStreaming,
+                    preparesDisclosureContent: preparesDisclosureContent,
                         usesSharedMeasurementCache: !isStreaming,
                         preparationSource: nil,
                         onBlankLongPress: onBlankLongPress,
@@ -1338,6 +1403,7 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
     let selectionTintColor: UIColor
     let widthPolicy: UnifiedTextWidthPolicy
     let allowsSelection: Bool
+    var preparesDisclosureContent = false
     let usesSharedMeasurementCache: Bool
     let preparationSource: String?
     let onBlankLongPress: ((CGPoint) -> Void)?
@@ -1351,6 +1417,7 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIView {
         let textView = GlyphSelectableTextView()
+        textView.preparesDisclosureContent = preparesDisclosureContent
         textView.usesVisibleGlyphHitTesting = usesCompactBubbleHitTesting
         textView.isEditable = false
         textView.isSelectable = true
@@ -1402,6 +1469,7 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         guard let textView = selectableTextView(in: uiView) else { return }
+        textView.preparesDisclosureContent = preparesDisclosureContent
         context.coordinator.textView = textView
         textView.usesVisibleGlyphHitTesting = usesCompactBubbleHitTesting
         (uiView as? CompactSelectableTextHostView)?.onBlankLongPress = onBlankLongPress
@@ -2211,6 +2279,34 @@ private final class GlyphSelectableTextView: UITextView {
     static let initialSelectionLongPressDuration: TimeInterval = 0.28
     private static let viewportOverscan: CGFloat = 720
 
+    override func becomeFirstResponder() -> Bool {
+        // A body tap dismisses the composer through the transcript's tap owner.
+        // UIKit may deliver its single-tap selection action after the composer
+        // has reopened. That completed tap must not steal the new focus. Leave
+        // double-tap, long-press and non-touch selection requests to UIKit.
+        if !isFirstResponder,
+           (gestureRecognizers ?? []).contains(where: {
+               guard let tap = $0 as? UITapGestureRecognizer else { return false }
+               return tap.numberOfTapsRequired == 1 && tap.state == .ended
+           }),
+           let input = ComposerTextSelectionInteractionGate.focusedComposerInput,
+           input.window === window {
+            return false
+        }
+        return super.becomeFirstResponder()
+    }
+
+    // Draw enough text for a growing disclosure before its initial zero-height
+    // clip opens. UIKit still clips the displayed layer; outer scroll/window
+    // bounds and the existing overscan still bound TextKit drawing work.
+    var preparesDisclosureContent = false {
+        didSet {
+            guard oldValue != preparesDisclosureContent else { return }
+            contentDidChangeForViewportDrawing()
+        }
+    }
+
+
     private var didTuneInitialSelectionLongPress = false
     private let decorationLayoutManager: MarkdownDecorationLayoutManager
     private weak var observedOuterScrollView: UIScrollView?
@@ -2538,7 +2634,7 @@ private final class GlyphSelectableTextView: UITextView {
         var visibleRect = convert(window.bounds, from: window).intersection(bounds)
         var ancestor = superview
         while let view = ancestor {
-            if view.clipsToBounds || view is UIScrollView {
+            if view is UIScrollView || (view.clipsToBounds && !preparesDisclosureContent) {
                 visibleRect = visibleRect.intersection(
                     convert(view.bounds, from: view)
                 )
@@ -4246,8 +4342,9 @@ private struct NativeSelectableCodeText: UIViewRepresentable {
         Coordinator()
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView(frame: .zero, textContainer: nil)
+    func makeUIView(context: Context) -> CodeViewportDocumentView {
+        let document = CodeViewportDocumentView(frame: .zero)
+        let textView = document.textView
         textView.isEditable = false
         textView.isSelectable = true
         textView.isScrollEnabled = false
@@ -4265,24 +4362,37 @@ private struct NativeSelectableCodeText: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
         textView.setContentHuggingPriority(.required, for: .horizontal)
         textView.setContentHuggingPriority(.required, for: .vertical)
+        context.coordinator.syntaxColors.didApplyColors = { [weak document] in
+            document?.invalidateTextLayout()
+        }
         apply(to: textView, coordinator: context.coordinator)
-        return textView
+        document.configure(size: context.coordinator.measuredSize, settled: usesSharedMeasurementCache, contentChanged: true)
+        return document
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
-        apply(to: textView, coordinator: context.coordinator)
+    func updateUIView(_ view: CodeViewportDocumentView, context: Context) {
+        updateContent(in: view, coordinator: context.coordinator)
     }
 
-    static func dismantleUIView(_ textView: UITextView, coordinator: Coordinator) {
+    private func updateContent(in view: CodeViewportDocumentView, coordinator: Coordinator) {
+        let document = view
+        let textView = document.textView
+        let previousRevision = coordinator.renderRevision
+        apply(to: textView, coordinator: coordinator)
+        document.configure(size: coordinator.measuredSize, settled: usesSharedMeasurementCache,
+                            contentChanged: previousRevision != coordinator.renderRevision)
+    }
+
+    static func dismantleUIView(_ view: CodeViewportDocumentView, coordinator: Coordinator) {
         coordinator.syntaxColors.cancel()
     }
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        uiView textView: UITextView,
+        uiView view: CodeViewportDocumentView,
         context: Context
     ) -> CGSize? {
-        apply(to: textView, coordinator: context.coordinator)
+        updateContent(in: view, coordinator: context.coordinator)
         return context.coordinator.measuredSize
     }
 
@@ -4318,6 +4428,7 @@ private struct NativeSelectableCodeText: UIViewRepresentable {
             return
         }
 
+        coordinator.renderRevision &+= 1
         let renderMeasurementKey = usesSharedMeasurementCache
             ? codeMeasurementKey(for: text, styleSignature: measurementStyleSignature)
             : nil
@@ -4374,11 +4485,7 @@ private struct NativeSelectableCodeText: UIViewRepresentable {
            let cachedSize = UnifiedTextMeasurementCache.code.value(for: cacheKey) {
             return cachedSize
         }
-        let bounds = attributedText().boundingRect(
-            with: CGSize(width: 1_000_000, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        )
+        let bounds = Self.measuredCodeBounds(for: attributedText())
         let pixel = 1 / displayScale
         let measuredSize = CGSize(
             width: max(pixel, ceil(bounds.width * displayScale) / displayScale + pixel),
@@ -4388,6 +4495,58 @@ private struct NativeSelectableCodeText: UIViewRepresentable {
             UnifiedTextMeasurementCache.code.insert(measuredSize, for: cacheKey)
         }
         return measuredSize
+    }
+
+    private static func measuredCodeBounds(for text: NSAttributedString) -> CGRect {
+        let constraint = CGSize(width: 1_000_000, height: CGFloat.greatestFiniteMagnitude)
+        func bounds(_ value: NSAttributedString) -> CGRect {
+            value.boundingRect(
+                with: constraint,
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            )
+        }
+        guard text.length > 0,
+              let font = text.attribute(.font, at: 0, effectiveRange: nil) as? UIFont else {
+            return bounds(text)
+        }
+        // Code uses one font and paragraph style. Keep the original drawing
+        // API and width cap, measuring existing paragraphs independently.
+        // The final paragraph also needs the first paragraph's drawing context
+        // to preserve whole-block trailing-whitespace measurement semantics.
+        let source = text.string as NSString
+        var start = 0
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+        var firstParagraph: NSAttributedString?
+        var firstHeight: CGFloat = 0
+        while start < source.length {
+            var end = 0
+            source.getParagraphStart(nil, end: &end, contentsEnd: nil,
+                                     for: NSRange(location: start, length: 0))
+            if start == 0, end == source.length { return bounds(text) }
+            let paragraph = text.attributedSubstring(from: NSRange(location: start, length: end - start))
+            let size: CGSize
+            if end == source.length, let firstParagraph {
+                let contextual = NSMutableAttributedString(attributedString: firstParagraph)
+                contextual.append(paragraph)
+                let combined = bounds(contextual).size
+                size = CGSize(width: combined.width, height: combined.height - firstHeight + font.lineHeight)
+            } else {
+                size = bounds(paragraph).size
+            }
+            if start == 0 {
+                firstParagraph = paragraph
+                firstHeight = size.height
+            }
+            width = max(width, size.width)
+            height += size.height
+            // A retained paragraph terminator measures an extra empty line.
+            // The next paragraph supplies that line; retain the original gap.
+            if end < source.length { height -= font.lineHeight }
+            start = end
+        }
+        return CGRect(x: 0, y: 0, width: width, height: height)
     }
 
     private func codeMeasurementKey(
@@ -4400,6 +4559,7 @@ private struct NativeSelectableCodeText: UIViewRepresentable {
 
     @MainActor
     final class Coordinator {
+        var renderRevision: UInt64 = 0
         let syntaxColors = CodeSyntaxTextStyler()
         var text: String?
         var fontSize: CGFloat?
@@ -5340,8 +5500,208 @@ private final class MarkdownAttributedCacheEntry {
     }
 }
 
+/// A display-only completion of the active inline paragraph. Stored Markdown,
+/// completed messages and code/table blocks always retain their original source.
+/// Ambiguous syntax deliberately stays on the ordinary Markdown path.
+private enum StreamingEmphasisPreview {
+    static func apply(to blocks: inout [MarkdownRenderBlock], source: String) {
+        guard let last = blocks.last, !endsInBlankLine(source) else { return }
+        let kind: MarkdownRenderBlock.Kind
+        switch last.kind {
+        case .text(let text):
+            guard let preview = completing(text) else { return }
+            kind = .text(preview)
+        case .heading(let level, let text):
+            guard let preview = completing(text) else { return }
+            kind = .heading(level: level, text: preview)
+        case .quote(let text):
+            guard let preview = completing(text) else { return }
+            kind = .quote(preview)
+        case .list(var entries):
+            guard let entry = entries.last, entry.nestedQuoteLines.isEmpty,
+                  let preview = completing(entry.content) else { return }
+            entries[entries.count - 1].content = preview
+            kind = .list(entries)
+        case .code, .table, .horizontalRule:
+            return
+        }
+        blocks[blocks.count - 1] = MarkdownRenderBlock(id: last.id, kind: kind)
+    }
+
+    static func completing(_ source: String) -> String? {
+        let bytes = source.utf8
+        guard containsASCII(0x2A, in: source) else { return nil }
+        let start = activeParagraphStart(source)
+        guard !source[start...].hasPrefix("    "), !source[start...].hasPrefix("\t") else {
+            return nil
+        }
+        guard start == source.startIndex || bytes[start...].contains(0x2A) else { return nil }
+
+        // Scan ASCII syntax without allocating a Character array for a long
+        // paragraph. Unicode boundary checks happen only at candidate delimiters.
+        var index = start
+        var openers: [Int] = []
+        var backticks = 0
+        var parentheses = 0
+        var escaped = false
+        var partialStrongCloser = false
+        while index < bytes.endIndex {
+            let byte = bytes[index]
+            let next = bytes.index(after: index)
+            if escaped {
+                escaped = false
+                index = next
+                // A partly escaped star run is ambiguous (\**literal).
+                // Do not reinterpret its remaining stars as a new opener.
+                if byte == 0x2A {
+                    guard index == bytes.endIndex || bytes[index] != 0x2A else { return nil }
+                }
+                continue
+            }
+            if byte == 0x5C, backticks == 0 { // Backslash escape.
+                escaped = true
+                index = next
+                continue
+            }
+            if byte == 0x60 {
+                var end = next
+                var count = 1
+                while end < bytes.endIndex, bytes[end] == byte {
+                    count += 1
+                    end = bytes.index(after: end)
+                }
+                if backticks == 0 { backticks = count }
+                else if backticks == count { backticks = 0 }
+                index = end
+                continue
+            }
+            if backticks != 0 {
+                index = next
+                continue
+            }
+            // Links, HTML, math and underscores can change inline precedence.
+            // Leave these paragraphs to the existing exact parser.
+            if byte == 0x5B || byte == 0x5D || byte == 0x3C || byte == 0x3E
+                || byte == 0x24 || byte == 0x5F {
+                return nil
+            }
+            if byte == 0x28 { parentheses += 1 }
+            if byte == 0x29 { parentheses = max(0, parentheses - 1) }
+            if byte == 0xEF {
+                let scalar = source.unicodeScalars[index].value
+                if scalar == 0xFF08 { parentheses += 1 }
+                if scalar == 0xFF09 { parentheses = max(0, parentheses - 1) }
+            }
+            guard byte == 0x2A else {
+                index = next
+                continue
+            }
+
+            var end = next
+            var count = 1
+            while end < bytes.endIndex, bytes[end] == byte {
+                count += 1
+                end = bytes.index(after: end)
+            }
+            guard count <= 2 else { return nil }
+            if parentheses > 0 {
+                // In particular, never consume the star in an unfinished
+                // kaomoji such as (*´ω. Final kaomoji handling is unchanged.
+                index = end
+                continue
+            }
+            let previous = index > start ? source[source.index(before: index)] : nil
+            let following = end < source.endIndex ? source[end] : nil
+            let canClose = previous.map { previous in
+                !previous.isWhitespace && (following.map {
+                    $0.isWhitespace || !isPunctuation(previous) || isPunctuation($0)
+                } ?? true)
+            } ?? false
+            if canClose, openers.last == count {
+                openers.removeLast()
+            } else if canClose, openers.last == 2, count == 1, end == bytes.endIndex {
+                // A ** closer may itself be split across two provider chunks.
+                partialStrongCloser = true
+            } else if let following, following.isLetter || following.isNumber,
+                      canOpen(after: previous, count: count) {
+                guard openers.count < 8 else { return nil }
+                openers.append(count)
+            } else if !openers.isEmpty {
+                return nil
+            }
+            index = end
+        }
+        guard !openers.isEmpty, backticks == 0, !escaped else { return nil }
+
+        var contentEnd = source.endIndex
+        while contentEnd > start, source[source.index(before: contentEnd)].isWhitespace {
+            contentEnd = source.index(before: contentEnd)
+        }
+        let count = openers.reduce(0, +) - (partialStrongCloser ? 1 : 0)
+        return String(source[..<contentEnd]) + String(repeating: "*", count: count)
+            + source[contentEnd...]
+    }
+
+    private static func canOpen(after previous: Character?, count: Int) -> Bool {
+        guard let previous else { return true }
+        if previous == "/" || previous == "\\" { return false }
+        // Avoid turning ASCII multiplication / wildcards (a*b, 2*3) into
+        // provisional italics. CJK intraword emphasis remains supported.
+        if count == 1, previous.isASCII, previous.isLetter || previous.isNumber {
+            return false
+        }
+        return true
+    }
+
+    private static func isPunctuation(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy {
+            CharacterSet.punctuationCharacters.contains($0)
+                || ($0.isASCII && CharacterSet.symbols.contains($0))
+        }
+    }
+
+    private static func endsInBlankLine(_ source: String) -> Bool {
+        var newlines = 0
+        for byte in source.utf8.reversed() {
+            if byte == 0x0A {
+                newlines += 1
+                if newlines == 2 { return true }
+            } else if byte != 0x20 && byte != 0x09 && byte != 0x0D {
+                return false
+            }
+        }
+        return false
+    }
+
+    private static func activeParagraphStart(_ source: String) -> String.Index {
+        let bytes = source.utf8
+        guard containsASCII(0x0A, in: source) else { return source.startIndex }
+        var index = bytes.endIndex
+        var afterNewline: String.Index?
+        while index > bytes.startIndex {
+            index = bytes.index(before: index)
+            let byte = bytes[index]
+            if byte == 0x0A {
+                if let afterNewline { return afterNewline }
+                afterNewline = bytes.index(after: index)
+            } else if byte != 0x20 && byte != 0x09 && byte != 0x0D {
+                afterNewline = nil
+            }
+        }
+        return source.startIndex
+    }
+
+    private static func containsASCII(_ byte: UInt8, in source: String) -> Bool {
+        source.utf8.withContiguousStorageIfAvailable { $0.contains(byte) }
+            ?? source.utf8.contains(byte)
+    }
+}
+
 private enum MarkdownRenderParser {
-    static func parse(_ source: String) -> [MarkdownRenderBlock] {
+    static func parse(
+        _ source: String,
+        previewsIncompleteEmphasis: Bool = false
+    ) -> [MarkdownRenderBlock] {
         guard !source.isEmpty else { return [] }
 
         var blocks: [MarkdownRenderBlock] = []
@@ -5524,6 +5884,9 @@ private enum MarkdownRenderParser {
 
         if blocks.isEmpty {
             blocks.append(MarkdownRenderBlock(id: 0, kind: .text(source)))
+        }
+        if previewsIncompleteEmphasis {
+            StreamingEmphasisPreview.apply(to: &blocks, source: source)
         }
         return blocks
     }
@@ -5855,5 +6218,147 @@ private enum MarkdownRenderParser {
             lines.removeLast()
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+// Preserve one document and its fixed code width while bounding display height.
+// The measured document size remains the only size reported to the transcript.
+private final class CodeViewportTextView: UITextView {
+    var mapsDocumentCoordinates = false
+
+
+    override var bounds: CGRect {
+        didSet { alignDocumentOrigin() }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        alignDocumentOrigin()
+    }
+
+    func alignDocumentOrigin() {
+        guard mapsDocumentCoordinates else { return }
+        let documentCenter = CGPoint(x: bounds.midX, y: bounds.midY)
+        if center != documentCenter { center = documentCenter }
+    }
+}
+
+private final class CodeViewportDocumentView: UIView {
+    let textView = CodeViewportTextView(frame: .zero, textContainer: nil)
+    private var documentSize = CGSize.zero
+    private var usesViewport = false
+    private var needsExactLayout = true
+    private var updating = false
+    private var scrollAncestorIDs: [ObjectIdentifier] = []
+    private var observations: [NSKeyValueObservation] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = true
+        addSubview(textView)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(size: CGSize, settled: Bool, contentChanged: Bool) {
+        if size != documentSize || contentChanged || settled != usesViewport {
+            needsExactLayout = true
+        }
+        documentSize = size
+        usesViewport = settled
+        setNeedsLayout()
+    }
+
+    func invalidateTextLayout() {
+        // TextKit invalidates document geometry even for foreground-color edits.
+        // Restore exact paragraph positions once per actual coloring transaction.
+        needsExactLayout = true
+        setNeedsLayout()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            observations.removeAll()
+            scrollAncestorIDs.removeAll()
+        } else {
+            attachScrollObservations()
+            updateViewport()
+        }
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        if window != nil { attachScrollObservations() }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        attachScrollObservations()
+        updateViewport()
+    }
+
+    private func attachScrollObservations() {
+        guard window != nil else { return }
+        let ancestors = sequence(first: superview, next: { $0?.superview })
+            .compactMap { $0 as? UIScrollView }
+        guard ancestors.map(ObjectIdentifier.init) != scrollAncestorIDs else { return }
+        observations.removeAll()
+        scrollAncestorIDs = ancestors.map(ObjectIdentifier.init)
+        observations = ancestors.map { scroll in
+            scroll.observe(\.bounds, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.updateViewport() }
+            }
+        }
+    }
+
+    private func updateViewport() {
+        guard !updating, documentSize.width > 0, documentSize.height > 0 else { return }
+        updating = true
+        defer { updating = false }
+        // A document that fits one full screen keeps the original full-host
+        // behavior. This includes collapsed previews and ordinary short code.
+        let bounded = usesViewport && (window == nil || documentSize.height > (window?.bounds.height ?? 0))
+        textView.mapsDocumentCoordinates = bounded
+        if textView.isScrollEnabled != bounded { textView.isScrollEnabled = bounded }
+        textView.panGestureRecognizer.isEnabled = false
+        textView.clipsToBounds = !bounded
+        guard bounded else {
+            textView.frame = CGRect(origin: .zero, size: documentSize)
+            textView.contentOffset = .zero
+            return
+        }
+        // The outer chat and horizontal scroller own the visible interval.
+        // Ignore horizontal clipping: resizing code width would reflow TextKit.
+        var minY: CGFloat = 0
+        var maxY = documentSize.height
+        if let window {
+            let screen = convert(window.bounds, from: window)
+            minY = max(minY, screen.minY)
+            maxY = min(maxY, screen.maxY)
+            var ancestor = superview
+            while let parent = ancestor {
+                if parent is UIScrollView || parent.clipsToBounds {
+                    let clip = convert(parent.bounds, from: parent)
+                    minY = max(minY, clip.minY)
+                    maxY = min(maxY, clip.maxY)
+                }
+                ancestor = parent.superview
+            }
+        } else {
+            maxY = 0
+        }
+        let originY = min(documentSize.height, max(0, minY))
+        let viewportHeight = max(0, maxY - originY)
+        let frame = CGRect(x: 0, y: originY, width: documentSize.width, height: viewportHeight)
+        if textView.frame != frame { textView.frame = frame }
+        if needsExactLayout, window != nil,
+           let manager = textView.textLayoutManager, let content = manager.textContentManager {
+            manager.ensureLayout(for: content.documentRange)
+            needsExactLayout = false
+        }
+        let offset = CGPoint(x: 0, y: originY)
+        if textView.contentOffset != offset { textView.setContentOffset(offset, animated: false) }
+        textView.alignDocumentOrigin()
     }
 }

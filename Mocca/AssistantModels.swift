@@ -41,6 +41,41 @@ struct AssistantMemory: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+enum AssistantSearchMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case automatic
+    case modelBuiltIn
+    case searchService
+
+    var id: String { rawValue }
+
+    @MainActor var title: String {
+        switch self {
+        case .automatic: L10n.lookup("自动")
+        case .modelBuiltIn: L10n.lookup("模型内置搜索")
+        case .searchService: L10n.lookup("应用搜索服务")
+        }
+    }
+
+    @MainActor var explanation: String {
+        switch self {
+        case .automatic:
+            L10n.lookup("自动选择内置搜索或应用搜索服务。")
+        case .modelBuiltIn:
+            L10n.lookup("由模型服务商提供搜索，无需单独配置搜索服务。可用性和费用取决于所选模型及服务商。")
+        case .searchService:
+            L10n.lookup("使用设置中选定的应用搜索服务，需要模型支持工具调用。")
+        }
+    }
+
+    func usesBuiltInSearch(providerType: ProviderType) -> Bool {
+        switch self {
+        case .automatic: providerType == .claude || providerType == .google
+        case .modelBuiltIn: true
+        case .searchService: false
+        }
+    }
+}
+
 struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
     static let currentSchemaVersion = 5
     static let assetAvatarPrefix = "asset:"
@@ -74,6 +109,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
     /// `file:<name>` 指向 App Support/AssistantMedia 中的聊天背景。
     var background: String?
     var searchEnabled: Bool
+    var searchMode: AssistantSearchMode
     var localToolIDs: Set<String>
     var mcpServerIDs: [UUID]
     var enableMemory: Bool
@@ -119,6 +155,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         presetMessages: [PresetMessage] = [],
         background: String? = nil,
         searchEnabled: Bool = false,
+        searchMode: AssistantSearchMode = .automatic,
         localToolIDs: Set<String> = [],
         mcpServerIDs: [UUID] = [],
         enableMemory: Bool = false,
@@ -155,6 +192,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         self.presetMessages = presetMessages
         self.background = background
         self.searchEnabled = searchEnabled
+        self.searchMode = searchMode
         self.localToolIDs = localToolIDs
         self.mcpServerIDs = mcpServerIDs
         self.enableMemory = enableMemory
@@ -198,6 +236,9 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         presetMessages = try container.decodeIfPresent([PresetMessage].self, forKey: .presetMessages) ?? []
         background = try container.decodeIfPresent(String.self, forKey: .background)
         searchEnabled = try container.decodeIfPresent(Bool.self, forKey: .searchEnabled) ?? false
+        searchMode = AssistantSearchMode(
+            rawValue: try container.decodeIfPresent(String.self, forKey: .searchMode) ?? ""
+        ) ?? .automatic
         localToolIDs = Set(try container.decodeIfPresent([String].self, forKey: .localToolIDs) ?? [])
         mcpServerIDs = try container.decodeIfPresent([UUID].self, forKey: .mcpServerIDs) ?? []
         enableMemory = try container.decodeIfPresent(Bool.self, forKey: .enableMemory) ?? false

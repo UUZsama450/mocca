@@ -442,6 +442,12 @@ struct PendingGenerationCompletionRecord: Codable, Hashable {
 enum PendingGenerationCompletionJournal {
     static let directoryName = "PendingGenerationCompletions"
     static let maximumRecordByteCount = 16 * 1_024 * 1_024
+    // Recovery can run on foreground/unlock while completion awaits a write.
+    // Readers, writers and removal share a lane so recovery never consumes a
+    // truncated/in-flight journal or unlinks one underneath its writer.
+    private static let queue = DispatchQueue(
+        label: "com.uuzsama450.mocca.completion-journal", qos: .utility
+    )
 
     struct RecoveryReport {
         var recoveredMessageIDs: [UUID] = []
@@ -453,7 +459,9 @@ enum PendingGenerationCompletionJournal {
         }
     }
 
-    final class Writer {
+    // All mutable file/encoder state is confined to the shared journal lane.
+    // Immutable ChatMessage value snapshots may be submitted from MainActor.
+    final class Writer: @unchecked Sendable {
         let runID: UUID
         let conversationID: UUID
         let fileURL: URL
@@ -461,6 +469,13 @@ enum PendingGenerationCompletionJournal {
         private let fileManager: FileManager
         private var fileHandle: FileHandle?
         private let encoder: JSONEncoder
+        private let queue = PendingGenerationCompletionJournal.queue
+        private var lastCompletedMessage: ChatMessage?
+
+        private final class CompletionRequest: @unchecked Sendable {
+            let message: ChatMessage
+            init(_ message: ChatMessage) { self.message = message }
+        }
 
         fileprivate init(
             runID: UUID,
@@ -488,6 +503,21 @@ enum PendingGenerationCompletionJournal {
         }
 
         func persistCompletedMessage(_ message: ChatMessage) throws {
+            try queue.sync { try persistCompletedMessageOnQueue(message) }
+        }
+
+        func enqueueCompletedMessage(
+            _ message: ChatMessage,
+            completion: @escaping @Sendable (Result<Void, Error>) -> Void
+        ) {
+            let request = CompletionRequest(message)
+            queue.async { [self, request] in
+                completion(Result { try persistCompletedMessageOnQueue(request.message) })
+            }
+        }
+
+        private func persistCompletedMessageOnQueue(_ message: ChatMessage) throws {
+            guard fileHandle != nil else { throw ConversationStoreError.persistenceBlocked }
             guard message.id == runID,
                   message.conversationID == conversationID,
                   message.role == .assistant,
@@ -496,6 +526,12 @@ enum PendingGenerationCompletionJournal {
                     "待提交回复身份或状态无效"
                 )
             }
+            // Image post-processing may submit the same already-durable text
+            // completion again. Compare the whole value, including metadata.
+            guard lastCompletedMessage != message else { return }
+            // A failed replacement can leave an incomplete file. Its previous
+            // value must no longer qualify for the durable-write fast path.
+            lastCompletedMessage = nil
             try writeRecord(
                 PendingGenerationCompletionRecord(
                     runID: runID,
@@ -504,16 +540,24 @@ enum PendingGenerationCompletionJournal {
                     message: message
                 )
             )
+            lastCompletedMessage = message
         }
 
         func closeKeepingFile() {
+            queue.sync { closeFileOnQueue() }
+        }
+
+        private func closeFileOnQueue() {
             try? fileHandle?.close()
             fileHandle = nil
+            lastCompletedMessage = nil
         }
 
         func closeAndRemoveFile() {
-            closeKeepingFile()
-            try? fileManager.removeItem(at: fileURL)
+            queue.sync {
+                closeFileOnQueue()
+                try? fileManager.removeItem(at: fileURL)
+            }
         }
 
         private func writeRecord(
@@ -548,6 +592,18 @@ enum PendingGenerationCompletionJournal {
         conversationID: UUID,
         fileManager: FileManager = .default,
         directoryURL: URL? = nil
+    ) throws -> Writer {
+        try queue.sync {
+            try makeWriterOnQueue(runID: runID, conversationID: conversationID,
+                                  fileManager: fileManager, directoryURL: directoryURL)
+        }
+    }
+
+    private static func makeWriterOnQueue(
+        runID: UUID,
+        conversationID: UUID,
+        fileManager: FileManager,
+        directoryURL: URL?
     ) throws -> Writer {
         let directory = try resolvedDirectory(
             fileManager: fileManager,
@@ -595,6 +651,17 @@ enum PendingGenerationCompletionJournal {
         into snapshot: inout ConversationSnapshot,
         fileManager: FileManager = .default,
         directoryURL: URL? = nil
+    ) -> RecoveryReport {
+        queue.sync {
+            mergeRecoverableCompletionsOnQueue(into: &snapshot,
+                                               fileManager: fileManager, directoryURL: directoryURL)
+        }
+    }
+
+    private static func mergeRecoverableCompletionsOnQueue(
+        into snapshot: inout ConversationSnapshot,
+        fileManager: FileManager,
+        directoryURL: URL?
     ) -> RecoveryReport {
         var report = RecoveryReport()
         let directory: URL
@@ -723,8 +790,10 @@ enum PendingGenerationCompletionJournal {
         _ fileURLs: [URL],
         fileManager: FileManager = .default
     ) {
-        for fileURL in Set(fileURLs) {
-            try? fileManager.removeItem(at: fileURL)
+        queue.sync {
+            for fileURL in Set(fileURLs) {
+                try? fileManager.removeItem(at: fileURL)
+            }
         }
     }
 
@@ -1662,6 +1731,13 @@ struct LegacyConversationStore {
     fileprivate func normalizeAfterColdStart(_ snapshot: inout ConversationSnapshot) -> Bool {
         var changed = false
         for conversation in snapshot.conversations {
+            // Most histories contain no unfinished reply. Avoid mutating their
+            // arrays merely to discover that there is nothing to normalize:
+            // keeping value storage shared also avoids a cold first-save diff.
+            if let existing = snapshot.messagesByConversation[conversation.id],
+               !existing.contains(where: { $0.status == .streaming }) {
+                continue
+            }
             var messages = snapshot.messagesByConversation[conversation.id] ?? []
             let originalCount = messages.count
             messages.removeAll { message in
@@ -1835,7 +1911,8 @@ final class ConversationRecordDatabase {
         let version = try statement("PRAGMA user_version")
         defer { sqlite3_finalize(version) }
         try check(sqlite3_step(version))
-        guard sqlite3_column_int(version, 0) <= 1 else { throw ConversationStoreError.unsupportedSchemaVersion(Int(sqlite3_column_int(version, 0)) + 1000) }
+        let schemaVersion = sqlite3_column_int(version, 0)
+        guard schemaVersion <= 1 else { throw ConversationStoreError.unsupportedSchemaVersion(Int(schemaVersion) + 1000) }
         try execute("""
             CREATE TABLE IF NOT EXISTS generations(slot INTEGER PRIMARY KEY, payload BLOB NOT NULL, hash BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS records(key TEXT PRIMARY KEY, value BLOB, hash BLOB,
@@ -1843,8 +1920,13 @@ final class ConversationRecordDatabase {
             CREATE INDEX IF NOT EXISTS records_generation ON records(generation);
             CREATE INDEX IF NOT EXISTS records_prior ON records(generation) WHERE prior IS NOT NULL;
             CREATE INDEX IF NOT EXISTS records_deleted ON records(generation) WHERE value IS NULL;
-            PRAGMA user_version=1;
             """)
+        // Reopening an initialized primary or backup must not dirty its header
+        // merely to write the same version again. Keep schema repair above and
+        // initialize an unversioned database only after that work succeeds.
+        if schemaVersion != 1 {
+            try execute("PRAGMA user_version=1;")
+        }
         try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUnlessOpen],
                                       ofItemAtPath: url.path)
         ready = true
@@ -2083,6 +2165,19 @@ final class ConversationRecordDatabase {
             }
             for (conversationID, messages) in snapshot.messagesByConversation {
                 let prior = committed?.messagesByConversation[conversationID] ?? []
+                // Identical live buffers prove these value-type rows are still
+                // the committed rows. A mutation detaches Swift Array storage;
+                // distinct buffers still take the full comparison below. Keep
+                // this after the global identity/deletion checks, and never
+                // retain pointers or compare entire arrays as a preflight.
+                if messages.count == prior.count,
+                   messages.withUnsafeBufferPointer({ current in
+                       prior.withUnsafeBufferPointer { previous in
+                           current.baseAddress == previous.baseAddress
+                       }
+                   }) {
+                    continue
+                }
                 if oldLayout?.messages[conversationID] == newLayout.messages[conversationID] {
                     // Stable order is the common streaming/edit path. Compare
                     // the actual values directly instead of constructing two
@@ -2253,9 +2348,28 @@ final class ConversationRecordDatabase {
         // After initial installation do not read, hash or rewrite the legacy
         // file on every save. Ownership is checked by the database generation.
         if legacyGuardInstalled { return }
-        try marker.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
-        guard try Data(contentsOf: url) == marker else { throw failure("旧版本保护写入失败") }
+        if !hasReusableLegacyGuard(at: url, marker: marker) {
+            try marker.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
+            guard try Data(contentsOf: url) == marker else { throw failure("旧版本保护写入失败") }
+        }
         legacyGuardInstalled = true
+    }
+    private func hasReusableLegacyGuard(at url: URL, marker: Data) -> Bool {
+        // Reuse only the exact, protected regular file. Bound the read even if
+        // this path still contains a large legacy archive or changes size.
+        do {
+            let attributes = try fileManager.attributesOfItem(atPath: url.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  attributes[.size] as? NSNumber == NSNumber(value: marker.count),
+                  attributes[.protectionKey] as? FileProtectionType == .completeUnlessOpen else { return false }
+            let file = try FileHandle(forReadingFrom: url)
+            defer { try? file.close() }
+            return try file.read(upToCount: marker.count + 1) == marker
+        } catch {
+            // A failed check must still take the original authoritative write
+            // path; its error prevents the primary transaction from advancing.
+            return false
+        }
     }
     private var legacyGuardInstalled = false
 }

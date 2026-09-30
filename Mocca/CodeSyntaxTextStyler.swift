@@ -4,6 +4,8 @@ import UIKit
 /// Coloring never participates in code size, disclosure or scroll completion.
 @MainActor
 final class CodeSyntaxTextStyler {
+    var didApplyColors: (() -> Void)?
+
     private struct Request: Equatable {
         let text: String
         let language: String
@@ -122,5 +124,6 @@ final class CodeSyntaxTextStyler {
         }
         storage.endEditing()
         appliedRuns = runs
+        didApplyColors?()
     }
 }

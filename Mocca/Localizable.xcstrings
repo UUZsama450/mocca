@@ -1,6 +1,215 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "此模型未启用工具调用，无法使用应用搜索服务。请检查模型能力设置，或选择支持内置搜索的模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tool calling is not enabled for this model, so it cannot use the app search service. Check model capabilities or choose a model that supports built-in search."
+          }
+        }
+      }
+    },
+    "请先在设置中配置应用搜索服务，或在助手设置中选择模型内置搜索。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configure an app search service in Settings, or select model built-in search in assistant settings."
+          }
+        }
+      }
+    },
+    "当前接口暂无法使用模型内置搜索。请改用应用搜索服务，或切换到支持此功能的模型与接口。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in search is unavailable for this API. Use the app search service, or switch to a model and API that support this feature."
+          }
+        }
+      }
+    },
+    "使用设置中选定的应用搜索服务，需要模型支持工具调用。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the app search service selected in Settings. The model must support tool calling."
+          }
+        }
+      }
+    },
+    "由模型服务商提供搜索，无需单独配置搜索服务。可用性和费用取决于所选模型及服务商。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search is provided by the model provider without separate search-service setup. Availability and fees depend on the selected model and provider."
+          }
+        }
+      }
+    },
+    "自动选择内置搜索或应用搜索服务。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatically choose between built-in search and the app search service."
+          }
+        }
+      }
+    },
+    "应用搜索服务": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App search service"
+          }
+        }
+      }
+    },
+    "模型内置搜索": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model built-in search"
+          }
+        }
+      }
+    },
+    "搜索方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search method"
+          }
+        }
+      }
+    },
+    "拖动图片调整位置，双指缩放": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag to reposition, pinch to zoom"
+          }
+        }
+      }
+    },
+    "重置取景": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset crop"
+          }
+        }
+      }
+    },
+    "背景取景": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Crop background"
+          }
+        }
+      }
+    },
+    "背景取景区域": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background crop area"
+          }
+        }
+      }
+    },
+    "正在保存": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saving"
+          }
+        }
+      }
+    },
+    "背景保存失败": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not save background"
+          }
+        }
+      }
+    },
+    "原背景保持不变，请重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your previous background is unchanged. Please try again."
+          }
+        }
+      }
+    },
+    "无法读取图片": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not load image"
+          }
+        }
+      }
+    },
+    "请选择其他图片或重试，原背景保持不变。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose another image or try again. Your previous background is unchanged."
+          }
+        }
+      }
+    },
+    "正在读取图片…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading image…"
+          }
+        }
+      }
+    },
     "\n\n这个原生备份不完整，已锁定恢复。请重新选择完整 ZIP，或回到旧 App 重新导出。": {
       "extractionState": "manual",
       "localizations": {
@@ -683,13 +892,13 @@
         }
       }
     },
-    "OpenRouter 会自动读取总额度与已用额度；其他供应商按 JSON 路径读取。": {
+    "自动读取总额度与已用额度，并计算剩余额度。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "OpenRouter automatically reports the total and used balance. Other providers use a JSON path."
+            "value": "Automatically read total and used credits to calculate the remaining balance."
           }
         }
       }
@@ -4137,13 +4346,13 @@
         }
       }
     },
-    "可以连接 OpenAI、Gemini、OpenRouter 或其他兼容服务。": {
+    "选择你使用的模型服务商，连接对应的模型服务。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Connect OpenAI, Gemini, OpenRouter, or another compatible service."
+            "value": "Choose your model provider and connect its model service."
           }
         }
       }
@@ -4634,6 +4843,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Icons identify providers only. They do not change the API type, URL, or model."
+          }
+        }
+      }
+    },
+    "预览图片": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview image"
           }
         }
       }
@@ -6387,13 +6607,13 @@
         }
       }
     },
-    "当前服务用于应用提供的 search_web。支持模型自身联网搜索时，仍可继续使用模型内置搜索。": {
+    "这些提供商用于应用搜索服务，配置由所有助手共用。模型内置搜索由模型服务商提供。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This service powers the app's search_web tool. A model's own built-in web search remains available if supported."
+            "value": "These providers are used for app search, and their configuration is shared by all assistants. Model built-in search is handled by the model provider."
           }
         }
       }
@@ -13609,13 +13829,13 @@
         }
       }
     },
-    "自动模式只识别 OpenRouter 与官方 OpenAI。其他支持图片接口的供应商可手动选择 OpenAI 兼容；不支持的供应商保持关闭，不会出现在助手的图像模型列表中。": {
+    "自动识别已支持的图像接口。其他兼容服务可手动选择接口类型；关闭后不会出现在助手的图像模型列表中。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Automatic mode recognizes OpenRouter and official OpenAI endpoints only. For other providers that support image generation, select OpenAI-compatible manually. Leave unsupported providers off; they will not appear in the assistant's image model list."
+            "value": "Automatically detect supported image APIs. Select an API type manually for other compatible services. When off, the provider will not appear in the assistant's image model list."
           }
         }
       }
@@ -20437,6 +20657,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Unable to load tip options. Please try again later."
+          }
+        }
+      }
+    },
+    "部分投喂项目暂时没有载入，请重新载入。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some support items could not be loaded. Please reload."
           }
         }
       }

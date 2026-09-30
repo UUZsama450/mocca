@@ -293,7 +293,7 @@ struct FirstRunModelSetupView: View {
             setupRow(
                 icon: "server.rack",
                 title: L10n.lookup("选择服务商"),
-                detail: L10n.lookup("可以连接 OpenAI、Gemini、OpenRouter 或其他兼容服务。")
+                detail: L10n.lookup("选择你使用的模型服务商，连接对应的模型服务。")
             )
             Divider().padding(.leading, 52)
             setupRow(
@@ -703,7 +703,7 @@ struct ProviderEditorView: View {
             } header: {
                 Text(L10n.lookup("图像生成"))
             } footer: {
-                Text(L10n.lookup("自动模式只识别 OpenRouter 与官方 OpenAI。其他支持图片接口的供应商可手动选择 OpenAI 兼容；不支持的供应商保持关闭，不会出现在助手的图像模型列表中。"))
+                Text(L10n.lookup("自动识别已支持的图像接口。其他兼容服务可手动选择接口类型；关闭后不会出现在助手的图像模型列表中。"))
             }
 
             keyValueSection(
@@ -1317,7 +1317,7 @@ private struct ProviderBalanceSettingsView: View {
                 ProviderBalanceSummaryView(configuration: configuration, query: query)
             } footer: {
                 Text(configuration.isOpenRouter
-                     ? L10n.lookup("OpenRouter 会自动读取总额度与已用额度；其他供应商按 JSON 路径读取。")
+                     ? L10n.lookup("自动读取总额度与已用额度，并计算剩余额度。")
                      : L10n.lookup("JSON 路径示例：data.balance；数组下标也可写成 data.0.amount。"))
             }
         }

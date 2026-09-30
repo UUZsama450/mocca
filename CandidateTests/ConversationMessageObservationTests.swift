@@ -41,7 +41,7 @@ final class ConversationMessageObservationTests: XCTestCase {
         XCTAssertEqual(m.observationTestProjectionBuilds,builds)
     }
 
-    func testCurrentUpdatesAndVersionsStillInvalidateWarmCache() {
+    func testCurrentUpdatesRefreshContentWithoutRegroupingAndVersionsRebuild() {
         let (m,a,_) = fixture()
         let initial = m.observationTestProjectionBuilds
         let changed = ObservationCount()
@@ -49,14 +49,14 @@ final class ConversationMessageObservationTests: XCTestCase {
         m.conversationMessageStore[a]![1].text = "new selected answer"
         XCTAssertEqual(changed.value,1)
         XCTAssertEqual(m.messages.last?.text,"new selected answer")
-        XCTAssertEqual(m.observationTestProjectionBuilds,initial+1)
+        XCTAssertEqual(m.observationTestProjectionBuilds,initial)
         m.conversations[0].versionSelections["answer"] = 1
         XCTAssertEqual(m.messages.last?.text,"A v1")
-        XCTAssertEqual(m.observationTestProjectionBuilds,initial+2)
+        XCTAssertEqual(m.observationTestProjectionBuilds,initial+1)
         m.conversations[0].title = "renamed A"
         m.conversations[1].title = "renamed B"
         XCTAssertEqual(m.messages.last?.version,1)
-        XCTAssertEqual(m.observationTestProjectionBuilds,initial+2)
+        XCTAssertEqual(m.observationTestProjectionBuilds,initial+1)
     }
 
     func testSwitchingAndExplicitSnapshotCannotPoisonCurrentCache() {

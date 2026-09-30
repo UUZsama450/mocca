@@ -4,13 +4,13 @@
 
 ## Source snapshot / 源码快照
 
-This repository begins with a prepared snapshot derived from development build 1.0 (5058). It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
+This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0 (5128)**. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
 
-本仓库从基于开发版 1.0（5058）整理的源码快照开始，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
+本仓库从开发版 1.0（5058）的源码快照开始，现已更新至 **1.0（5128）**，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
 
-This is a publication candidate for [UUZsama450/mocca](https://github.com/UUZsama450/mocca), created as a private repository. No downloadable release has been created. It differs from both the installed development build and the separate App Store 5057 submission.
+This is a portable source snapshot for the private [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Configurable signing identity, disabled-by-default sponsorship and the reviewed asset set distinguish it from the device build. This update does not create a downloadable app or change App Store releases.
 
-这是为 [UUZsama450/mocca](https://github.com/UUZsama450/mocca) 私有仓库准备的发布候选，尚未创建可下载版本。它与手机上的开发版、单独送审的 App Store 5057 均有区别。
+这是 [UUZsama450/mocca](https://github.com/UUZsama450/mocca) 私有仓库的可移植源码快照。可配置的签名身份、默认关闭的赞助及整理过的素材，使它与真机安装包有所区别。本次更新不创建可下载应用，也不改变 App Store 的发布状态。
 
 ## Contents / 目录
 
@@ -30,16 +30,16 @@ Historical notes retain their original build context. Their presence does not me
 
 ## Verification boundary / 验证范围
 
-The source and build inputs were preserved from the reviewed preparation tree. That tree passed unsigned iOS Debug builds after asset cleanup. An earlier portable-build pass also built an exported Release variant with sponsorship explicitly enabled. The independent snapshot changes documentation only; those build results are inherited evidence, not a new build of this repository. Device interaction, real purchases and release signing require their own verification.
+The 5128 source update is compiled and checked separately from the original development build. Commands, results and limits are recorded in [5128 changes and verification](SNAPSHOT_5128.md). The first 5058 preparation's results remain historical evidence in [source baseline](SOURCE_BASELINE.md). Device interaction, real purchases and release signing require their own verification.
 
-源码与构建输入保留自已核对的整理版本。素材清理后的该版本通过了不签名 iOS Debug 构建；此前的可移植配置检查也成功构建了明确开启赞助的导出 Release 版本。本独立快照只更新说明文档，沿用这些构建证据，没有把它说成新仓库重新构建的结果。真机交互、实际购买和发布签名需要分别验证。
+5128 源码更新独立进行编译与检查，命令、结果和限制记录在[本次变更与验证](SNAPSHOT_5128.md)中。5058 首次整理的结果作为历史证据保留在[源码基线](SOURCE_BASELINE.md)。真机交互、实际购买和发布签名需要分别验证。
 
 Generated apps, build caches, device logs, private chats, backups, signing credentials and machine-local overrides are outside the source snapshot. See [.gitignore](../.gitignore) for exclusion rules. Ignore rules support this boundary; they do not replace reviewing the tracked tree and Git history before publication.
 
 生成的 App、构建缓存、设备日志、私人聊天、备份、签名凭据和本机配置不属于这份源码快照。排除规则见 [.gitignore](../.gitignore)；规则不能代替上传前对实际跟踪文件和 Git 历史的检查。
 
-## Next publication steps / 后续发布步骤
+## Updating the repository / 更新仓库
 
-1. Review this snapshot and its commit identity, then upload to the intended private repository. / 核对本快照与提交身份，再上传到选定的私有仓库。
-2. Verify repository visibility, bilingual documentation and source links. / 核对仓库可见性、中英文说明和源码链接。
-3. Handle public source and any binary release separately, with exact source correspondence and distribution checks. / 公开源码和二进制发布分别处理，核对对应源码及分发事项。
+Local Git commits preserve local versions; they do not update GitHub automatically. Selected source updates are reviewed, committed and explicitly synchronized to `main`, preserving the existing publication history. Repository visibility stays private. Public source or binary distribution is a separate action.
+
+本地 Git 提交用于保存本地版本，不会自动更新 GitHub。选定的源码更新经过检查、提交，再明确同步到 `main`，保留已有发布历史。仓库继续保持私有；公开源码或分发安装包是另外的操作。

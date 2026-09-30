@@ -70,11 +70,20 @@ struct SponsorPage: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 290)
 
-                if store.statusIsError, store.productsByID.isEmpty {
+                if let message = store.productLoadingMessage {
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 290)
+                }
+
+                if store.hasMissingProducts {
                     Button(L10n.lookup("重新载入")) {
                         Task { await store.retryLoadingProducts() }
                     }
                     .font(.subheadline.weight(.medium))
+                    .disabled(store.isLoadingProducts || store.purchasingTier != nil || store.isRestoringPurchases)
                 }
             }
             .padding(.horizontal, 20)

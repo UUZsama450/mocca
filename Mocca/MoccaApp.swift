@@ -6,6 +6,13 @@ struct MoccaApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = AppModel()
 
+    private var shouldRunStartupServices: Bool {
+        #if DEBUG
+        if AppModel.nativeReadingFixtureRequested { return false }
+        #endif
+        return true
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -21,7 +28,7 @@ struct MoccaApp: App {
                     guard phase == .active else { return }
                     AppLocalization.shared.refreshSystemLanguage()
                     model.retryConversationStoreLoadIfNeeded()
-                    model.handleAppBecameActive()
+                    if shouldRunStartupServices { model.handleAppBecameActive() }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSLocale.currentLocaleDidChangeNotification)) { _ in
                     AppLocalization.shared.refreshSystemLanguage()
@@ -32,15 +39,16 @@ struct MoccaApp: App {
                     )
                 ) { _ in
                     model.retryConversationStoreLoadIfNeeded()
-                    model.handleAppBecameActive()
+                    if shouldRunStartupServices { model.handleAppBecameActive() }
                 }
                 .task {
                     // `scenePhase` can already be active when the first view is
                     // installed, in which case onChange does not fire.
                     await Task.yield()
-                    model.handleAppBecameActive()
+                    if shouldRunStartupServices { model.handleAppBecameActive() }
                 }
                 .task {
+                    guard shouldRunStartupServices else { return }
                     await SponsorStore.shared.listenForTransactions()
                 }
                 #if DEBUG
@@ -50,9 +58,14 @@ struct MoccaApp: App {
                             || arguments.contains("-previewInstruction")
                             || arguments.contains("-previewKeyboardShortChat")
                             || arguments.contains("-previewNavigationStress")
+                            || AppModel.nativeReadingFixtureRequested
                             || arguments.contains("-previewCalendar")
                             || arguments.contains("-diagnoseNavigationStress") else { return }
                     try? await Task.sleep(for: .milliseconds(450))
+                    if AppModel.nativeReadingFixtureRequested {
+                        model.prepareNativeReadingFixture()
+                        return
+                    }
                     if arguments.contains("-previewCalendar") {
                         model.prepareCalendarPreview()
                         return

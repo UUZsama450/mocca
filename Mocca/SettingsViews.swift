@@ -4061,6 +4061,9 @@ private struct ThemePreferencesPage: View {
     @State private var sidebarBackgroundSelectionTask: Task<Void, Never>?
     @State private var sidebarBackgroundSelectionSequence: UInt64 = 0
     @State private var sidebarBackgroundVisibilitySequence: UInt64 = 0
+    @State private var pendingSidebarBackgroundCrop: BackgroundCropRequest?
+    @State private var pendingSidebarCropVisibilitySequence: UInt64 = 0
+    @State private var showSidebarBackgroundImportError = false
 
     private var themeAccent: Color {
         Color(uiColor: model.themeAccentUIColor)
@@ -4279,6 +4282,10 @@ private struct ThemePreferencesPage: View {
                     )
                 }
 
+                if sidebarBackgroundSelectionTask != nil {
+                    ProgressView(L10n.lookup("正在读取图片…"))
+                }
+
                 if hasSidebarBackgroundReference {
                     Button(role: .destructive) {
                         clearSidebarBackground()
@@ -4357,51 +4364,65 @@ private struct ThemePreferencesPage: View {
         .settingsGroupedPageStyle()
         .navigationTitle(L10n.lookup("主题设置"))
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $pendingSidebarBackgroundCrop) { request in
+            BackgroundImageCropEditor(image: request.image, destination: .sidebar) { image in
+                await saveCroppedSidebarBackground(image, requestID: request.id)
+            }
+        }
+        .alert(L10n.lookup("无法读取图片"), isPresented: $showSidebarBackgroundImportError) {
+            Button(L10n.lookup("好"), role: .cancel) {}
+        } message: {
+            Text(L10n.lookup("请选择其他图片或重试，原背景保持不变。"))
+        }
         .onChange(of: sidebarBackgroundSelection) { _, item in
             guard let item else { return }
             sidebarBackgroundSelection = nil
-            sidebarBackgroundSelectionSequence &+= 1
+            cancelPendingSidebarBackgroundSelection()
             let sequence = sidebarBackgroundSelectionSequence
             sidebarBackgroundVisibilitySequence &+= 1
             let visibilitySequence = sidebarBackgroundVisibilitySequence
-            sidebarBackgroundSelectionTask?.cancel()
             sidebarBackgroundSelectionTask = Task { @MainActor in
                 defer {
-                    if sequence == sidebarBackgroundSelectionSequence {
-                        sidebarBackgroundSelectionTask = nil
-                    }
+                    if sequence == sidebarBackgroundSelectionSequence { sidebarBackgroundSelectionTask = nil }
                 }
                 guard let data = try? await item.loadTransferable(type: Data.self),
-                      !Task.isCancelled,
-                      sequence == sidebarBackgroundSelectionSequence,
-                      let image = UIImage(data: data),
-                      let reference = AssistantMediaStore.saveSidebarBackground(image)
-                else { return }
-
-                guard !Task.isCancelled,
-                      sequence == sidebarBackgroundSelectionSequence else {
-                    AssistantMediaStore.remove(reference)
+                      let image = await BackgroundCropImageIO.prepare(data) else {
+                    if !Task.isCancelled, sequence == sidebarBackgroundSelectionSequence {
+                        showSidebarBackgroundImportError = true
+                    }
                     return
                 }
-                let previousReference = model.preferences.sidebarBackground
-                var updatedPreferences = model.preferences
-                updatedPreferences.sidebarBackground = reference
-                if visibilitySequence == sidebarBackgroundVisibilitySequence {
-                    updatedPreferences.sidebarBackgroundEnabled = true
-                }
-                guard AppPreferences.savePreferences(updatedPreferences) else {
-                    AssistantMediaStore.remove(reference)
-                    return
-                }
-                model.preferences = updatedPreferences
-                if previousReference != reference {
-                    AssistantMediaStore.remove(previousReference)
-                }
+                guard !Task.isCancelled, sequence == sidebarBackgroundSelectionSequence else { return }
+                pendingSidebarCropVisibilitySequence = visibilitySequence
+                pendingSidebarBackgroundCrop = BackgroundCropRequest(image: image)
             }
         }
         .onDisappear {
             cancelPendingSidebarBackgroundSelection()
         }
+    }
+
+    private func saveCroppedSidebarBackground(_ image: UIImage, requestID: UUID) async -> Bool {
+        guard pendingSidebarBackgroundCrop?.id == requestID else { return false }
+        let visibilitySequence = pendingSidebarCropVisibilitySequence
+        guard let reference = await BackgroundCropImageIO.save(image, destination: .sidebar) else { return false }
+        guard pendingSidebarBackgroundCrop?.id == requestID else {
+            AssistantMediaStore.remove(reference)
+            return false
+        }
+        let previousReference = model.preferences.sidebarBackground
+        var updatedPreferences = model.preferences
+        updatedPreferences.sidebarBackground = reference
+        if visibilitySequence == sidebarBackgroundVisibilitySequence {
+            updatedPreferences.sidebarBackgroundEnabled = true
+        }
+        guard AppPreferences.savePreferences(updatedPreferences) else {
+            AssistantMediaStore.remove(reference)
+            return false
+        }
+        model.preferences = updatedPreferences
+        if previousReference != reference { AssistantMediaStore.remove(previousReference) }
+        return true
     }
 
     private func clearSidebarBackground() {
@@ -4420,6 +4441,7 @@ private struct ThemePreferencesPage: View {
         sidebarBackgroundSelectionSequence &+= 1
         sidebarBackgroundSelectionTask?.cancel()
         sidebarBackgroundSelectionTask = nil
+        pendingSidebarBackgroundCrop = nil
     }
 
     private func hex(_ argb: Int) -> String {
@@ -6310,15 +6332,16 @@ struct SearchServiceSettingsView: View {
             Section {
                 Toggle(L10n.lookup("联网搜索"), isOn: searchEnabledBinding)
 
-                Picker(L10n.lookup("搜索结果上下文"), selection: searchRetentionBinding) {
-                    ForEach(retentionOptions, id: \.self) { value in
-                        Text(searchRetentionLabel(value)).tag(value)
+                Picker(L10n.lookup("搜索方式"), selection: searchModeBinding) {
+                    ForEach(AssistantSearchMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
                     }
                 }
+                .disabled(!model.currentAssistant.searchEnabled)
             } header: {
                 Text(L10n.lookup("当前助手"))
             } footer: {
-                Text(L10n.lookup("完整搜索结果会保留到指定的后续用户轮数；例如 3 轮会在第 4 个后续用户回合开始前移除。仅当前回复不会在下一轮重放搜索结果。"))
+                Text(model.currentAssistant.searchMode.explanation)
             }
 
             Section {
@@ -6336,10 +6359,16 @@ struct SearchServiceSettingsView: View {
             } header: {
                 Text(L10n.lookup("搜索提供商"))
             } footer: {
-                Text(L10n.lookup("当前服务用于应用提供的 search_web。支持模型自身联网搜索时，仍可继续使用模型内置搜索。"))
+                Text(L10n.lookup("这些提供商用于应用搜索服务，配置由所有助手共用。模型内置搜索由模型服务商提供。"))
             }
 
             Section {
+                Picker(L10n.lookup("搜索结果上下文"), selection: searchRetentionBinding) {
+                    ForEach(retentionOptions, id: \.self) { value in
+                        Text(searchRetentionLabel(value)).tag(value)
+                    }
+                }
+
                 Stepper(
                     L10n.format("搜索结果数量：%@", [String(describing: model.preferences.searchResultCount)]),
                     value: $model.preferences.searchResultCount,
@@ -6354,7 +6383,10 @@ struct SearchServiceSettingsView: View {
             } header: {
                 Text(L10n.lookup("通用选项"))
             } footer: {
-                Text(L10n.lookup("结果数量和超时会应用于当前选中的第三方搜索服务。"))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L10n.lookup("完整搜索结果会保留到指定的后续用户轮数；例如 3 轮会在第 4 个后续用户回合开始前移除。仅当前回复不会在下一轮重放搜索结果。"))
+                    Text(L10n.lookup("结果数量和超时会应用于当前选中的第三方搜索服务。"))
+                }
             }
         }
     }
@@ -6379,6 +6411,19 @@ struct SearchServiceSettingsView: View {
                 model.updatePreferences {
                     $0.searchToolResultRetentionTurns = min(max(value, -1), 20)
                 }
+            }
+        )
+    }
+
+    private var searchModeBinding: Binding<AssistantSearchMode> {
+        Binding(
+            get: { model.currentAssistant.searchMode },
+            set: { value in
+                var assistant = model.currentAssistant
+                guard assistant.searchMode != value else { return }
+                model.performSwitchHaptic()
+                assistant.searchMode = value
+                model.updateAssistant(assistant)
             }
         )
     }

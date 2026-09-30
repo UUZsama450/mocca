@@ -2,7 +2,23 @@ import Observation
 import PhotosUI
 import QuartzCore
 import SwiftUI
+import Combine
 import UIKit
+
+private struct MessageInlineActionAdmission: Sendable {
+    var allowsAction: @MainActor @Sendable () -> Bool = { true }
+}
+
+private struct MessageInlineActionAdmissionKey: EnvironmentKey {
+    static let defaultValue = MessageInlineActionAdmission()
+}
+
+private extension EnvironmentValues {
+    var messageInlineActionAdmission: MessageInlineActionAdmission {
+        get { self[MessageInlineActionAdmissionKey.self] }
+        set { self[MessageInlineActionAdmissionKey.self] = newValue }
+    }
+}
 
 struct VersionFlashTextContext: Hashable, Sendable {
     let conversationID: UUID
@@ -757,27 +773,14 @@ private struct ConversationPositionRequestKey: Hashable {
     let request: Int
 }
 
-// ScrollViewProxy targets must change whenever either the return transaction or
-// the concrete LazyVStack row set changes. Reusing a conversation-only target
-// lets SwiftUI resolve a deleted row's old content height and can leave every
-// surviving row outside the viewport.
+// Commands and measured-row acknowledgements belong to both the current
+// return request and row set; a previous publication cannot complete them.
 private struct ConversationBottomAnchorID: Hashable {
     let positionRequest: ConversationPositionRequestKey
     let messageIDs: [UUID]
 }
 
-// A revision-scoped target outside LazyVStack. It is reached only before the
-// current concrete tail has acknowledged readiness, so an inherited stale
-// bottom offset can be replaced by one real lazy viewport without changing the
-// message tree or any normal animation path.
-private struct ConversationTopMaterializationSeedID: Hashable {
-    let anchorID: ConversationBottomAnchorID
-}
-
-// Give every message one stable, typed direct-child identity. The type keeps
-// proxy targets distinct from the nested MessageRow UUID, while stability keeps
-// an old tail from being destroyed and rebuilt when a new message is appended.
-// Tail-return revision safety remains in the anchor-scoped task and geometry ack.
+// Stable message identity shared by native cells and message callbacks.
 private enum ConversationMessageHostID: Hashable {
     case message(UUID)
 }
@@ -788,6 +791,251 @@ private struct ConversationMessageHost: Identifiable {
     let message: ChatMessage
     let citationSources: [MessageCitationSource]
     let isSendPresentationReservation: Bool
+}
+
+// Commands address only the current native transcript. Cancellation is a
+// failed landing; callers must not release presentation gates on that result.
+@MainActor
+private struct ChatTranscriptProxy {
+    let native: NativeChatScrollDriver
+
+    private func nativeTarget<ID: Hashable>(_ id: ID, anchor: UnitPoint?) -> NativeChatScrollTarget? {
+        if let host = id as? ConversationMessageHostID,
+           case let .message(messageID) = host { return .row(messageID, anchor ?? .center) }
+        if let messageID = id as? UUID { return .row(messageID, anchor ?? .center) }
+        if let bottom = id as? ConversationBottomAnchorID {
+            guard (native.latestGeometry?.publicationID.base as? NativeChatPublicationID)?.anchorID == bottom else {
+                #if DEBUG
+                ChatBottomTrace.log("NATIVE_TARGET_REJECT reason=publicationNotCurrent"
+                    + " expectedRows=\(bottom.messageIDs.count)"
+                    + " currentRows=\((native.latestGeometry?.publicationID.base as? NativeChatPublicationID)?.anchorID.messageIDs.count ?? -1)")
+                #endif
+                return nil
+            }
+            return .bottom
+        }
+        return nil
+    }
+
+    func animate<ID: Hashable>(_ id: ID, anchor: UnitPoint, duration: TimeInterval,
+                              timing: NativeChatScrollTiming = .smooth) async -> Bool {
+        guard let target = nativeTarget(id, anchor: anchor) else { return false }
+        return await native.scrollAndWait(to: target, duration: duration, timing: timing)
+    }
+
+    /// Navigation and off-bottom sends use UIScrollView's own motion so
+    /// collection cells follow the actual viewport throughout the move.
+    func navigate<ID: Hashable>(_ id: ID, anchor: UnitPoint) async -> Bool {
+        guard let target = nativeTarget(id, anchor: anchor) else { return false }
+        return await native.scrollAndWait(to: target, timing: .system)
+    }
+}
+
+private struct NativeChatPublicationID: Hashable {
+    let anchorID: ConversationBottomAnchorID
+    let layoutRequestID: UUID?
+}
+
+/// Only inputs used by hosted message layout/appearance; unrelated settings and
+/// the conversation's streaming revision do not invalidate every row.
+private struct NativeChatPresentationRevision: Hashable {
+    let localeIdentifier: String
+    let isDark: Bool
+    let dynamicTypeSize: DynamicTypeSize
+    let layoutDirection: LayoutDirection
+    let themePaletteID: ThemePaletteID
+    let customThemeColorARGB: Int
+    let chatBackgroundMaskStrength: Double
+    let showTokenUsage: Bool
+    let chatFontScale: Double
+    let assistantMessageLineSpacing: Double
+    let assistantMarkdownListItemSpacing: Double
+    let assistantMarkdownBlockSpacingScale: Double
+    let appFontPostScriptName: String?
+    let userBubbleSendAnimationStyle: UserBubbleSendAnimationStyle
+    let showUserAvatar: Bool
+    let showUserName: Bool
+    let showUserTimestamp: Bool
+    let showModelIcon: Bool
+    let showModelName: Bool
+    let showModelTimestamp: Bool
+    let showProviderInChatMessage: Bool
+    let aiMessageReactionsEnabled: Bool
+    let assistantMessageActionOrder: [AssistantMessageInlineAction]
+    let hiddenAssistantMessageActions: Set<AssistantMessageInlineAction>
+    let enableUserMarkdown: Bool
+    let enableReasoningMarkdown: Bool
+    let enableAssistantMarkdown: Bool
+    let htmlRunnerEnabled: Bool
+    let htmlRunnerAllowCurrentChat: Bool
+    let autoCollapseCodeBlock: Bool
+    let autoCollapseCodeBlockLines: Int
+    let codeBlockAppearance: CodeBlockAppearance
+    let autoCollapseThinking: Bool
+    let fullyCollapseThinking: Bool
+    let userChatBubbleStyle: ChatBubbleStyle
+    let assistantChatBubbleStyle: ChatBubbleStyle
+    let thinkingChatBubbleStyle: ChatBubbleStyle
+    let userChatBubbleColorARGB: Int?
+    let assistantChatBubbleColorARGB: Int?
+    let thinkingChatBubbleColorARGB: Int?
+    let userChatTextColorARGB: Int?
+    let assistantChatTextColorARGB: Int?
+    let thinkingChatTextColorARGB: Int?
+    let assistantLargeHeadingColorARGB: Int?
+    let assistantSmallHeadingColorARGB: Int?
+    let userChatBubbleOpacity: Double
+    let assistantChatBubbleOpacity: Double
+    let thinkingChatBubbleOpacity: Double
+    let liquidGlassBubbleOpacity: Double
+    let appleGlassBubbleOpacity: Double
+    let thinkingBubbleTitle: String
+    let groupChatSegmentedReply: Bool
+    let groupChatSegmentRegex: String
+    let groupChatForceAssistantBubble: Bool
+    let groupChatBubbleOpacity: Double
+    let groupChatBubbleStyle: ChatBubbleStyle
+    let groupAssistantBubbleColors: [String: Int]
+
+    init(preferences: UserPreferences, locale: Locale, colorScheme: ColorScheme,
+         dynamicTypeSize: DynamicTypeSize, layoutDirection: LayoutDirection) {
+        localeIdentifier = locale.identifier
+        isDark = colorScheme == .dark
+        self.dynamicTypeSize = dynamicTypeSize
+        self.layoutDirection = layoutDirection
+        themePaletteID = preferences.themePaletteID
+        customThemeColorARGB = preferences.customThemeColorARGB
+        chatBackgroundMaskStrength = preferences.chatBackgroundMaskStrength
+        showTokenUsage = preferences.showTokenUsage
+        chatFontScale = preferences.chatFontScale
+        assistantMessageLineSpacing = preferences.assistantMessageLineSpacing
+        assistantMarkdownListItemSpacing = preferences.assistantMarkdownListItemSpacing
+        assistantMarkdownBlockSpacingScale = preferences.assistantMarkdownBlockSpacingScale
+        appFontPostScriptName = preferences.appFontPostScriptName
+        userBubbleSendAnimationStyle = preferences.userBubbleSendAnimationStyle
+        showUserAvatar = preferences.showUserAvatar
+        showUserName = preferences.showUserName
+        showUserTimestamp = preferences.showUserTimestamp
+        showModelIcon = preferences.showModelIcon
+        showModelName = preferences.showModelName
+        showModelTimestamp = preferences.showModelTimestamp
+        showProviderInChatMessage = preferences.showProviderInChatMessage
+        aiMessageReactionsEnabled = preferences.aiMessageReactionsEnabled
+        assistantMessageActionOrder = preferences.assistantMessageActionOrder
+        hiddenAssistantMessageActions = preferences.hiddenAssistantMessageActions
+        enableUserMarkdown = preferences.enableUserMarkdown
+        enableReasoningMarkdown = preferences.enableReasoningMarkdown
+        enableAssistantMarkdown = preferences.enableAssistantMarkdown
+        htmlRunnerEnabled = preferences.htmlRunnerEnabled
+        htmlRunnerAllowCurrentChat = preferences.htmlRunnerAllowCurrentChat
+        autoCollapseCodeBlock = preferences.autoCollapseCodeBlock
+        autoCollapseCodeBlockLines = preferences.autoCollapseCodeBlockLines
+        codeBlockAppearance = preferences.codeBlockAppearance
+        autoCollapseThinking = preferences.autoCollapseThinking
+        fullyCollapseThinking = preferences.fullyCollapseThinking
+        userChatBubbleStyle = preferences.userChatBubbleStyle
+        assistantChatBubbleStyle = preferences.assistantChatBubbleStyle
+        thinkingChatBubbleStyle = preferences.thinkingChatBubbleStyle
+        userChatBubbleColorARGB = preferences.userChatBubbleColorARGB
+        assistantChatBubbleColorARGB = preferences.assistantChatBubbleColorARGB
+        thinkingChatBubbleColorARGB = preferences.thinkingChatBubbleColorARGB
+        userChatTextColorARGB = preferences.userChatTextColorARGB
+        assistantChatTextColorARGB = preferences.assistantChatTextColorARGB
+        thinkingChatTextColorARGB = preferences.thinkingChatTextColorARGB
+        assistantLargeHeadingColorARGB = preferences.assistantLargeHeadingColorARGB
+        assistantSmallHeadingColorARGB = preferences.assistantSmallHeadingColorARGB
+        userChatBubbleOpacity = preferences.userChatBubbleOpacity
+        assistantChatBubbleOpacity = preferences.assistantChatBubbleOpacity
+        thinkingChatBubbleOpacity = preferences.thinkingChatBubbleOpacity
+        liquidGlassBubbleOpacity = preferences.liquidGlassBubbleOpacity
+        appleGlassBubbleOpacity = preferences.appleGlassBubbleOpacity
+        thinkingBubbleTitle = preferences.thinkingBubbleTitle
+        groupChatSegmentedReply = preferences.groupChatSegmentedReply
+        groupChatSegmentRegex = preferences.groupChatSegmentRegex
+        groupChatForceAssistantBubble = preferences.groupChatForceAssistantBubble
+        groupChatBubbleOpacity = preferences.groupChatBubbleOpacity
+        groupChatBubbleStyle = preferences.groupChatBubbleStyle
+        groupAssistantBubbleColors = preferences.groupAssistantBubbleColors
+    }
+}
+
+/// Non-observable storage: compare the complete presentation value once per
+/// transcript update, then share an exact change token across all row keys.
+@MainActor
+private final class NativeChatPresentationCache {
+    private var value: NativeChatPresentationRevision?
+    private var revision = UUID()
+    func token(for value: NativeChatPresentationRevision) -> UUID {
+        if self.value != value {
+            self.value = value
+            revision = UUID()
+        }
+        return revision
+    }
+}
+
+private struct NativeChatAuxiliaryRevision: Hashable {
+    let showsDivider: Bool
+    let isCompressing: Bool
+    let presentation: UUID
+}
+
+private struct NativeChatRowRevision: Hashable {
+    let presentation: UUID
+    let message: ChatMessage
+    let citations: [MessageCitationSource]
+    let isReservation: Bool
+    let isConversationTail: Bool
+    let hasDivider: Bool
+    let layoutRequestID: UUID?
+    let sendAnimationRequestID: UUID?
+    let sendAnimationEnabled: Bool
+    let isGroupConversation: Bool
+    let isDark: Bool
+}
+
+@Observable @MainActor
+private final class NativeTranscriptGeometryRelay {
+    var geometry: NativeChatScrollGeometry?
+    var codeFrames: [UUID: CGRect] = [:]
+}
+
+/// This small leaf observes native geometry; a pan does not rebuild every
+/// hosted message just to transfer the current visible frames.
+private struct NativeTranscriptPreferences: View {
+    let relay: NativeTranscriptGeometryRelay
+    let publicationID: NativeChatPublicationID
+
+    var body: some View {
+        let geometry = relay.geometry.flatMap {
+            $0.publicationID == AnyHashable(publicationID) ? $0 : nil
+        }
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .preference(
+                key: MessageFramePreferenceKey.self,
+                value: geometry.map {
+                    ConversationMessageFrameSnapshot(
+                        anchorID: publicationID.anchorID,
+                        frames: $0.frames,
+                        layoutRequestID: publicationID.layoutRequestID
+                    )
+                }
+            )
+            .preference(
+                key: ConversationBottomAnchorFramePreferenceKey.self,
+                value: geometry.map {
+                    ConversationBottomAnchorFrame(
+                        anchorID: publicationID.anchorID,
+                        frame: $0.bottomSpacerFrame,
+                        layoutRequestID: publicationID.layoutRequestID
+                    )
+                }
+            )
+            .preference(key: CodeDisclosureLayoutPreferenceKey.self, value: relay.codeFrames)
+    }
 }
 
 private struct PendingKeyboardViewportPin: Equatable {
@@ -966,16 +1214,6 @@ private struct MessageNavigationRequest: Equatable {
     let action: MessageNavigationAction
 }
 
-// The same conversation can replace its entire historical message window while
-// keeping the outer ScrollView alive. Advance this identity only for those
-// explicit navigation replacements so the inner lazy stack cannot reuse the
-// previous window's realization estimates. Ordinary message/content updates do
-// not touch it.
-private struct ConversationLazyWindowIdentity: Hashable {
-    let conversationID: UUID
-    let generation: UInt64
-}
-
 // An explicit edge navigation first releases any retained iOS 18 semantic
 // `.bottom` position while preserving the visible offset. The source anchor is
 // part of the identity so an acknowledgement from an older transcript
@@ -1041,6 +1279,9 @@ private struct MessageReplacementViewportRequest {
     var didCommit = false
     var landingAnchorID: ConversationBottomAnchorID?
     var targetMessageID: UUID?
+    // One real native reveal can admit an offscreen replacement target. Its
+    // measured geometry still owns the subsequent exact edge correction.
+    var didRequestTargetReveal = false
     var didIssueLanding = false
     var layoutWaitReason: String?
 }
@@ -1127,6 +1368,192 @@ private final class WeakChatScrollViewBox {
     weak var registration: ChatScrollViewRegistration?
 
     var scrollView: UIScrollView? { registration?.scrollView }
+}
+
+/// Reads the composer's system motion at keyboard notifications/layout only.
+/// Keeps weak owners and scalar animation identity, without polling, retaining
+/// animations, or searching through messages.
+@MainActor
+private final class ComposerKeyboardMotionSource {
+    weak var inputView: ComposerInputTextView?
+    private(set) var animationDuration: TimeInterval?
+    private struct TranslationMotion {
+        weak var input: ComposerInputTextView?
+        weak var window: UIWindow?
+        weak var layer: CALayer?
+        let identity: ComposerInputIdentity
+        let key: String
+        let keyPath: String
+        let from: CGPoint
+        let to: CGPoint
+        let duration: TimeInterval
+        let beginTime: CFTimeInterval
+    }
+    private var translationMotions: [TranslationMotion] = []
+
+    func viewportAnimationDuration(synchronousLayout: Bool,
+                                   fallback: TimeInterval) -> TimeInterval {
+        // UIKit can resize the transcript before our keyboard notification
+        // observer runs. The current animation then owns this layout, even
+        // when the previous input-mode/foreground notification had duration 0.
+        let inherited = UIView.inheritedAnimationDuration
+        if synchronousLayout, UIView.areAnimationsEnabled,
+           inherited.isFinite, inherited > 0 {
+            return inherited
+        }
+        return animationDuration ?? fallback
+    }
+
+    /// UIKit can already have animated the legal-offset clamp during a
+    /// keyboard resize. Adopt that motion together with its scroll-edge
+    /// compensation instead of rewinding just the scroll view's layer.
+    func inheritedViewportDuration(in scrollView: UIScrollView,
+                                   conversationID: UUID, targetY: CGFloat) -> TimeInterval? {
+        guard abs(scrollView.contentOffset.y - targetY) <= 0.5,
+              let inputView, inputView.identity.conversationID == conversationID,
+              let window = inputView.window, window === scrollView.window else { return nil }
+        let motions = (scrollView.layer.animationKeys() ?? []).compactMap {
+            scrollView.layer.animation(forKey: $0) as? CASpringAnimation
+        }.filter { $0.keyPath == "bounds.origin" }
+        guard motions.count == 1, let motion = motions.first,
+              motion.isAdditive, motion.duration.isFinite, motion.duration > 0,
+              let from = (motion.fromValue as? NSValue)?.cgPointValue,
+              let to = (motion.toValue as? NSValue)?.cgPointValue,
+              from.y.isFinite, abs(from.y) > 0.5, abs(from.x) <= 0.5,
+              abs(to.x) <= 0.5, abs(to.y) <= 0.5 else { return nil }
+        let elapsed = motion.beginTime == 0 ? 0
+            : scrollView.layer.convertTime(CACurrentMediaTime(), from: nil) - motion.beginTime
+        guard elapsed >= 0, elapsed < motion.duration else { return nil }
+        var ancestor: UIView? = inputView
+        while let view = ancestor, view !== window {
+            for key in view.layer.animationKeys() ?? [] {
+                guard let source = view.layer.animation(forKey: key) as? CASpringAnimation,
+                      source.keyPath == "position" || source.keyPath == "bounds.origin",
+                      source.isAdditive,
+                      let sourceFrom = (source.fromValue as? NSValue)?.cgPointValue,
+                      // A bounds-origin delta translates descendants in the
+                      // opposite direction to an equal position delta.
+                      (source.keyPath == "bounds.origin" ? -sourceFrom.y : sourceFrom.y) * from.y < 0,
+                      abs(source.duration - motion.duration) <= 0.001,
+                      abs(source.mass - motion.mass) <= 0.001,
+                      abs(source.stiffness - motion.stiffness) <= 0.001,
+                      abs(source.damping - motion.damping) <= 0.001,
+                      abs(source.initialVelocity - motion.initialVelocity) <= 0.001 else { continue }
+                let sourceBegin = source.beginTime == 0 ? 0
+                    : scrollView.layer.convertTime(source.beginTime, from: view.layer)
+                guard abs(sourceBegin - motion.beginTime) <= 0.001 else { continue }
+                return motion.duration - elapsed
+            }
+            ancestor = view.superview
+        }
+        return nil
+    }
+
+    @discardableResult
+    func updateTiming(duration: TimeInterval, conversationID: UUID,
+                      scrollView: UIScrollView?) -> Int {
+        // Synchronous native layout can precede SwiftUI value propagation.
+        // Its owner must see this notification's zero, not last turn's timing.
+        animationDuration = duration
+        guard let inputView, inputView.identity.conversationID == conversationID,
+              let window = inputView.window, window === scrollView?.window else {
+            translationMotions.removeAll()
+            return 0
+        }
+        if duration > 0 {
+            translationMotions.removeAll()
+            var ancestor: UIView? = inputView
+            while let view = ancestor, view !== window {
+                for key in view.layer.animationKeys() ?? [] {
+                    guard let motion = view.layer.animation(forKey: key) as? CASpringAnimation,
+                          let keyPath = motion.keyPath,
+                          keyPath == "position" || keyPath == "bounds.origin", motion.isAdditive,
+                          motion.duration.isFinite, abs(motion.duration - duration) <= 0.02,
+                          let from = (motion.fromValue as? NSValue)?.cgPointValue,
+                          let to = (motion.toValue as? NSValue)?.cgPointValue,
+                          from.y.isFinite, abs(from.y) > 0.5,
+                          abs(from.x) <= 0.5, abs(to.x) <= 0.5, abs(to.y) <= 0.5 else { continue }
+                    translationMotions.append(TranslationMotion(
+                        input: inputView, window: window, layer: view.layer,
+                        identity: inputView.identity, key: key, keyPath: keyPath, from: from, to: to,
+                        duration: motion.duration, beginTime: motion.beginTime
+                    ))
+                }
+                ancestor = view.superview
+            }
+            return 0
+        }
+        // An immediate keyboard change replaces the model position, but an
+        // old additive opening delta can still move that new position. Cancel
+        // only the recorded animation if its concrete owner and values agree.
+        var removed = 0
+        for recorded in translationMotions {
+            guard recorded.input === inputView, recorded.identity == inputView.identity,
+                  recorded.window === window, let layer = recorded.layer,
+                  let motion = layer.animation(forKey: recorded.key) as? CASpringAnimation,
+                  motion.keyPath == recorded.keyPath, motion.isAdditive,
+                  abs(motion.duration - recorded.duration) <= 0.001,
+                  (motion.fromValue as? NSValue)?.cgPointValue == recorded.from,
+                  (motion.toValue as? NSValue)?.cgPointValue == recorded.to,
+                  recorded.beginTime == 0 || motion.beginTime == 0
+                    || abs(motion.beginTime - recorded.beginTime) <= 0.001 else { continue }
+            // A reused editor/layer must still be in this exact ancestor chain.
+            var ancestor: UIView? = inputView
+            while let view = ancestor, view !== window, view.layer !== layer {
+                ancestor = view.superview
+            }
+            guard let ancestor, ancestor !== window, ancestor.layer === layer else { continue }
+            layer.removeAnimation(forKey: recorded.key)
+            removed += 1
+        }
+        translationMotions.removeAll()
+        return removed
+    }
+
+    func synchronizeSpring(in scrollView: UIScrollView, conversationID: UUID,
+                           duration: TimeInterval) -> Int {
+        guard let inputView, inputView.identity.conversationID == conversationID,
+              let window = inputView.window, window === scrollView.window else { return 0 }
+        var ancestor: UIView? = inputView
+        var source: CASpringAnimation?
+        while let view = ancestor, view !== window, source == nil {
+            for key in view.layer.animationKeys() ?? [] {
+                guard let spring = view.layer.animation(forKey: key) as? CASpringAnimation,
+                      spring.keyPath == "position" || spring.keyPath == "bounds.origin",
+                      spring.mass.isFinite, spring.mass > 0,
+                      spring.stiffness.isFinite, spring.stiffness > 0,
+                      spring.damping.isFinite, spring.damping >= 0,
+                      spring.initialVelocity.isFinite, spring.duration.isFinite,
+                      abs(spring.duration - duration) <= 0.02 else { continue }
+                source = spring
+                break
+            }
+            ancestor = view.superview
+        }
+        guard let source else { return 0 }
+        var replacements = 0
+        for key in scrollView.layer.animationKeys() ?? [] {
+            guard let spring = scrollView.layer.animation(forKey: key) as? CASpringAnimation,
+                  spring.keyPath == "bounds.origin" || spring.keyPath == "bounds.size",
+                  abs(spring.mass - source.mass) > 0.001
+                    || abs(spring.stiffness - source.stiffness) > 0.001
+                    || abs(spring.damping - source.damping) > 0.001
+                    || abs(spring.initialVelocity - source.initialVelocity) > 0.001
+                    || abs(spring.duration - source.duration) > 0.001,
+                  let aligned = spring.copy() as? CASpringAnimation else { continue }
+            // Retain UIKit's keys, target, additive values and interruption
+            // start. Only the observed spring shape is shared with the input.
+            aligned.mass = source.mass
+            aligned.stiffness = source.stiffness
+            aligned.damping = source.damping
+            aligned.initialVelocity = source.initialVelocity
+            aligned.duration = source.duration
+            aligned.timingFunction = source.timingFunction
+            scrollView.layer.add(aligned, forKey: key)
+            replacements += 1
+        }
+        return replacements
+    }
 }
 
 /// Keeps the already-rendered chat viewport above the real scroll view while
@@ -2197,7 +2624,7 @@ struct RootView: View {
                     safeAreaInsets: safeAreaInsets,
                     isDrawerGestureActive: isDrawerGestureActive,
                     topReturnCoordinator: drawerListTopReturnCoordinator,
-                    onRequestClose: closeDrawerAnimated,
+                    onRequestClose: closeDrawerAfterSelection,
                     onRequestCloseAfterConversationReady: requestDrawerCloseAfterConversationReady
                 )
                     .frame(height: fullSize.height)
@@ -2793,6 +3220,10 @@ struct RootView: View {
         settleDrawer(open: false)
     }
 
+    private func closeDrawerAfterSelection() {
+        settleDrawer(open: false, playHaptic: false)
+    }
+
     private func requestDrawerCloseAfterConversationReady(_ conversationID: UUID) {
         guard model.isDrawerPresented,
               model.selectedConversationID == conversationID else { return }
@@ -2818,7 +3249,7 @@ struct RootView: View {
                 + " conv=\(VersionFlashTrace.identifierToken(conversationID))"
         )
         pendingDrawerCloseConversationID = nil
-        settleDrawer(open: false)
+        settleDrawer(open: false, playHaptic: false)
     }
 
     private func continueDrawerCloseAfterExternalSemanticChange() {
@@ -2841,7 +3272,7 @@ struct RootView: View {
         startDrawerSettleProgress(from: currentProgress, to: 0)
     }
 
-    private func settleDrawer(open: Bool) {
+    private func settleDrawer(open: Bool, playHaptic: Bool = true) {
         let fallbackProgress = drawerDragProgress ?? (model.isDrawerPresented ? 1 : 0)
         cancelDrawerSettleWork(releasingViewportFreeze: false)
         pendingDrawerCloseConversationID = nil
@@ -2871,7 +3302,7 @@ struct RootView: View {
                 guard !Task.isCancelled,
                       !isDrawerGestureActive,
                       drawerSettleSequence == sequence else { return }
-                model.setDrawerPresented(false)
+                model.setDrawerPresented(false, playHaptic: playHaptic)
                 VersionFlashTrace.record(
                     "DRAWER_SEMANTIC_CLOSE"
                         + " seq=\(sequence)"
@@ -3290,32 +3721,32 @@ private struct ConversationSwitchFadeModifier: ViewModifier {
 
 private struct ChatView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var nativeTranscriptLocale
+    @Environment(\.dynamicTypeSize) private var nativeTranscriptDynamicTypeSize
+    @Environment(\.layoutDirection) private var nativeTranscriptLayoutDirection
+    @State private var nativeTranscriptPresentationCache = NativeChatPresentationCache()
+    @State private var citationPreparationCache = MessageCitationPreparationCache()
+    @State private var nativeTranscriptDriver = NativeChatScrollDriver()
+    @State private var nativeTranscriptRegistration = ChatScrollViewRegistration()
+    @State private var nativeTranscriptGeometry = NativeTranscriptGeometryRelay()
     let topSafeAreaInset: CGFloat
     let onOpenDrawer: () -> Void
     let isConversationDrawerClosePending: (UUID) -> Bool
     let onConversationContentReady: (UUID) -> Void
     @State private var userScrollIdleTask: Task<Void, Never>?
-    @State private var streamFollowTask: Task<Void, Never>?
+    @State private var streamingTailRecoveryTask: Task<Void, Never>?
     @State private var userMessageSendPositionTask: Task<Void, Never>?
     @State private var activeUserMessageSendPositionRequestID: UUID?
     @State private var activeUserMessageSendPositionTaskID: UUID?
     @State private var conversationReturnTask: Task<Void, Never>?
-    @State private var bottomRowMaterializationTask: Task<Void, Never>?
-    @State private var pendingBottomRowMaterializationAnchorID: ConversationBottomAnchorID?
-    @State private var layoutFollowTask: Task<Void, Never>?
     @State private var navigationHideTask: Task<Void, Never>?
     @State private var navigationScrollTask: Task<Void, Never>?
     @State private var showTransientNavigation = false
     @State private var navigationRequestSequence = 0
-    @State private var conversationLazyWindowGeneration: UInt64 = 0
     @State private var navigationRequest: MessageNavigationRequest?
     @State private var pendingNavigationRequest: MessageNavigationRequest?
-    // A remote bottom request or an exact-bottom tail-version replacement may
-    // replace a large estimated LazyVStack window with AppModel's bounded latest
-    // window. Keep that small destination eager after landing so completion never
-    // performs an eager-to-lazy tree swap.
-    @State private var bottomNavigationCompactWindowConversationID: UUID?
-    @State private var messageReplacementConcreteWindowSessionID: ChatViewportSessionID?
+    @State private var messageReplacementLayoutSessionID: ChatViewportSessionID?
     @State private var pendingNavigationPromotionTask: Task<Void, Never>?
     @State private var sendPositionNativeReleaseRequest:
         SendPositionNativeReleaseID?
@@ -3327,12 +3758,14 @@ private struct ChatView: View {
     @State private var landedMessageTargetID: UUID?
     @State private var concreteFavoriteTargetMessageID: UUID?
     @State private var chatScrollViewBox = WeakChatScrollViewBox()
+    @State private var composerKeyboardMotionSource = ComposerKeyboardMotionSource()
     @State private var regenerationViewportTransitionCoordinator =
         RegenerationViewportTransitionCoordinator()
     @State private var activatedCoveredMessageTargetRequestID: UUID?
     @State private var messageFrames: [UUID: CGRect] = [:]
     @State private var messageFramesAnchorID: ConversationBottomAnchorID?
     @State private var messageFramesLayoutRequestID: UUID?
+    @State private var concreteEntryTailAnchorID: ConversationBottomAnchorID?
     @State private var messageFrameGeneration: UInt64 = 0
     @State private var automaticReasoningExpandedCheckpoint:
         AutomaticReasoningExpandedCheckpoint?
@@ -3355,7 +3788,7 @@ private struct ChatView: View {
         AutomaticReasoningCollapseRearmRequest?
     @State private var automaticReasoningCollapseOwnerWatchdogTask:
         Task<Void, Never>?
-    @State private var scrollViewportHeight: CGFloat = 0
+    @State private var chatSurfaceHeight: CGFloat = 0
     @State private var scrollViewportFrame: CGRect = .zero
     @State private var lastKnownNearBottom = true
     // Keep the native geometry result separate from the transient "user is
@@ -3370,8 +3803,6 @@ private struct ChatView: View {
         OffscreenStreamingDisplayState()
     @State private var composerHeight: CGFloat = 110
     @State private var isQuickReturnToBottomVisible = false
-    @State private var layoutFollowRequest = 0
-    @State private var layoutFollowRequiresNearBottom = true
     @State private var nativeBottomEdgeRearmRequest = 0
     @State private var nativeSendExactBottomHandoffRequest = 0
     @State private var nativeConversationContentReadyAnchorID: ConversationBottomAnchorID?
@@ -3408,8 +3839,6 @@ private struct ChatView: View {
     @State private var messageSheetPresentation: MessageSheetPresentation?
     @State private var directEditText = ""
     @State private var regenerationConfirmationMessage: ChatMessage?
-    @State private var messageWindowLoadTask: Task<Void, Never>?
-    @State private var lastMessageWindowLoadAt = Date.distantPast
     @State private var messageReplacementLandingTask: Task<Void, Never>?
     @State private var messageReplacementRequest: MessageReplacementViewportRequest?
     @State private var codeDisclosureStore = CodeDisclosureStore()
@@ -3447,15 +3876,13 @@ private struct ChatView: View {
             + " ignore=\(ChatBottomTrace.remaining(until: keyboardScrollActivityIgnoreUntil))"
             + " keyboardTask=\(keyboardViewportPinTask != nil)"
             + " settleTask=\(keyboardNativeSettleTask != nil)"
-            + " streamTask=\(streamFollowTask != nil)"
+            + " streamTask=\(streamingTailRecoveryTask != nil)"
             + " sendTask=\(userMessageSendPositionTask != nil)"
             + " sendReq=\(model.pendingUserMessageSendPositionRequest.map { ChatBottomTrace.shortID($0.id) } ?? "nil")"
             + " sendGate=\(model.sendPresentationGate.map { ChatBottomTrace.shortID($0.requestID) } ?? "nil")"
             + " unifiedSend=\(keyboardUnifiedSendHandoff.map { ChatBottomTrace.shortID($0.requestID) } ?? "nil")"
             + " keyboardPresented=\(isComposerKeyboardPresented)"
-            + " layoutTask=\(layoutFollowTask != nil)"
             + " returnTask=\(conversationReturnTask != nil)"
-            + " materializeTask=\(bottomRowMaterializationTask != nil)"
             + " navigationTask=\(navigationScrollTask != nil)"
             + " collapseOwner=\(automaticReasoningCollapseOwner?.id.generation.description ?? "nil")"
             + " collapseLifecycle=\(automaticReasoningCollapseOwnerLifecycle)"
@@ -3464,7 +3891,8 @@ private struct ChatView: View {
             + " edgeReq=\(nativeBottomEdgeRearmRequest)"
             + " sendHandoffReq=\(nativeSendExactBottomHandoffRequest)"
             + " keyboardReq=\(keyboardViewportPinRequest)"
-            + " viewportH=\(String(format: "%.1f", scrollViewportHeight))"
+            + " viewportH=\(String(format: "%.1f", nativeViewportHeight))"
+            + " surfaceH=\(String(format: "%.1f", chatSurfaceHeight))"
             + " viewportMinY=\(String(format: "%.1f", scrollViewportFrame.minY))"
             + " viewportMaxY=\(String(format: "%.1f", scrollViewportFrame.maxY))"
             + " composerH=\(String(format: "%.1f", composerHeight))"
@@ -3548,7 +3976,8 @@ private struct ChatView: View {
         _ message: ChatMessage,
         citationSources: [MessageCitationSource],
         isGroupConversation: Bool,
-        bottomAnchorID: ConversationBottomAnchorID
+        bottomAnchorID: ConversationBottomAnchorID,
+        isConversationTail: Bool
     ) -> some View {
         let versionFlashContext: VersionFlashTextContext?
         if VersionFlashTrace.isEnabled,
@@ -3566,6 +3995,7 @@ private struct ChatView: View {
         }
         return MessageRow(
             message: message,
+            isConversationTail: isConversationTail,
             citationSources: citationSources,
             isGroupMessage: isGroupConversation,
             versionFlashContext: versionFlashContext,
@@ -3585,14 +4015,7 @@ private struct ChatView: View {
                 )
             },
             onUserReaction: { message, reaction in
-                let shouldPreserveBottom = model.preferences.autoScrollEnabled
-                    && autoFollowEngaged
-                    && lastKnownNearBottom
-                    && !isUserScrollActive
                 model.setMessageUserReaction(message.id, reaction: reaction)
-                if shouldPreserveBottom {
-                    requestLayoutFollowCorrection(requiresNearBottom: false)
-                }
             },
             onMore: { message in
                 dismissKeyboard()
@@ -3629,20 +4052,42 @@ private struct ChatView: View {
             }
         )
         .id(message.id)
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: MessageFramePreferenceKey.self,
-                    value: ConversationMessageFrameSnapshot(
-                        anchorID: bottomAnchorID,
-                        frames: [
-                            message.id: proxy.frame(in: .named("chat-scroll"))
-                        ],
-                        layoutRequestID: activeCodeLayoutRequestID
-                    )
-                )
-            }
+        .background(Self.nativeMessageGeometry(id: message.id))
+    }
+
+    // SwiftUI may evaluate GeometryReader on its asynchronous renderer. This
+    // pure preference producer captures only an immutable ID, never ChatView's
+    // main-actor state; its existing consumer still applies current-host checks.
+    nonisolated private static func nativeMessageGeometry(id: UUID) -> some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: NativeChatRowFramePreferenceKey.self,
+                value: [id: proxy.frame(in: .named("native-chat-row"))]
+            )
         }
+    }
+
+    private func measuredEntryTailAnchorID(
+        _ anchorID: ConversationBottomAnchorID,
+        frame: CGRect
+    ) -> ConversationBottomAnchorID? {
+        guard frame.minX.isFinite, frame.minY.isFinite,
+              frame.maxY.isFinite, frame.width.isFinite,
+              frame.height.isFinite,
+              frame.width > 0, frame.height > 0 else { return nil }
+        return anchorID
+    }
+
+    private func acknowledgeMeasuredEntryTail(
+        _ anchorID: ConversationBottomAnchorID?
+    ) {
+        guard let anchorID,
+              anchorID == currentConversationBottomAnchorID,
+              isBoundedConversationEntry,
+              nativeConversationContentReadyAnchorID != anchorID,
+              concreteEntryTailAnchorID != anchorID else { return }
+        concreteEntryTailAnchorID = anchorID
+        VersionFlashTrace.record("ENTRY_TAIL_LAYOUT_ACK req=\(anchorID.positionRequest.request)")
     }
 
     private func conversationMessageHost(
@@ -3650,9 +4095,9 @@ private struct ChatView: View {
         isGroupConversation: Bool,
         visibleTruncateIndex: Int,
         bottomAnchorID: ConversationBottomAnchorID,
-        bottomNavigationTailClearance: CGFloat = 0
+        isConversationTail: Bool
     ) -> some View {
-        VStack(spacing: conversationMessageSpacing) {
+        VStack(spacing: 30) {
             if host.index == visibleTruncateIndex {
                 ContextClearedDivider()
             }
@@ -3660,156 +4105,277 @@ private struct ChatView: View {
                 host.message,
                 citationSources: host.citationSources,
                 isGroupConversation: isGroupConversation,
-                bottomAnchorID: bottomAnchorID
+                bottomAnchorID: bottomAnchorID,
+                isConversationTail: isConversationTail
             )
         }
-        // For one ordinary bottom-edge request, move the composer's existing
-        // clearance into the existing lazy tail target. The matching outer
-        // spacer gives up the same height, so total content height and message
-        // identity remain unchanged while the one smooth command is active.
-        .padding(
-            .bottom,
-            host.message.id == bottomAnchorID.messageIDs.last
-                ? bottomNavigationTailClearance
-                : 0
-        )
-        // Keep the exact pending-assistant row in layout from the first send
-        // revision, but do not publish it visually before the existing
-        // concrete-user-row gate opens. The canonical row then reuses this
-        // host identity, so revealing the spinner adds no second layout height.
-        .opacity(host.isSendPresentationReservation ? 0 : 1)
+        // Reserve the immutable waiting row in the same revision as the user
+        // message. Its indicator waits for send arrival without changing this
+        // geometry; the existing gate still controls provider text publication.
         .allowsHitTesting(!host.isSendPresentationReservation)
         .accessibilityHidden(host.isSendPresentationReservation)
+        .environment(\.messageInlineActionAdmission, MessageInlineActionAdmission {
+            guard bottomAnchorID.positionRequest == currentConversationPositionRequest else { return false }
+            // Read focus and the real keyboard lifecycle when the action fires.
+            // A dismissal tap must not also regenerate/copy/edit a message,
+            // keyboardDidHide can arrive before the existing native viewport
+            // motion ends. Keep that same owner's remaining movement protected.
+            // Keep this out of row revisions and layout invalidation.
+            guard model.isComposerFocused || isComposerKeyboardPresented
+                || nativeTranscriptDriver.externalViewportMotion else { return true }
+            dismissKeyboard()
+            return false
+        })
     }
 
-    private func conversationLazyMessageStack(
-        _ messageHosts: ArraySlice<ConversationMessageHost>,
-        isGroupConversation: Bool,
-        visibleTruncateIndex: Int,
-        visibleMessageCount: Int,
-        identity: ConversationLazyWindowIdentity,
-        bottomAnchorID: ConversationBottomAnchorID,
-        bottomNavigationTailClearance: CGFloat,
-        includesEarlierWindowSentinel: Bool = true,
-        includesTailContent: Bool = true
-    ) -> some View {
-        LazyVStack(spacing: conversationMessageSpacing) {
-            if includesEarlierWindowSentinel && model.hasEarlierMessages {
-                Color.clear
-                    .frame(height: 1)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: MessageWindowTopFramePreferenceKey.self,
-                                value: proxy.frame(in: .named("chat-scroll"))
-                            )
-                        }
-                    }
-            }
-            ForEach(messageHosts) { host in
-                conversationMessageHost(
-                    host,
-                    isGroupConversation: isGroupConversation,
-                    visibleTruncateIndex: visibleTruncateIndex,
-                    bottomAnchorID: bottomAnchorID,
-                    bottomNavigationTailClearance:
-                        bottomNavigationTailClearance
-                )
-            }
-            if includesTailContent,
-               visibleTruncateIndex == visibleMessageCount {
-                ContextClearedDivider()
-            }
-            if includesTailContent && model.hasLaterMessages {
-                Color.clear
-                    .frame(height: 1)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: MessageWindowBottomFramePreferenceKey.self,
-                                value: proxy.frame(in: .named("chat-scroll"))
-                            )
-                        }
-                    }
-            }
-            if includesTailContent && model.isCompressingContext {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(L10n.lookup("正在压缩上下文…"))
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .id(identity)
+    private func nativeTranscriptDebugWindow(start: Int, end: Int, total: Int) -> NativeChatDebugWindow? {
+        #if DEBUG
+        guard NativeReadingFixtures.requestedName != nil else { return nil }
+        return NativeChatDebugWindow(start: start, end: end, total: total)
+        #else
+        return nil
+        #endif
     }
 
-    private func conversationCompactBottomMessageStack(
-        _ messageHosts: ArraySlice<ConversationMessageHost>,
+    private func nativeTranscript(
+        _ hosts: [ConversationMessageHost],
         isGroupConversation: Bool,
-        visibleTruncateIndex: Int,
         visibleMessageCount: Int,
-        identity: ConversationLazyWindowIdentity,
         bottomAnchorID: ConversationBottomAnchorID,
-        bottomNavigationTailClearance: CGFloat
+        scrollProxy: ChatTranscriptProxy
     ) -> some View {
-        VStack(spacing: conversationMessageSpacing) {
-            if model.hasEarlierMessages {
-                Color.clear
-                    .frame(height: 1)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: MessageWindowTopFramePreferenceKey.self,
-                                value: proxy.frame(in: .named("chat-scroll"))
-                            )
-                        }
-                    }
-            }
-            ForEach(messageHosts) { host in
-                conversationMessageHost(
-                    host,
+        let dividerIndex = model.selectedLogicalTruncateIndex - model.messageWindowStartIndex
+        let publicationID = NativeChatPublicationID(
+            anchorID: bottomAnchorID,
+            layoutRequestID: activeCodeLayoutRequestID
+        )
+        let presentationSnapshot = NativeChatPresentationRevision(
+            preferences: model.preferences, locale: nativeTranscriptLocale,
+            colorScheme: colorScheme, dynamicTypeSize: nativeTranscriptDynamicTypeSize,
+            layoutDirection: nativeTranscriptLayoutDirection
+        )
+        let presentation = nativeTranscriptPresentationCache.token(for: presentationSnapshot)
+        var rows = hosts.map { host in
+            // The waiting assistant already owns the final-row spacing. Use the
+            // same value for rendering and measurement-cache invalidation.
+            let isConversationTail = !model.hasLaterMessages && (
+                host.isSendPresentationReservation
+                    || host.message.id == bottomAnchorID.messageIDs.last
+            )
+            return NativeChatRow(
+                id: host.message.id,
+                revision: AnyHashable(NativeChatRowRevision(
+                    presentation: presentation,
+                    message: host.message,
+                    citations: host.citationSources,
+                    isReservation: host.isSendPresentationReservation,
+                    isConversationTail: isConversationTail,
+                    hasDivider: host.index == dividerIndex,
+                    layoutRequestID: activeCodeLayoutRequestID,
+                    sendAnimationRequestID: userBubbleSendAnimationRequest(for: host.message)?.id,
+                    sendAnimationEnabled: model.preferences.userBubbleSendAnimationEnabled,
                     isGroupConversation: isGroupConversation,
-                    visibleTruncateIndex: visibleTruncateIndex,
-                    bottomAnchorID: bottomAnchorID,
-                    bottomNavigationTailClearance:
-                        bottomNavigationTailClearance
+                    isDark: colorScheme == .dark
+                )),
+                content: AnyView(
+                    conversationMessageHost(
+                        host,
+                        isGroupConversation: isGroupConversation,
+                        visibleTruncateIndex: dividerIndex,
+                        bottomAnchorID: bottomAnchorID,
+                        isConversationTail: isConversationTail
+                    )
+                    .padding(.horizontal, 18)
+                    .environment(model)
+                    .environment(\.colorScheme, colorScheme)
+                    .environment(\.locale, nativeTranscriptLocale)
+                    .environment(\.dynamicTypeSize, nativeTranscriptDynamicTypeSize)
+                    .environment(\.layoutDirection, nativeTranscriptLayoutDirection)
+                    .appFontEnvironment(model.preferences.appFontPostScriptName)
+                    .tint(Color(uiColor: model.themeActionUIColor))
+                    .accentColor(Color(uiColor: model.themeActionUIColor))
+                    .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
                 )
-            }
-            if visibleTruncateIndex == visibleMessageCount {
-                ContextClearedDivider()
-            }
-            if model.hasLaterMessages {
-                Color.clear
-                    .frame(height: 1)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: MessageWindowBottomFramePreferenceKey.self,
-                                value: proxy.frame(in: .named("chat-scroll"))
-                            )
+            )
+        }
+        if dividerIndex == visibleMessageCount || model.isCompressingContext {
+            rows.append(NativeChatRow(
+                id: UUID(uuidString: "5EEB9CB8-1FDD-450A-8FB8-F96D5E355E0D")!,
+                revision: AnyHashable(NativeChatAuxiliaryRevision(
+                    showsDivider: dividerIndex == visibleMessageCount,
+                    isCompressing: model.isCompressingContext,
+                    presentation: presentation
+                )),
+                content: AnyView(
+                    VStack(spacing: conversationMessageSpacing) {
+                        if dividerIndex == visibleMessageCount { ContextClearedDivider() }
+                        if model.isCompressingContext {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text(L10n.lookup("正在压缩上下文…"))
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-            }
-            if model.isCompressingContext {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(L10n.lookup("正在压缩上下文…"))
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-            }
+                    .padding(.horizontal, 18)
+                    .environment(model)
+                    .environment(\.colorScheme, colorScheme)
+                    .environment(\.locale, nativeTranscriptLocale)
+                    .environment(\.dynamicTypeSize, nativeTranscriptDynamicTypeSize)
+                    .environment(\.layoutDirection, nativeTranscriptLayoutDirection)
+                    .appFontEnvironment(model.preferences.appFontPostScriptName)
+                    .tint(Color(uiColor: model.themeActionUIColor))
+                    .accentColor(Color(uiColor: model.themeActionUIColor))
+                    .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
+                ),
+                isMessage: false
+            ))
         }
-        .id(identity)
+        let transcript = NativeChatTranscript(
+            rows: rows,
+            configuration: NativeChatLayoutConfiguration(
+                top: topContentSpacerHeight + messageListTopPadding,
+                bottom: composerBottomClearance,
+                gap: conversationMessageSpacing,
+                minimumIncludesTopInset: !isFreshConversationFirstMessage,
+                alignShortContentToBottom: false
+            ),
+            publicationID: AnyHashable(publicationID),
+            sessionID: AnyHashable(model.selectedConversationID),
+            driver: nativeTranscriptDriver,
+            hasEarlier: model.hasEarlierMessages,
+            hasLater: model.hasLaterMessages,
+            initialBottom: !isFreshConversationFirstMessage,
+            holdsAutomaticBottomFollow: isUserMessageSendPositioning,
+            mutationLanding: nativeMutationLanding(for: publicationID),
+            debugWindow: nativeTranscriptDebugWindow(
+                start: model.messageWindowStartIndex,
+                end: model.messageWindowEndIndex,
+                total: model.totalMessageCountForSelectedConversation
+            ),
+            onGeometry: { geometry in
+                guard geometry.publicationID == AnyHashable(publicationID),
+                      bottomAnchorID == currentConversationBottomAnchorID,
+                      publicationID.layoutRequestID == activeCodeLayoutRequestID else { return }
+                nativeTranscriptGeometry.geometry = geometry
+                if let tailID = bottomAnchorID.messageIDs.last,
+                   let frame = geometry.frames[tailID] {
+                    acknowledgeMeasuredEntryTail(measuredEntryTailAnchorID(bottomAnchorID, frame: frame))
+                }
+            },
+            onCodeLayout: { frames in
+                guard bottomAnchorID == currentConversationBottomAnchorID,
+                      publicationID.layoutRequestID == activeCodeLayoutRequestID else { return }
+                nativeTranscriptGeometry.codeFrames = frames
+            },
+            onAttach: { scrollView in
+                nativeTranscriptRegistration.onStatusBarScrollToTop = {
+                    requestMessageNavigation(.top)
+                }
+                if nativeTranscriptRegistration.attach(to: scrollView, box: chatScrollViewBox) {
+                    advanceMessageReplacementIfReady(using: scrollProxy)
+                    finishMessageReplacementIfReady()
+                }
+            },
+            onDetach: { scrollView in
+                if nativeTranscriptRegistration.scrollView === scrollView {
+                    nativeTranscriptRegistration.release()
+                }
+            },
+            onPageEarlier: {
+                guard bottomAnchorID.positionRequest == currentConversationPositionRequest,
+                      canLoadMessageWindow else { return false }
+                return model.loadEarlierMessages()
+            },
+            onPageLater: {
+                guard bottomAnchorID.positionRequest == currentConversationPositionRequest,
+                      canLoadMessageWindow else { return false }
+                return model.loadLaterMessages()
+            }
+        )
+        // Build message hosts once for this content update. Safe-area changes
+        // only copy the transcript value and update its viewport metrics.
+        return GeometryReader { viewport in
+            var input = transcript
+            input.configuration.viewportInsets = UIEdgeInsets(
+                top: viewport.safeAreaInsets.top, left: 0,
+                bottom: viewport.safeAreaInsets.bottom, right: 0
+            )
+            return input
+                .background {
+                    NativeTranscriptPreferences(relay: nativeTranscriptGeometry, publicationID: publicationID)
+                }
+                // The full viewport uses insets for container and keyboard
+                // avoidance. Its outer surface still positions the composer.
+                .ignoresSafeArea(.all, edges: .vertical)
+        }
+    }
+
+    private func nativeMutationLanding(
+        for publication: NativeChatPublicationID
+    ) -> NativeChatMutationLanding? {
+        guard let request = messageReplacementRequest,
+              request.codeDisclosure == nil,
+              request.didCommit, !request.didRequestTargetReveal,
+              request.replacementMessage != nil || (!request.didIssueLanding && request.readingAnchorID == nil),
+              let landingAnchorID = request.landingAnchorID,
+              landingAnchorID == publication.anchorID,
+              landingAnchorID == currentConversationBottomAnchorID,
+              request.sourceAnchorID.positionRequest == landingAnchorID.positionRequest,
+              messageReplacementLayoutSessionID == currentChatViewportSessionID,
+              let targetID = request.targetMessageID,
+              landingAnchorID.messageIDs.contains(targetID),
+              let scrollView = chatScrollViewBox.scrollView,
+              scrollView === nativeTranscriptDriver.scrollView,
+              scrollView.window != nil,
+              !model.isDrawerPresented,
+              !hasConcreteNativeUserScrollOwnership,
+              !messageReplacementLandingWasInterrupted(
+                scrollView, expectedScrollViewIdentity: request.scrollViewIdentity
+              ) else { return nil }
+        let isReplacement = request.replacementMessage != nil
+        let target: NativeChatScrollTarget
+        if isReplacement {
+            target = request.keepsExactBottom ? .bottom : .rowBottom(targetID,
+                min(request.readingAnchorMaxY ?? nativeViewportHeight - composerBottomClearance,
+                    max(1, nativeViewportHeight - composerBottomClearance)))
+        } else {
+            target = .row(targetID, .top)
+        }
+        return NativeChatMutationLanding(
+            requestID: request.id,
+            sourcePublicationID: AnyHashable(NativeChatPublicationID(
+                anchorID: request.sourceAnchorID, layoutRequestID: publication.layoutRequestID
+            )),
+            destinationPublicationID: AnyHashable(publication),
+            scrollViewIdentity: request.scrollViewIdentity,
+            removedID: request.message.id,
+            targetID: targetID,
+            isReplacement: isReplacement,
+            target: target,
+            onRejected: {
+                if messageReplacementRequest?.id == request.id {
+                    cancelMessageReplacementLanding()
+                }
+            },
+            isCurrent: {
+                messageReplacementRequest?.id == request.id
+                    && messageReplacementRequest?.didCommit == true
+                    && (isReplacement || messageReplacementRequest?.didIssueLanding == false)
+                    && messageReplacementLayoutSessionID == currentChatViewportSessionID
+                    && model.selectedConversationID == request.message.conversationID
+                    && !model.isDrawerPresented
+            }
+        )
     }
 
     private func nativeBottomPositionModifier(
         bottomAnchorID: ConversationBottomAnchorID,
-        scrollProxy: ScrollViewProxy
+        scrollProxy: ChatTranscriptProxy
     ) -> ChatNativeBottomPositionModifier {
         ChatNativeBottomPositionModifier(
+            nativeDriver: nativeTranscriptDriver,
             conversationID: model.selectedConversationID,
             request: model.conversationBottomReturnRequest,
             bottomAnchorID: bottomAnchorID,
@@ -3817,11 +4383,18 @@ private struct ChatView: View {
             sendExactBottomHandoffRequest: nativeSendExactBottomHandoffRequest,
             contentReadyAnchorID: nativeConversationContentReadyAnchorID,
             keyboardRequest: keyboardViewportPinRequest,
+            keyboardBottomFollowIntent: keyboardBottomFollowIntent,
             keyboardDismissalRequest: keyboardDismissalViewportPinRequest,
+            keyboardIsPresented: isComposerKeyboardPresented,
+            pendingSendRequestID: model.pendingUserMessageSendPositionRequest.flatMap {
+                $0.conversationID == model.selectedConversationID ? $0.id : nil
+            },
             keyboardAnimationDuration: lastKeyboardAnimationDuration,
             keyboardAnimationCurveRawValue: lastKeyboardAnimationCurveRawValue,
+            keyboardMotionSource: composerKeyboardMotionSource,
             scrollViewBox: chatScrollViewBox,
             shouldPinToBottom: shouldKeepNativeBottomPosition,
+            allowsAutomaticBottomFollow: model.preferences.autoScrollEnabled,
             isOrdinaryConversationReturn: isOrdinaryConversationReturn,
             messageReplacementReleaseID: messageReplacementRequest?.didCommit == false
                 ? messageReplacementRequest?.id : nil,
@@ -3852,7 +4425,29 @@ private struct ChatView: View {
             onAutomaticReasoningCollapseBottomRearmed:
                 acknowledgeAutomaticReasoningCollapseBottomRearm,
             onScrollMotionChanged: updateNativeScrollMotionState,
-            onScrollPhaseActivityChanged: updateNativeScrollPhaseActivityState,
+            onScrollPhaseActivityChanged: { anchorID, isActive, isAtBottom, isNearBottom in
+                updateNativeScrollPhaseActivityState(
+                    anchorID: anchorID,
+                    isActive: isActive,
+                    isAtBottom: isAtBottom,
+                    isNearBottom: isNearBottom
+                )
+                // keyboardDidHide can precede the existing viewport animator's
+                // completion. Its real idle event hands the still-current send
+                // back to the ordinary positioning path without a second timer.
+                guard !isActive,
+                      anchorID == currentConversationBottomAnchorID,
+                      !nativeTranscriptDriver.externalViewportMotion,
+                      activeUserMessageSendPositionRequestID == nil,
+                      let request = model.pendingUserMessageSendPositionRequest,
+                      request.conversationID == model.selectedConversationID else { return }
+                ChatBottomTrace.log(
+                    "SEND_LIFECYCLE_RESUME reason=nativeViewportIdle"
+                        + " request=\(ChatBottomTrace.shortID(request.id)) "
+                        + chatBottomTraceState
+                )
+                scheduleUserMessageSendPositioning(request, using: scrollProxy)
+            },
             onSystemScrollToTopStarted: beginSystemScrollToTop,
             onMessageTargetPositionReleased:
                 acknowledgeMessageTargetPositionRelease,
@@ -3873,6 +4468,720 @@ private struct ChatView: View {
         )
     }
 
+    private func ordinaryConversationTranscript(
+        visibleMessages: [ChatMessage],
+        renderedMessageHosts: [ConversationMessageHost],
+        isGroupConversation: Bool,
+        bottomAnchorID: ConversationBottomAnchorID,
+        sendPresentationNativeReleaseID: UUID?,
+        automaticReasoningCollapseObservation: AutomaticReasoningCollapseObservation?
+    ) -> some View {
+        let scrollProxy = ChatTranscriptProxy(native: nativeTranscriptDriver)
+        let surface = VStack(spacing: 0) {
+            nativeTranscript(
+                renderedMessageHosts,
+                isGroupConversation: isGroupConversation,
+                visibleMessageCount: visibleMessages.count,
+                bottomAnchorID: bottomAnchorID,
+                scrollProxy: scrollProxy
+            )
+            .modifier(
+                RegisteredChatScrollHeader(
+                    topSafeAreaInset: topSafeAreaInset,
+                    onOpenDrawer: onOpenDrawer
+                )
+            )
+            .coordinateSpace(name: "chat-scroll")
+            // This measures the outer surface, including the header bar.
+            // Keep its size for page minimum height and keyboard expansion;
+            // native message visibility uses the mounted collection instead.
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { height in
+                let previousHeight = chatSurfaceHeight
+                chatSurfaceHeight = height
+                guard height > 0, abs(previousHeight - height) > 0.5 else { return }
+                let isKeyboardDismissalViewportExpansion = previousHeight > 100
+                    && height > previousHeight + 80
+                    && model.isComposerFocused
+                    && autoFollowEngaged
+                    && !isUserScrollActive
+                if isKeyboardDismissalViewportExpansion {
+                    isKeyboardDismissalGeometryRecoveryActive = true
+                    ChatBottomTrace.log(
+                        "KEYBOARD_DISMISS_GEOMETRY_OWNERSHIP"
+                            + " oldHeight=\(String(format: "%.1f", previousHeight))"
+                            + " newHeight=\(String(format: "%.1f", height)) "
+                            + chatBottomTraceState
+                    )
+                }
+                ChatBottomTrace.log(
+                    "VIEWPORT_HEIGHT old=\(String(format: "%.1f", previousHeight))"
+                        + " new=\(String(format: "%.1f", height)) "
+                        + chatBottomTraceState
+                )
+                #if DEBUG
+                navigationStressLog("viewport height \(height)")
+                #endif
+            }
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: { frame in
+                guard frame != .zero else { return }
+                let previousFrame = scrollViewportFrame
+                guard previousFrame == .zero
+                    || abs(previousFrame.maxY - frame.maxY) > 0.5
+                    || abs(previousFrame.minY - frame.minY) > 0.5
+                    || abs(previousFrame.height - frame.height) > 0.5 else { return }
+                scrollViewportFrame = frame
+                ChatBottomTrace.log(
+                    "VIEWPORT_FRAME"
+                        + " oldMinY=\(String(format: "%.1f", previousFrame.minY))"
+                        + " oldMaxY=\(String(format: "%.1f", previousFrame.maxY))"
+                        + " newMinY=\(String(format: "%.1f", frame.minY))"
+                        + " newMaxY=\(String(format: "%.1f", frame.maxY)) "
+                        + chatBottomTraceState
+                )
+            }
+            .modifier(
+                nativeBottomPositionModifier(
+                    bottomAnchorID: bottomAnchorID,
+                    scrollProxy: scrollProxy
+                )
+            )
+            .id(model.selectedConversationID)
+            .scrollDismissesKeyboard(.interactively)
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    // SwiftUI can end this simultaneous tap before the
+                    // collection finishes its real pan. That touch belongs
+                    // to scrolling and must not also dismiss the keyboard.
+                    if let scrollView = chatScrollViewBox.scrollView,
+                       scrollView === nativeTranscriptDriver.scrollView,
+                       scrollView.isDragging {
+                        #if DEBUG
+                        ChatBottomTrace.log("TRANSCRIPT_TAP_IGNORED reason=nativeDrag " + chatBottomTraceState)
+                        #endif
+                        return
+                    }
+                    #if DEBUG
+                    ChatBottomTrace.log("TRANSCRIPT_TAP_RECOGNIZED " + chatBottomTraceState)
+                    #endif
+                    clearAutomaticReasoningCollapseAuthorization(
+                        reason: "transcriptTap"
+                    )
+                    cancelMessageTargetNavigationForUserInteraction()
+                    cancelMessageNavigationForUserInteraction(reason: "transcriptTap")
+                    // A transcript tap makes the visible geometry the
+                    // new reading position for the next adjacent jump.
+                    navigationAnchorMessageID = nil
+                    dismissKeyboard()
+                }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { value in
+                        if scrollDragIsVertical == nil {
+                            guard max(abs(value.translation.width), abs(value.translation.height)) >= 8 else { return }
+                            scrollDragIsVertical = isVerticalScrollDrag(value)
+                        }
+                        guard scrollDragIsVertical == true else { return }
+                        if !isVerticalScrollGestureActive {
+                            cancelMessageReplacementLanding()
+                            cancelAutomaticReasoningCollapseOwner(
+                                reason: "userDrag"
+                            )
+                            cancelMessageTargetNavigationForUserInteraction()
+                            invalidateVersionReplacement(reason: "userDrag")
+                            ChatBottomTrace.log(
+                                "DRAG_BEGIN willInvalidate=\(pendingKeyboardDismissalDeadline == nil)"
+                                    + " willCancelKeyboardTask=\(keyboardViewportPinTask != nil) "
+                                    + chatBottomTraceState
+                            )
+                            cancelMessageNavigationForUserInteraction(reason: "userDrag")
+                            navigationAnchorMessageID = nil
+                            cancelUserMessageSendPositioning(consumingPendingRequest: true)
+                        }
+                        isVerticalScrollGestureActive = true
+                        isNativeVerticalScrollMotionArmed = true
+                        if isPositioningCurrentConversation {
+                            cancelConversationReturnPositioning()
+                        }
+                        lastKnownNearBottom = false
+                        updateNavigationVisibility(isScrolling: true)
+                        handleScrollActivity(
+                            isScrolling: true,
+                            isNearBottom: false
+                        )
+                    }
+                    .onEnded { value in
+                        let didEndVerticalDrag = scrollDragIsVertical == true
+                            || isVerticalScrollDrag(value)
+                        if didEndVerticalDrag {
+                            ChatBottomTrace.log(
+                                "DRAG_END vertical=true dx=\(String(format: "%.1f", value.translation.width))"
+                                    + " dy=\(String(format: "%.1f", value.translation.height)) "
+                                    + chatBottomTraceState
+                            )
+                        }
+                        // Release SwiftUI's drag ownership before
+                        // promoting a button tap queued during tracking.
+                        scrollDragIsVertical = nil
+                        isVerticalScrollGestureActive = false
+                        schedulePendingMessageNavigationPromotion()
+                        guard didEndVerticalDrag else { return }
+                        updateNavigationVisibility(isScrolling: false)
+                    }
+            )
+        }
+
+        let measuredSurface = surface
+        .onPreferenceChange(CodeDisclosureLayoutPreferenceKey.self) { frames in
+            acknowledgeCodeDisclosureLayout(frames, using: scrollProxy)
+        }
+        .onPreferenceChange(MessageFramePreferenceKey.self) { snapshot in
+            guard let snapshot,
+                  snapshot.anchorID == bottomAnchorID else { return }
+            if let requestID = activeCodeLayoutRequestID,
+               snapshot.layoutRequestID != requestID { return }
+            let tailMessageID = snapshot.anchorID.messageIDs.last
+            let previousTailFrame = messageFramesAnchorID == snapshot.anchorID
+                ? tailMessageID.flatMap { messageFrames[$0] }
+                : nil
+            let observedTailFrame = tailMessageID.flatMap {
+                snapshot.frames[$0]
+            }
+            if messageFramesAnchorID != snapshot.anchorID
+                || previousTailFrame != observedTailFrame {
+                messageFrameGeneration &+= 1
+            }
+            if let observation = automaticReasoningCollapseObservation,
+               observation.anchorID == snapshot.anchorID,
+               observation.tailMessageID == tailMessageID,
+               observation.finishedAt == nil,
+               observation.isStreaming,
+               observation.autoCollapseEnabled,
+               observation.isExpanded,
+               !observation.hasVisibleText,
+               manualStreamingReasoningCollapseSuppression
+                != ManualStreamingReasoningCollapseKey(
+                    anchorID: observation.anchorID,
+                    tailMessageID: observation.tailMessageID,
+                    segmentID: observation.segmentID
+                ),
+               let observedTailFrame,
+               observedTailFrame.minX.isFinite,
+               observedTailFrame.minY.isFinite,
+               observedTailFrame.width.isFinite,
+               observedTailFrame.height.isFinite,
+               nativeViewportHeight > 0,
+               observedTailFrame.maxY > 0,
+               observedTailFrame.minY < nativeViewportHeight,
+               let scrollView = chatScrollViewBox.scrollView,
+               scrollView.window != nil,
+               scrollView.bounds.height > 0,
+               scrollView.contentSize.height.isFinite,
+               scrollView.contentOffset.y.isFinite,
+               scrollView.adjustedContentInset.top.isFinite,
+               // Programmatic bottom following may still be in its
+               // native animation phase when the final expanded
+               // reasoning frame becomes concrete. Reject only
+               // real user motion here; otherwise the collapse can
+               // lose its last usable pre-shrink checkpoint.
+               !isVerticalScrollGestureActive,
+               !isNativeVerticalScrollMotionArmed,
+               !nativeScrollHasActiveTouch(scrollView),
+               !scrollView.isTracking,
+               !scrollView.isDragging,
+               !scrollView.isDecelerating,
+               currentUIKitBottomState?.isAtBottom == true {
+                let minimumOffsetY =
+                    -scrollView.adjustedContentInset.top
+                automaticReasoningExpandedCheckpoint =
+                    AutomaticReasoningExpandedCheckpoint(
+                        anchorID: observation.anchorID,
+                        tailMessageID: observation.tailMessageID,
+                        segmentID: observation.segmentID,
+                        frameGeneration: messageFrameGeneration,
+                        frame: observedTailFrame,
+                        scrollViewIdentity:
+                            ObjectIdentifier(scrollView),
+                        contentHeight:
+                            scrollView.contentSize.height,
+                        contentOffsetY:
+                            scrollView.contentOffset.y,
+                        minimumOffsetY: minimumOffsetY,
+                        adjustedContentInsetBottom:
+                            scrollView.adjustedContentInset.bottom
+                    )
+                ChatBottomTrace.log(
+                    "REASONING_COLLAPSE_CHECKPOINT"
+                        + " generation=\(messageFrameGeneration)"
+                        + " tail=\(ChatBottomTrace.shortID(observation.tailMessageID))"
+                        + " segment=\(ChatBottomTrace.shortID(observation.segmentID))"
+                        + " minY=\(String(format: "%.1f", observedTailFrame.minY))"
+                        + " maxY=\(String(format: "%.1f", observedTailFrame.maxY))"
+                        + " height=\(String(format: "%.1f", observedTailFrame.height)) "
+                        + " contentH=\(String(format: "%.1f", scrollView.contentSize.height))"
+                        + " offsetY=\(String(format: "%.1f", scrollView.contentOffset.y)) "
+                        + chatBottomTraceState
+                )
+            }
+            messageFramesAnchorID = snapshot.anchorID
+            messageFramesLayoutRequestID = snapshot.layoutRequestID
+            messageFrames = snapshot.frames
+            advanceMessageReplacementIfReady(using: scrollProxy)
+            finishMessageReplacementIfReady()
+            updateOffscreenStreamingDisplayLease()
+            if let request = model.pendingUserMessageSendPositionRequest,
+               keyboardUnifiedSendHandoff?.requestID == request.id {
+                _ = finishKeyboardUnifiedSendHandoffIfReady(request)
+            }
+            if let tailMessageID = bottomAnchorID.messageIDs.last,
+               let tailFrame = snapshot.frames[tailMessageID] {
+                VersionFlashTrace.recordOnce(
+                    "tailFrame-\(bottomAnchorID.positionRequest.request)-\(tailMessageID)",
+                    "TAIL_FRAME"
+                        + " conv=\(VersionFlashTrace.identifierToken(bottomAnchorID.positionRequest.conversationID))"
+                        + " req=\(bottomAnchorID.positionRequest.request)"
+                        + " msg=\(VersionFlashTrace.identifierToken(tailMessageID))"
+                        + " minY=\(String(format: "%.1f", Double(tailFrame.minY)))"
+                        + " maxY=\(String(format: "%.1f", Double(tailFrame.maxY)))"
+                        + " height=\(String(format: "%.1f", Double(tailFrame.height)))"
+                )
+            }
+            let hadAutomaticCollapseOwner =
+                automaticReasoningCollapseOwner?.id.anchorID
+                    == snapshot.anchorID
+            advanceAutomaticReasoningCollapseOwnerIfPossible(
+                anchorID: snapshot.anchorID
+            )
+            if hadAutomaticCollapseOwner
+                || automaticReasoningCollapseOwner?.id.anchorID
+                    == snapshot.anchorID {
+                return
+            }
+            guard let bottomSnapshot = latestConversationBottomAnchorFrame,
+                  bottomSnapshot.anchorID == bottomAnchorID,
+                  let tailMessageID = bottomSnapshot.anchorID.messageIDs.last,
+                  messageFrames[tailMessageID] != nil else { return }
+            handleConversationBottomAnchorFrame(bottomSnapshot, using: scrollProxy)
+        }
+        .onPreferenceChange(ConversationBottomAnchorFramePreferenceKey.self) { snapshot in
+            handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
+            advanceMessageReplacementIfReady(using: scrollProxy)
+            finishMessageReplacementIfReady()
+        }
+
+        let appearedSurface = measuredSurface
+        .onAppear {
+            completeFreshConversationBottomHandoffIfNeeded()
+            if model.pendingMessageTargetNavigationRequest?.conversationID
+                == model.selectedConversationID {
+                schedulePendingMessageTargetNavigation()
+            } else if let request = model.pendingUserMessageSendPositionRequest {
+                scheduleUserMessageSendPositioning(request, using: scrollProxy)
+            } else {
+                scheduleConversationReturn(using: scrollProxy)
+            }
+        }
+        .onDisappear {
+            releaseOffscreenStreamingDisplayLease(
+                reason: "chatDisappear"
+            )
+        }
+        .onChange(of: bottomAnchorID) { previousAnchorID, currentAnchorID in
+            // Native replacement layout is fenced by the conversation return
+            // session and the request's landing anchor, not an eager row limit.
+            if messageReplacementLayoutSessionID != currentChatViewportSessionID {
+                messageReplacementLayoutSessionID = nil
+            }
+            if let deletion = messageReplacementRequest,
+               (deletion.landingAnchorID ?? deletion.sourceAnchorID)
+                != currentAnchorID {
+                cancelMessageReplacementLanding()
+            }
+            codeDisclosureStore.retain(messageIDs: Set(currentAnchorID.messageIDs))
+            if previousAnchorID != currentAnchorID {
+                releaseOffscreenStreamingDisplayLease(
+                    reason: "conversationPositionChanged"
+                )
+                cancelAutomaticReasoningCollapseOwner(
+                    reason: "anchorChanged"
+                )
+            }
+            if model.messages.count > 24 {
+                model.releaseConcreteConversationEntryWindow()
+            }
+            if VersionFlashTrace.isEnabled {
+                let previousTail = previousAnchorID.messageIDs.last
+                    .map(VersionFlashTrace.identifierToken)
+                    ?? "nil"
+                let currentTail = currentAnchorID.messageIDs.last
+                    .map(VersionFlashTrace.identifierToken)
+                    ?? "nil"
+                let hostTailMessage = visibleMessages.last
+                let hostTailMatchesAnchor = hostTailMessage?.id
+                    == currentAnchorID.messageIDs.last
+                let currentTailMessage = hostTailMatchesAnchor
+                    ? hostTailMessage
+                    : nil
+                VersionFlashTrace.record(
+                    "ANCHOR_COMMIT"
+                        + " oldConv=\(VersionFlashTrace.identifierToken(previousAnchorID.positionRequest.conversationID))"
+                        + " oldReq=\(previousAnchorID.positionRequest.request)"
+                        + " oldRows=\(previousAnchorID.messageIDs.count)"
+                        + " oldTail=\(previousTail)"
+                        + " conv=\(VersionFlashTrace.identifierToken(currentAnchorID.positionRequest.conversationID))"
+                        + " req=\(currentAnchorID.positionRequest.request)"
+                        + " rows=\(currentAnchorID.messageIDs.count)"
+                        + " tail=\(currentTail)"
+                        + " hostTail=\(hostTailMessage.map { VersionFlashTrace.identifierToken($0.id) } ?? "nil")"
+                        + " hostTailMatches=\(hostTailMatchesAnchor)"
+                        + " tailVersion=\(currentTailMessage.map { String($0.version) } ?? "nil")"
+                        + " tailGroup=\(currentTailMessage.map { VersionFlashTrace.opaqueToken($0.versionGroupKey) } ?? "nil")"
+                )
+            }
+            if latestConversationBottomAnchorFrame?.anchorID != currentAnchorID {
+                latestConversationBottomAnchorFrame = nil
+            }
+            if nativeConversationContentReadyAnchorID != currentAnchorID {
+                nativeConversationContentReadyAnchorID = nil
+            }
+            if concreteEntryTailAnchorID != currentAnchorID {
+                concreteEntryTailAnchorID = nil
+            }
+            if messageFramesAnchorID != currentAnchorID {
+                messageFramesAnchorID = nil
+                messageFrames = [:]
+            }
+            if pendingKeyboardViewportPin?.anchorID != currentAnchorID {
+                pendingKeyboardViewportPin = nil
+                cancelKeyboardNativeSettleWatcher()
+            }
+            if activeUserMessageSendPositionRequestID == nil,
+               let request = model.pendingUserMessageSendPositionRequest,
+               request.conversationID == model.selectedConversationID {
+                let releaseBecameStale =
+                    sendPositionNativeReleaseRequest?.requestID == request.id
+                    && sendPositionNativeReleaseRequest?.sourceAnchorID
+                        != currentAnchorID
+                let acknowledgementBecameStale =
+                    acknowledgedSendPositionNativeRelease?.requestID == request.id
+                    && acknowledgedSendPositionNativeRelease?.sourceAnchorID
+                        != currentAnchorID
+                if releaseBecameStale || acknowledgementBecameStale {
+                    // A fast provider completion can replace the
+                    // visible tail during the two-turn native edge
+                    // release. Rekey the exact same send request to
+                    // the new revision instead of waiting forever
+                    // for an acknowledgement that must be dropped.
+                    clearSendPositionNativeRelease(for: request.id)
+                    scheduleUserMessageSendPositioning(
+                        request,
+                        using: scrollProxy
+                    )
+                }
+            }
+        }
+
+        let navigableSurface = appearedSurface
+        .onChange(of: navigationRequest) { _, request in
+            guard let request,
+                  request.positionRequest == currentConversationPositionRequest else { return }
+            switch request.action {
+            case .top:
+                // The iOS 18 modifier first releases any retained
+                // semantic bottom edge. Its typed acknowledgement
+                // starts the window mutation and proxy animation.
+                break
+            case .previousUserMessage:
+                scrollToAdjacentUserMessage(direction: -1, using: scrollProxy, request: request)
+            case .nextUserMessage:
+                scrollToAdjacentUserMessage(direction: 1, using: scrollProxy, request: request)
+            case let .message(messageID):
+                scrollToMessage(messageID, using: scrollProxy, request: request)
+            case .bottom:
+                break
+            }
+        }
+        .onChange(
+            of: ConversationPositionRequestKey(
+                conversationID: model.selectedConversationID,
+                request: model.conversationBottomReturnRequest
+            )
+        ) { previous, current in
+            ChatBottomTrace.log(
+                "CONVERSATION_CHANGE old=\(ChatBottomTrace.shortID(previous.conversationID))/\(previous.request)"
+                    + " new=\(ChatBottomTrace.shortID(current.conversationID))/\(current.request)"
+                    + " concreteEntry=\(model.usesConcreteConversationEntryWindow) "
+                    + chatBottomTraceState
+            )
+            #if DEBUG
+            navigationStressLog(
+                "position change \(previous.conversationID.uuidString.prefix(5))/\(previous.request) -> "
+                    + "\(model.selectedConversation?.title ?? "?") "
+                    + "\(current.conversationID.uuidString.prefix(5))/\(current.request) "
+                    + "messages=\(model.messages.count) window=\(model.messageWindowStartIndex)..<\(model.messageWindowEndIndex)"
+            )
+            #endif
+            if previous != current {
+                cancelMessageReplacementLanding()
+                concreteFavoriteTargetMessageID = nil
+                cancelAutomaticReasoningCollapseOwner(
+                    reason: "conversationPositionChanged"
+                )
+                invalidateVersionReplacement(reason: "conversationChange")
+                landedMessageTargetID = nil
+                pendingKeyboardViewportPin = nil
+                cancelKeyboardNativeSettleWatcher()
+                isNativeScrollPhaseActive = false
+                streamingFollowTouchPauseAnchorID = nil
+                let hadActiveNavigation = navigationRequest != nil
+                    || navigationScrollTask != nil
+                    || pendingNavigationRequest != nil
+                navigationScrollTask?.cancel()
+                navigationScrollTask = nil
+                navigationRequest = nil
+                cancelPendingMessageNavigation()
+                if hadActiveNavigation {
+                    isNativeVerticalScrollMotionArmed = false
+                    interruptNativeScrollMotion()
+                }
+            }
+            if previous.conversationID != current.conversationID {
+                // A picker belongs to the conversation where it opened.
+                // Clearing its identity also invalidates an in-flight
+                // dismissal completion before it can open an old sheet.
+                if reactionPicker != nil { reactionPicker = nil }
+                regenerationViewportTransitionCoordinator.cancelAll(
+                    reason: "conversationChanged"
+                )
+                activatedCoveredMessageTargetRequestID = nil
+                keyboardViewportPinTask?.cancel()
+                keyboardViewportPinTask = nil
+                invalidateKeyboardDismissalTransition()
+                keyboardBottomFollowIntent = false
+                isNativeVerticalScrollMotionArmed = false
+                isNativeScrollPhaseActive = false
+                if newConversationFirstMessageID != current.conversationID {
+                    newConversationFirstMessageID = nil
+                }
+                if newConversationFollowSuppressionID != current.conversationID {
+                    newConversationFollowSuppressionID = nil
+                }
+                navigationAnchorMessageID = nil
+                // The destination can publish its row frames before
+                // this selection callback. Discard only an obsolete
+                // revision, as the bottom-anchor callback does.
+                if messageFramesAnchorID != currentConversationBottomAnchorID {
+                    messageFramesAnchorID = nil
+                    messageFrames = [:]
+                }
+                lastKnownNearBottom = true
+                lastMeasuredNearBottom = false
+                lastMeasuredAtBottom = false
+                isQuickReturnToBottomVisible = false
+            }
+            // A selection updates both fields in one transaction.
+            // Observe their composite value so the stable chat host
+            // submits exactly one return-to-bottom operation.
+            if model.pendingMessageTargetNavigationRequest?.conversationID
+                == current.conversationID {
+                schedulePendingMessageTargetNavigation()
+            } else if let request = model.pendingUserMessageSendPositionRequest,
+               request.conversationID == current.conversationID {
+                scheduleUserMessageSendPositioning(request, using: scrollProxy)
+            } else {
+                scheduleConversationReturn(using: scrollProxy)
+            }
+        }
+        .onChange(of: model.pendingUserMessageSendPositionRequest) { _, request in
+            guard let request else {
+                keyboardUnifiedSendHandoff = nil
+                cancelUserMessageSendPositioning(consumingPendingRequest: false)
+                return
+            }
+            if keyboardUnifiedSendHandoff?.requestID != request.id {
+                keyboardUnifiedSendHandoff = nil
+            }
+            cancelCodeDisclosure(reason: "sendRequested")
+            cancelAutomaticReasoningCollapseOwner(
+                reason: "sendRequested"
+            )
+            scheduleUserMessageSendPositioning(request, using: scrollProxy)
+        }
+        .onChange(of: sendPresentationNativeReleaseID) { _, requestID in
+            guard let requestID else { return }
+            beginKeyboardUnifiedSendHandoff(requestID: requestID)
+        }
+        .onChange(of: isComposerKeyboardPresented) { wasPresented, isPresented in
+            guard wasPresented,
+                  !isPresented,
+                  let request = model.pendingUserMessageSendPositionRequest,
+                  request.conversationID == model.selectedConversationID else {
+                return
+            }
+            ChatBottomTrace.log(
+                "SEND_LIFECYCLE_RESUME reason=keyboardDidHide"
+                    + " request=\(ChatBottomTrace.shortID(request.id)) "
+                    + chatBottomTraceState
+            )
+            scheduleUserMessageSendPositioning(request, using: scrollProxy)
+        }
+        .onChange(of: model.pendingMessageTargetNavigationRequest) { _, request in
+            if activatedCoveredMessageTargetRequestID != nil,
+               activatedCoveredMessageTargetRequestID != request?.id {
+                activatedCoveredMessageTargetRequestID = nil
+            }
+            if let concreteFavoriteTargetMessageID,
+               concreteFavoriteTargetMessageID != request?.messageID {
+                self.concreteFavoriteTargetMessageID = nil
+            }
+            if request != nil {
+                cancelCodeDisclosure(reason: "messageTargetRequested")
+                cancelAutomaticReasoningCollapseOwner(
+                    reason: "messageTargetRequested"
+                )
+            }
+            guard request?.conversationID == model.selectedConversationID else {
+                messageTargetNavigationTask?.cancel()
+                messageTargetNavigationTask = nil
+                messageTargetCoordinatorRequestID = nil
+                nativeReleasedMessageTargetRequestID = nil
+                return
+            }
+            schedulePendingMessageTargetNavigation()
+        }
+        .onChange(of: model.isFavoritesPresented) { _, isPresented in
+            if !isPresented,
+               model.pendingMessageTargetNavigationRequest?.conversationID
+                == model.selectedConversationID {
+                schedulePendingMessageTargetNavigation()
+            }
+        }
+
+        let followingSurface = navigableSurface
+        .onChange(of: model.preferences.autoScrollEnabled) { _, enabled in
+            if !enabled {
+                cancelAutomaticReasoningCollapseOwner(
+                    reason: "autoScrollDisabled"
+                )
+                invalidateVersionReplacement(reason: "autoScrollDisabled")
+                cancelUserMessageSendPositioning(consumingPendingRequest: true)
+                keyboardViewportPinTask?.cancel()
+                keyboardViewportPinTask = nil
+                pendingKeyboardViewportPin = nil
+                invalidateKeyboardDismissalTransition()
+                keyboardBottomFollowIntent = false
+                streamingTailRecoveryTask?.cancel()
+                streamingTailRecoveryTask = nil
+                autoFollowEngaged = false
+                nativeTranscriptDriver.releasePosition(userOwned: true)
+            } else {
+                autoFollowEngaged = !isMessageTargetNavigationOwned
+                    && lastKnownNearBottom
+            }
+        }
+        .onChange(of: keyboardViewportPinRequest) { _, _ in
+            cancelMessageReplacementLanding()
+            scheduleKeyboardViewportPin()
+        }
+        .onChange(of: visibleMessages.last?.id) { _, _ in
+            completeFreshConversationBottomHandoffIfNeeded()
+        }
+        .onChange(of: automaticReasoningCollapseObservation) {
+            previousObservation,
+            observation in
+            updateAutomaticReasoningCollapseAuthorization(
+                from: previousObservation,
+                to: observation
+            )
+        }
+        .onChange(of: visibleMessages.last?.updatedAt) { _, _ in
+            completeFreshConversationBottomHandoffIfNeeded()
+            if abandonAutomaticReasoningCollapseOwnerForChangedTailIdentityIfNeeded() {
+                return
+            }
+            if model.selectedConversationIsStreaming,
+               shouldKeepNativeBottomPosition,
+               nativeConversationContentReadyAnchorID
+                == currentConversationBottomAnchorID {
+                // The current native bottom owner has acknowledged
+                // this exact row revision, so its geometry correction
+                // exclusively owns ordinary stream growth. A
+                // proxy task here would submit a second bottom command
+                // for the same display update.
+                streamingTailRecoveryTask?.cancel()
+                streamingTailRecoveryTask = nil
+                ChatBottomTrace.log(
+                    "STREAM_FOLLOW_SKIP reason=nativeReady "
+                        + chatBottomTraceState
+                )
+            } else {
+                // Re-arm only authorised completed-content changes;
+                // active stream growth keeps the existing layout owner.
+                scheduleStreamingFollow()
+            }
+        }
+
+        let drawerObservedSurface = followingSurface
+        .background {
+            ChatDrawerPresentationObserver { isPresented in
+                if isPresented {
+                    // Use the existing semantic event, before the idle
+                    // cleanup gate; there is no drawer-frame observer.
+                    if reactionPicker != nil { reactionPicker = nil }
+                    guard hasActiveDrawerOpeningCleanupWork else {
+                        return
+                    }
+                    cancelCodeDisclosure(reason: "drawerPresented")
+                    cancelAutomaticReasoningCollapseOwner(
+                        reason: "drawerPresented"
+                    )
+                    cancelMessageTargetNavigationForUserInteraction()
+                    invalidateVersionReplacement(reason: "drawerPresented")
+                    cancelMessageReplacementLanding()
+                    cancelUserMessageSendPositioning(consumingPendingRequest: true)
+                    pendingKeyboardViewportPin = nil
+                    cancelMessageNavigationForUserInteraction(reason: "drawerPresented")
+                    navigationAnchorMessageID = nil
+                    isNativeVerticalScrollMotionArmed = false
+                    isNativeScrollPhaseActive = false
+                    // Do not keep relaying out a long TextKit message while
+                    // the horizontal drawer transition owns the frame.
+                    conversationReturnTask?.cancel()
+                    conversationReturnTask = nil
+                    keyboardViewportPinTask?.cancel()
+                    keyboardViewportPinTask = nil
+                    if hasActiveKeyboardDismissalWork {
+                        invalidateKeyboardDismissalTransition()
+                    }
+                    keyboardBottomFollowIntent = false
+                } else if model.pendingMessageTargetNavigationRequest?.conversationID
+                    == model.selectedConversationID {
+                    schedulePendingMessageTargetNavigation()
+                } else if let latestConversationBottomAnchorFrame {
+                    // Selection happens while chat scrolling is disabled
+                    // behind the drawer. Apply the pending native edge only
+                    // after the drawer releases scroll ownership.
+                    handleConversationBottomAnchorFrame(
+                        latestConversationBottomAnchorFrame,
+                        using: scrollProxy
+                    )
+                }
+            }
+            .onChange(of: concreteEntryTailAnchorID) { _, anchorID in
+                guard let anchorID,
+                      anchorID == bottomAnchorID,
+                      let snapshot = latestConversationBottomAnchorFrame,
+                      snapshot.anchorID == anchorID else { return }
+                handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
+            }
+        }
+        return drawerObservedSurface
+    }
+
     var body: some View {
         @Bindable var model = model
         let visibleMessages = messagesForCodeDisclosureLayout(model.messages)
@@ -3886,12 +5195,6 @@ private struct ChatView: View {
             ),
             messageIDs: visibleMessages.map(\.id)
         )
-        let conversationLazyWindowIdentity = ConversationLazyWindowIdentity(
-            conversationID: model.selectedConversationID,
-            generation: conversationLazyWindowGeneration
-        )
-        let bottomNavigationTailClearance =
-            activeBottomNavigationTailClearance(for: bottomAnchorID)
         let sendPresentationNativeReleaseID: UUID? = {
             guard isComposerKeyboardPresented,
                   activeUserMessageSendPositionRequestID == nil,
@@ -3906,7 +5209,7 @@ private struct ChatView: View {
                   frame.width > 0,
                   frame.height > 0,
                   frame.maxY > 0,
-                  frame.minY < scrollViewportHeight,
+                  frame.minY < nativeViewportHeight,
                   let scrollView = chatScrollViewBox.scrollView,
                   scrollView.window != nil,
                   !nativeScrollHasActiveTouch(scrollView),
@@ -3916,7 +5219,8 @@ private struct ChatView: View {
                   !isNativeScrollAnimating(scrollView) else { return nil }
             return request.id
         }()
-        let citationSourcesByMessageID = MessageCitationSource.sourcesByMessageID(
+        let citationSourcesByMessageID = citationPreparationCache.sourcesByMessageID(
+            conversationID: model.selectedConversationID,
             from: visibleMessages,
             retentionTurns: model.preferences.searchToolResultRetentionTurns
         )
@@ -3946,16 +5250,6 @@ private struct ChatView: View {
                 )
             ]
         }()
-        let usesBottomNavigationCompactWindow =
-            bottomNavigationCompactWindowConversationID
-                == model.selectedConversationID
-                && !model.hasLaterMessages
-                // The navigation window starts at twelve rows. Retain eager
-                // layout through a handful of subsequent sends, but never let
-                // this request-owned mode grow into an unbounded transcript.
-                // One hidden send-presentation reservation is also bounded.
-                && visibleMessages.count <= 24
-                && renderedMessageHosts.count <= 25
         let automaticReasoningCollapseObservation:
             AutomaticReasoningCollapseObservation? = {
                 guard let tailMessage = visibleMessages.last,
@@ -4007,8 +5301,8 @@ private struct ChatView: View {
                         // the composite conversation change.
                         userScrollIdleTask?.cancel()
                         userScrollIdleTask = nil
-                        streamFollowTask?.cancel()
-                        streamFollowTask = nil
+                        streamingTailRecoveryTask?.cancel()
+                        streamingTailRecoveryTask = nil
                         let pendingSendBecameOrphaned: Bool
                         if let pendingRequest =
                             model.pendingUserMessageSendPositionRequest,
@@ -4024,16 +5318,9 @@ private struct ChatView: View {
                         )
                         conversationReturnTask?.cancel()
                         conversationReturnTask = nil
-                        bottomRowMaterializationTask?.cancel()
-                        bottomRowMaterializationTask = nil
-                        pendingBottomRowMaterializationAnchorID = nil
-                        layoutFollowTask?.cancel()
-                        layoutFollowTask = nil
                         keyboardViewportPinTask?.cancel()
                         keyboardViewportPinTask = nil
                         pendingKeyboardViewportPin = nil
-                        messageWindowLoadTask?.cancel()
-                        messageWindowLoadTask = nil
                         navigationScrollTask?.cancel()
                         navigationScrollTask = nil
                         navigationRequest = nil
@@ -4065,868 +5352,14 @@ private struct ChatView: View {
                     // appearance modifier alive and leave drawer close waiting.
                     .id(model.selectedConversationID)
             } else {
-                ScrollViewReader { scrollProxy in
-                    VStack(spacing: 0) {
-                        ScrollView {
-                            VStack(spacing: 0) {
-                                Color.clear
-                                    .frame(height: topContentSpacerHeight)
-                                    .id(
-                                        ConversationTopMaterializationSeedID(
-                                            anchorID: bottomAnchorID
-                                        )
-                                    )
-                                    .background {
-                                        ChatScrollViewProbe(
-                                            scrollViewBox: chatScrollViewBox,
-                                            onStatusBarScrollToTop: {
-                                                // Route the exact UIKit status-bar
-                                                // request through the already-owned
-                                                // double-up navigation lifecycle. It
-                                                // loads the real start window first,
-                                                // so one tap reaches the conversation
-                                                // top instead of only the local window.
-                                                requestMessageNavigation(.top)
-                                            },
-                                            onResolved: {
-                                                advanceMessageReplacementIfReady(using: scrollProxy)
-                                                finishMessageReplacementIfReady()
-                                            }
-                                        )
-                                            .allowsHitTesting(false)
-                                    }
-                                    .allowsHitTesting(false)
-
-                                let truncateIndex = model.selectedLogicalTruncateIndex
-                                let visibleTruncateIndex = truncateIndex - model.messageWindowStartIndex
-
-                                let concreteFavoriteTargetHost =
-                                    renderedMessageHosts.first.flatMap { host in
-                                        host.message.id
-                                            == concreteFavoriteTargetMessageID
-                                            ? host
-                                            : nil
-                                    }
-                                let concreteHeadHost = concreteFavoriteTargetHost
-                                    ?? (model.hasEarlierMessages
-                                        ? nil
-                                        : renderedMessageHosts.first)
-                                let concreteHeadIsFavoriteTarget =
-                                    concreteFavoriteTargetHost != nil
-                                let lazyMessageHosts = concreteHeadHost == nil
-                                    ? renderedMessageHosts[...]
-                                    : renderedMessageHosts.dropFirst()
-                                let hasLazyTranscriptContent = !lazyMessageHosts.isEmpty
-                                    || model.hasEarlierMessages
-                                    || visibleTruncateIndex == visibleMessages.count
-                                    || model.hasLaterMessages
-                                    || model.isCompressingContext
-
-                                Group {
-                                    if usesBottomNavigationCompactWindow
-                                        || model.usesConcreteConversationEntryWindow
-                                        || (messageReplacementConcreteWindowSessionID == currentChatViewportSessionID
-                                            && visibleMessages.count <= 24
-                                            && renderedMessageHosts.count <= 25) {
-                                        conversationCompactBottomMessageStack(
-                                            renderedMessageHosts[...],
-                                            isGroupConversation: isGroupConversation,
-                                            visibleTruncateIndex: visibleTruncateIndex,
-                                            visibleMessageCount: visibleMessages.count,
-                                            identity: conversationLazyWindowIdentity,
-                                            bottomAnchorID: bottomAnchorID,
-                                            bottomNavigationTailClearance:
-                                                bottomNavigationTailClearance
-                                        )
-                                    } else if let concreteHeadHost {
-                                        // A real conversation head and the request-scoped
-                                        // favorite target are both concrete top anchors.
-                                        // Every surrounding historical row remains lazy.
-                                        VStack(spacing: conversationMessageSpacing) {
-                                            if concreteHeadIsFavoriteTarget,
-                                               model.hasEarlierMessages {
-                                                Color.clear
-                                                    .frame(height: 1)
-                                                    .background {
-                                                        GeometryReader { proxy in
-                                                            Color.clear.preference(
-                                                                key: MessageWindowTopFramePreferenceKey.self,
-                                                                value: proxy.frame(in: .named("chat-scroll"))
-                                                            )
-                                                        }
-                                                    }
-                                            }
-
-                                            conversationMessageHost(
-                                                concreteHeadHost,
-                                                isGroupConversation: isGroupConversation,
-                                                visibleTruncateIndex: visibleTruncateIndex,
-                                                bottomAnchorID: bottomAnchorID,
-                                                bottomNavigationTailClearance:
-                                                    bottomNavigationTailClearance
-                                            )
-                                            .id(concreteHeadHost.id)
-
-                                            if hasLazyTranscriptContent {
-                                                conversationLazyMessageStack(
-                                                    lazyMessageHosts,
-                                                    isGroupConversation: isGroupConversation,
-                                                    visibleTruncateIndex: visibleTruncateIndex,
-                                                    visibleMessageCount: visibleMessages.count,
-                                                    identity: conversationLazyWindowIdentity,
-                                                    bottomAnchorID: bottomAnchorID,
-                                                    bottomNavigationTailClearance:
-                                                        bottomNavigationTailClearance,
-                                                    includesEarlierWindowSentinel:
-                                                        !concreteHeadIsFavoriteTarget
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        conversationLazyMessageStack(
-                                            lazyMessageHosts,
-                                            isGroupConversation: isGroupConversation,
-                                            visibleTruncateIndex: visibleTruncateIndex,
-                                            visibleMessageCount: visibleMessages.count,
-                                            identity: conversationLazyWindowIdentity,
-                                            bottomAnchorID: bottomAnchorID,
-                                            bottomNavigationTailClearance:
-                                                bottomNavigationTailClearance
-                                        )
-                                    }
-                                }
-                                .padding(.horizontal, 18)
-                                .padding(.top, messageListTopPadding)
-
-                                Color.clear
-                                    .frame(
-                                        height: composerBottomClearance
-                                            - bottomNavigationTailClearance
-                                    )
-                                    // The native ScrollView survives a
-                                    // conversation switch. Give only its bottom
-                                    // sentinel a new identity so ScrollViewProxy
-                                    // cannot resolve the previous conversation's
-                                    // retained anchor/offset.
-                                    .id(bottomAnchorID)
-                                    .background {
-                                        GeometryReader { proxy in
-                                            Color.clear.preference(
-                                                key: ConversationBottomAnchorFramePreferenceKey.self,
-                                                value: ConversationBottomAnchorFrame(
-                                                    anchorID: bottomAnchorID,
-                                                    frame: proxy.frame(in: .named("chat-scroll")),
-                                                    layoutRequestID: activeCodeLayoutRequestID
-                                                )
-                                            )
-                                        }
-                                    }
-                            }
-                            // Give underflow conversations a concrete viewport-sized
-                            // content frame. Their legal top gap is now layout space,
-                            // not a virtual scroll offset inherited from a longer chat.
-                            // Longer conversations keep their intrinsic height.
-                            .frame(
-                                minHeight: conversationContentMinimumHeight,
-                                alignment: .top
-                            )
-                        }
-                        // Keep the conversation visible while the no-animation
-                        // bottom corrections settle. Hiding this ScrollView made
-                        // a stale positioning flag look like an empty chat.
-                        .modifier(
-                            RegisteredChatScrollHeader(
-                                topSafeAreaInset: topSafeAreaInset,
-                                onOpenDrawer: onOpenDrawer
-                            )
-                        )
-                        .coordinateSpace(name: "chat-scroll")
-                        // Measure the concrete ScrollView directly. A background
-                        // PreferenceKey can be reduced back to its zero default
-                        // while a conversation identity is being replaced,
-                        // leaving bottom completion permanently armed.
-                        .onGeometryChange(for: CGFloat.self) { proxy in
-                            proxy.size.height
-                        } action: { height in
-                            let previousHeight = scrollViewportHeight
-                            scrollViewportHeight = height
-                            guard height > 0, abs(previousHeight - height) > 0.5 else { return }
-                            let isKeyboardDismissalViewportExpansion = previousHeight > 100
-                                && height > previousHeight + 80
-                                && model.isComposerFocused
-                                && autoFollowEngaged
-                                && !isUserScrollActive
-                            if isKeyboardDismissalViewportExpansion {
-                                isKeyboardDismissalGeometryRecoveryActive = true
-                                ChatBottomTrace.log(
-                                    "KEYBOARD_DISMISS_GEOMETRY_OWNERSHIP"
-                                        + " oldHeight=\(String(format: "%.1f", previousHeight))"
-                                        + " newHeight=\(String(format: "%.1f", height)) "
-                                        + chatBottomTraceState
-                                )
-                            }
-                            ChatBottomTrace.log(
-                                "VIEWPORT_HEIGHT old=\(String(format: "%.1f", previousHeight))"
-                                    + " new=\(String(format: "%.1f", height)) "
-                                    + chatBottomTraceState
-                            )
-                            #if DEBUG
-                            navigationStressLog("viewport height \(height)")
-                            #endif
-                            requestLayoutFollowCorrection()
-                        }
-                        .onGeometryChange(for: CGRect.self) { proxy in
-                            proxy.frame(in: .global)
-                        } action: { frame in
-                            guard frame != .zero else { return }
-                            let previousFrame = scrollViewportFrame
-                            guard previousFrame == .zero
-                                || abs(previousFrame.maxY - frame.maxY) > 0.5
-                                || abs(previousFrame.minY - frame.minY) > 0.5
-                                || abs(previousFrame.height - frame.height) > 0.5 else { return }
-                            scrollViewportFrame = frame
-                            ChatBottomTrace.log(
-                                "VIEWPORT_FRAME"
-                                    + " oldMinY=\(String(format: "%.1f", previousFrame.minY))"
-                                    + " oldMaxY=\(String(format: "%.1f", previousFrame.maxY))"
-                                    + " newMinY=\(String(format: "%.1f", frame.minY))"
-                                    + " newMaxY=\(String(format: "%.1f", frame.maxY)) "
-                                    + chatBottomTraceState
-                            )
-                            requestLayoutFollowCorrection(requiresNearBottom: false)
-                        }
-                        // 原生聊天锚定保持稳定；键盘/输入框避让由 overlay 遮挡测量驱动 bottom sentinel。
-                        .modifier(
-                            ChatScrollAnchorsModifier(
-                                alignsShortContentAtBottom: !isFreshConversationFirstMessage
-                            )
-                        )
-                        .modifier(
-                            nativeBottomPositionModifier(
-                                bottomAnchorID: bottomAnchorID,
-                                scrollProxy: scrollProxy
-                            )
-                        )
-                        .id(model.selectedConversationID)
-                        .scrollDismissesKeyboard(.interactively)
-                        .simultaneousGesture(
-                            TapGesture().onEnded {
-                                clearAutomaticReasoningCollapseAuthorization(
-                                    reason: "transcriptTap"
-                                )
-                                cancelMessageTargetNavigationForUserInteraction()
-                                cancelMessageNavigationForUserInteraction(reason: "transcriptTap")
-                                // A transcript tap makes the visible geometry the
-                                // new reading position for the next adjacent jump.
-                                navigationAnchorMessageID = nil
-                                dismissKeyboard()
-                            }
-                        )
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 4)
-                                .onChanged { value in
-                                    if scrollDragIsVertical == nil {
-                                        guard max(abs(value.translation.width), abs(value.translation.height)) >= 8 else { return }
-                                        scrollDragIsVertical = isVerticalScrollDrag(value)
-                                    }
-                                    guard scrollDragIsVertical == true else { return }
-                                    if !isVerticalScrollGestureActive {
-                                        cancelMessageReplacementLanding()
-                                        cancelAutomaticReasoningCollapseOwner(
-                                            reason: "userDrag"
-                                        )
-                                        cancelMessageTargetNavigationForUserInteraction()
-                                        invalidateVersionReplacement(reason: "userDrag")
-                                        ChatBottomTrace.log(
-                                            "DRAG_BEGIN willInvalidate=\(pendingKeyboardDismissalDeadline == nil)"
-                                                + " willCancelKeyboardTask=\(keyboardViewportPinTask != nil) "
-                                                + chatBottomTraceState
-                                        )
-                                        cancelMessageNavigationForUserInteraction(reason: "userDrag")
-                                        navigationAnchorMessageID = nil
-                                        cancelUserMessageSendPositioning(consumingPendingRequest: true)
-                                    }
-                                    isVerticalScrollGestureActive = true
-                                    isNativeVerticalScrollMotionArmed = true
-                                    if isPositioningCurrentConversation {
-                                        cancelConversationReturnPositioning()
-                                    }
-                                    lastKnownNearBottom = false
-                                    updateNavigationVisibility(isScrolling: true)
-                                    handleScrollActivity(
-                                        isScrolling: true,
-                                        isNearBottom: false
-                                    )
-                                }
-                                .onEnded { value in
-                                    let didEndVerticalDrag = scrollDragIsVertical == true
-                                        || isVerticalScrollDrag(value)
-                                    if didEndVerticalDrag {
-                                        ChatBottomTrace.log(
-                                            "DRAG_END vertical=true dx=\(String(format: "%.1f", value.translation.width))"
-                                                + " dy=\(String(format: "%.1f", value.translation.height)) "
-                                                + chatBottomTraceState
-                                        )
-                                    }
-                                    // Release SwiftUI's drag ownership before
-                                    // promoting a button tap queued during tracking.
-                                    scrollDragIsVertical = nil
-                                    isVerticalScrollGestureActive = false
-                                    schedulePendingMessageNavigationPromotion()
-                                    guard didEndVerticalDrag else { return }
-                                    updateNavigationVisibility(isScrolling: false)
-                                    if #unavailable(iOS 18.0) {
-                                        handleScrollActivity(
-                                            isScrolling: false,
-                                            isNearBottom: lastKnownNearBottom
-                                        )
-                                    }
-                                }
-                        )
-                    }
-                    .onPreferenceChange(CodeDisclosureLayoutPreferenceKey.self) { frames in
-                        acknowledgeCodeDisclosureLayout(frames, using: scrollProxy)
-                    }
-                    .onPreferenceChange(MessageFramePreferenceKey.self) { snapshot in
-                        guard let snapshot,
-                              snapshot.anchorID == bottomAnchorID else { return }
-                        if let requestID = activeCodeLayoutRequestID,
-                           snapshot.layoutRequestID != requestID { return }
-                        let tailMessageID = snapshot.anchorID.messageIDs.last
-                        let previousTailFrame = messageFramesAnchorID == snapshot.anchorID
-                            ? tailMessageID.flatMap { messageFrames[$0] }
-                            : nil
-                        let observedTailFrame = tailMessageID.flatMap {
-                            snapshot.frames[$0]
-                        }
-                        if messageFramesAnchorID != snapshot.anchorID
-                            || previousTailFrame != observedTailFrame {
-                            messageFrameGeneration &+= 1
-                        }
-                        if let observation = automaticReasoningCollapseObservation,
-                           observation.anchorID == snapshot.anchorID,
-                           observation.tailMessageID == tailMessageID,
-                           observation.finishedAt == nil,
-                           observation.isStreaming,
-                           observation.autoCollapseEnabled,
-                           observation.isExpanded,
-                           !observation.hasVisibleText,
-                           manualStreamingReasoningCollapseSuppression
-                            != ManualStreamingReasoningCollapseKey(
-                                anchorID: observation.anchorID,
-                                tailMessageID: observation.tailMessageID,
-                                segmentID: observation.segmentID
-                            ),
-                           let observedTailFrame,
-                           observedTailFrame.minX.isFinite,
-                           observedTailFrame.minY.isFinite,
-                           observedTailFrame.width.isFinite,
-                           observedTailFrame.height.isFinite,
-                           scrollViewportHeight > 0,
-                           observedTailFrame.maxY > 0,
-                           observedTailFrame.minY < scrollViewportHeight,
-                           let scrollView = chatScrollViewBox.scrollView,
-                           scrollView.window != nil,
-                           scrollView.bounds.height > 0,
-                           scrollView.contentSize.height.isFinite,
-                           scrollView.contentOffset.y.isFinite,
-                           scrollView.adjustedContentInset.top.isFinite,
-                           // Programmatic bottom following may still be in its
-                           // native animation phase when the final expanded
-                           // reasoning frame becomes concrete. Reject only
-                           // real user motion here; otherwise the collapse can
-                           // lose its last usable pre-shrink checkpoint.
-                           !isVerticalScrollGestureActive,
-                           !isNativeVerticalScrollMotionArmed,
-                           !nativeScrollHasActiveTouch(scrollView),
-                           !scrollView.isTracking,
-                           !scrollView.isDragging,
-                           !scrollView.isDecelerating,
-                           currentUIKitBottomState?.isAtBottom == true {
-                            let minimumOffsetY =
-                                -scrollView.adjustedContentInset.top
-                            automaticReasoningExpandedCheckpoint =
-                                AutomaticReasoningExpandedCheckpoint(
-                                    anchorID: observation.anchorID,
-                                    tailMessageID: observation.tailMessageID,
-                                    segmentID: observation.segmentID,
-                                    frameGeneration: messageFrameGeneration,
-                                    frame: observedTailFrame,
-                                    scrollViewIdentity:
-                                        ObjectIdentifier(scrollView),
-                                    contentHeight:
-                                        scrollView.contentSize.height,
-                                    contentOffsetY:
-                                        scrollView.contentOffset.y,
-                                    minimumOffsetY: minimumOffsetY,
-                                    adjustedContentInsetBottom:
-                                        scrollView.adjustedContentInset.bottom
-                                )
-                            ChatBottomTrace.log(
-                                "REASONING_COLLAPSE_CHECKPOINT"
-                                    + " generation=\(messageFrameGeneration)"
-                                    + " tail=\(ChatBottomTrace.shortID(observation.tailMessageID))"
-                                    + " segment=\(ChatBottomTrace.shortID(observation.segmentID))"
-                                    + " minY=\(String(format: "%.1f", observedTailFrame.minY))"
-                                    + " maxY=\(String(format: "%.1f", observedTailFrame.maxY))"
-                                    + " height=\(String(format: "%.1f", observedTailFrame.height)) "
-                                    + " contentH=\(String(format: "%.1f", scrollView.contentSize.height))"
-                                    + " offsetY=\(String(format: "%.1f", scrollView.contentOffset.y)) "
-                                    + chatBottomTraceState
-                            )
-                        }
-                        messageFramesAnchorID = snapshot.anchorID
-                        messageFramesLayoutRequestID = snapshot.layoutRequestID
-                        messageFrames = snapshot.frames
-                        advanceMessageReplacementIfReady(using: scrollProxy)
-                        finishMessageReplacementIfReady()
-                        updateOffscreenStreamingDisplayLease()
-                        if let request = model.pendingUserMessageSendPositionRequest,
-                           keyboardUnifiedSendHandoff?.requestID == request.id {
-                            _ = finishKeyboardUnifiedSendHandoffIfReady(request)
-                        }
-                        if let tailMessageID = bottomAnchorID.messageIDs.last,
-                           let tailFrame = snapshot.frames[tailMessageID] {
-                            VersionFlashTrace.recordOnce(
-                                "tailFrame-\(bottomAnchorID.positionRequest.request)-\(tailMessageID)",
-                                "TAIL_FRAME"
-                                    + " conv=\(VersionFlashTrace.identifierToken(bottomAnchorID.positionRequest.conversationID))"
-                                    + " req=\(bottomAnchorID.positionRequest.request)"
-                                    + " msg=\(VersionFlashTrace.identifierToken(tailMessageID))"
-                                    + " minY=\(String(format: "%.1f", Double(tailFrame.minY)))"
-                                    + " maxY=\(String(format: "%.1f", Double(tailFrame.maxY)))"
-                                    + " height=\(String(format: "%.1f", Double(tailFrame.height)))"
-                            )
-                        }
-                        let hadAutomaticCollapseOwner =
-                            automaticReasoningCollapseOwner?.id.anchorID
-                                == snapshot.anchorID
-                        advanceAutomaticReasoningCollapseOwnerIfPossible(
-                            anchorID: snapshot.anchorID
-                        )
-                        if hadAutomaticCollapseOwner
-                            || automaticReasoningCollapseOwner?.id.anchorID
-                                == snapshot.anchorID {
-                            return
-                        }
-                        guard let bottomSnapshot = latestConversationBottomAnchorFrame,
-                              bottomSnapshot.anchorID == bottomAnchorID,
-                              let tailMessageID = bottomSnapshot.anchorID.messageIDs.last,
-                              messageFrames[tailMessageID] != nil else { return }
-                        handleConversationBottomAnchorFrame(bottomSnapshot, using: scrollProxy)
-                    }
-                    .onPreferenceChange(ConversationBottomAnchorFramePreferenceKey.self) { snapshot in
-                        handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
-                        advanceMessageReplacementIfReady(using: scrollProxy)
-                        finishMessageReplacementIfReady()
-                    }
-                    .onPreferenceChange(MessageWindowTopFramePreferenceKey.self) { frame in
-                        handleMessageWindowEdge(frame, direction: .earlier, using: scrollProxy)
-                    }
-                    .onPreferenceChange(MessageWindowBottomFramePreferenceKey.self) { frame in
-                        handleMessageWindowEdge(frame, direction: .later, using: scrollProxy)
-                    }
-                    .onAppear {
-                        completeFreshConversationBottomHandoffIfNeeded()
-                        if model.pendingMessageTargetNavigationRequest?.conversationID
-                            == model.selectedConversationID {
-                            schedulePendingMessageTargetNavigation()
-                        } else if let request = model.pendingUserMessageSendPositionRequest {
-                            scheduleUserMessageSendPositioning(request, using: scrollProxy)
-                        } else {
-                            scheduleConversationReturn(using: scrollProxy)
-                        }
-                    }
-                    .onDisappear {
-                        releaseOffscreenStreamingDisplayLease(
-                            reason: "chatDisappear"
-                        )
-                    }
-                    .onChange(of: bottomAnchorID) { previousAnchorID, currentAnchorID in
-                        if messageReplacementConcreteWindowSessionID != currentChatViewportSessionID
-                            || model.messages.count > 24 {
-                            messageReplacementConcreteWindowSessionID = nil
-                        }
-                        if let deletion = messageReplacementRequest,
-                           (deletion.landingAnchorID ?? deletion.sourceAnchorID)
-                            != currentAnchorID {
-                            cancelMessageReplacementLanding()
-                        }
-                        codeDisclosureStore.retain(messageIDs: Set(currentAnchorID.messageIDs))
-                        if previousAnchorID != currentAnchorID {
-                            releaseOffscreenStreamingDisplayLease(
-                                reason: "conversationPositionChanged"
-                            )
-                            cancelAutomaticReasoningCollapseOwner(
-                                reason: "anchorChanged"
-                            )
-                        }
-                        if model.messages.count > 24 {
-                            model.releaseConcreteConversationEntryWindow()
-                            bottomNavigationCompactWindowConversationID = nil
-                        }
-                        if VersionFlashTrace.isEnabled {
-                            let previousTail = previousAnchorID.messageIDs.last
-                                .map(VersionFlashTrace.identifierToken)
-                                ?? "nil"
-                            let currentTail = currentAnchorID.messageIDs.last
-                                .map(VersionFlashTrace.identifierToken)
-                                ?? "nil"
-                            let hostTailMessage = messageHosts.last?.message
-                            let hostTailMatchesAnchor = hostTailMessage?.id
-                                == currentAnchorID.messageIDs.last
-                            let currentTailMessage = hostTailMatchesAnchor
-                                ? hostTailMessage
-                                : nil
-                            VersionFlashTrace.record(
-                                "ANCHOR_COMMIT"
-                                    + " oldConv=\(VersionFlashTrace.identifierToken(previousAnchorID.positionRequest.conversationID))"
-                                    + " oldReq=\(previousAnchorID.positionRequest.request)"
-                                    + " oldRows=\(previousAnchorID.messageIDs.count)"
-                                    + " oldTail=\(previousTail)"
-                                    + " conv=\(VersionFlashTrace.identifierToken(currentAnchorID.positionRequest.conversationID))"
-                                    + " req=\(currentAnchorID.positionRequest.request)"
-                                    + " rows=\(currentAnchorID.messageIDs.count)"
-                                    + " tail=\(currentTail)"
-                                    + " hostTail=\(hostTailMessage.map { VersionFlashTrace.identifierToken($0.id) } ?? "nil")"
-                                    + " hostTailMatches=\(hostTailMatchesAnchor)"
-                                    + " tailVersion=\(currentTailMessage.map { String($0.version) } ?? "nil")"
-                                    + " tailGroup=\(currentTailMessage.map { VersionFlashTrace.opaqueToken($0.versionGroupKey) } ?? "nil")"
-                            )
-                        }
-                        if latestConversationBottomAnchorFrame?.anchorID != currentAnchorID {
-                            latestConversationBottomAnchorFrame = nil
-                        }
-                        if nativeConversationContentReadyAnchorID != currentAnchorID {
-                            nativeConversationContentReadyAnchorID = nil
-                        }
-                        if messageFramesAnchorID != currentAnchorID {
-                            messageFramesAnchorID = nil
-                            messageFrames = [:]
-                        }
-                        if pendingKeyboardViewportPin?.anchorID != currentAnchorID {
-                            pendingKeyboardViewportPin = nil
-                            cancelKeyboardNativeSettleWatcher()
-                        }
-                        if pendingBottomRowMaterializationAnchorID != currentAnchorID {
-                            bottomRowMaterializationTask?.cancel()
-                            bottomRowMaterializationTask = nil
-                            pendingBottomRowMaterializationAnchorID = nil
-                        }
-                        if activeUserMessageSendPositionRequestID == nil,
-                           let request = model.pendingUserMessageSendPositionRequest,
-                           request.conversationID == model.selectedConversationID {
-                            let releaseBecameStale =
-                                sendPositionNativeReleaseRequest?.requestID == request.id
-                                && sendPositionNativeReleaseRequest?.sourceAnchorID
-                                    != currentAnchorID
-                            let acknowledgementBecameStale =
-                                acknowledgedSendPositionNativeRelease?.requestID == request.id
-                                && acknowledgedSendPositionNativeRelease?.sourceAnchorID
-                                    != currentAnchorID
-                            if releaseBecameStale || acknowledgementBecameStale {
-                                // A fast provider completion can replace the
-                                // visible tail during the two-turn native edge
-                                // release. Rekey the exact same send request to
-                                // the new revision instead of waiting forever
-                                // for an acknowledgement that must be dropped.
-                                clearSendPositionNativeRelease(for: request.id)
-                                scheduleUserMessageSendPositioning(
-                                    request,
-                                    using: scrollProxy
-                                )
-                            }
-                        }
-                    }
-                    .onChange(of: navigationRequest) { _, request in
-                        guard let request,
-                              request.positionRequest == currentConversationPositionRequest else { return }
-                        switch request.action {
-                        case .top:
-                            // The iOS 18 modifier first releases any retained
-                            // semantic bottom edge. Its typed acknowledgement
-                            // starts the window mutation and proxy animation.
-                            break
-                        case .previousUserMessage:
-                            scrollToAdjacentUserMessage(direction: -1, using: scrollProxy, request: request)
-                        case .nextUserMessage:
-                            scrollToAdjacentUserMessage(direction: 1, using: scrollProxy, request: request)
-                        case let .message(messageID):
-                            scrollToMessage(messageID, using: scrollProxy, request: request)
-                        case .bottom:
-                            break
-                        }
-                    }
-                    .onChange(
-                        of: ConversationPositionRequestKey(
-                            conversationID: model.selectedConversationID,
-                            request: model.conversationBottomReturnRequest
-                        )
-                    ) { previous, current in
-                        ChatBottomTrace.log(
-                            "CONVERSATION_CHANGE old=\(ChatBottomTrace.shortID(previous.conversationID))/\(previous.request)"
-                                + " new=\(ChatBottomTrace.shortID(current.conversationID))/\(current.request)"
-                                + " concreteEntry=\(model.usesConcreteConversationEntryWindow) "
-                                + chatBottomTraceState
-                        )
-                        #if DEBUG
-                        navigationStressLog(
-                            "position change \(previous.conversationID.uuidString.prefix(5))/\(previous.request) -> "
-                                + "\(model.selectedConversation?.title ?? "?") "
-                                + "\(current.conversationID.uuidString.prefix(5))/\(current.request) "
-                                + "messages=\(model.messages.count) window=\(model.messageWindowStartIndex)..<\(model.messageWindowEndIndex)"
-                        )
-                        #endif
-                        if previous != current {
-                            cancelMessageReplacementLanding()
-                            bottomNavigationCompactWindowConversationID = nil
-                            concreteFavoriteTargetMessageID = nil
-                            cancelAutomaticReasoningCollapseOwner(
-                                reason: "conversationPositionChanged"
-                            )
-                            invalidateVersionReplacement(reason: "conversationChange")
-                            landedMessageTargetID = nil
-                            pendingKeyboardViewportPin = nil
-                            cancelKeyboardNativeSettleWatcher()
-                            isNativeScrollPhaseActive = false
-                            streamingFollowTouchPauseAnchorID = nil
-                            let hadActiveNavigation = navigationRequest != nil
-                                || navigationScrollTask != nil
-                                || pendingNavigationRequest != nil
-                            navigationScrollTask?.cancel()
-                            navigationScrollTask = nil
-                            navigationRequest = nil
-                            cancelPendingMessageNavigation()
-                            if hadActiveNavigation {
-                                isNativeVerticalScrollMotionArmed = false
-                                interruptNativeScrollMotion()
-                            }
-                        }
-                        if previous.conversationID != current.conversationID {
-                            // A picker belongs to the conversation where it opened.
-                            // Clearing its identity also invalidates an in-flight
-                            // dismissal completion before it can open an old sheet.
-                            if reactionPicker != nil { reactionPicker = nil }
-                            regenerationViewportTransitionCoordinator.cancelAll(
-                                reason: "conversationChanged"
-                            )
-                            activatedCoveredMessageTargetRequestID = nil
-                            keyboardViewportPinTask?.cancel()
-                            keyboardViewportPinTask = nil
-                            invalidateKeyboardDismissalTransition()
-                            keyboardBottomFollowIntent = false
-                            isNativeVerticalScrollMotionArmed = false
-                            isNativeScrollPhaseActive = false
-                            if newConversationFirstMessageID != current.conversationID {
-                                newConversationFirstMessageID = nil
-                            }
-                            if newConversationFollowSuppressionID != current.conversationID {
-                                newConversationFollowSuppressionID = nil
-                            }
-                            navigationAnchorMessageID = nil
-                            messageFramesAnchorID = nil
-                            messageFrames = [:]
-                            messageWindowLoadTask?.cancel()
-                            messageWindowLoadTask = nil
-                            lastKnownNearBottom = true
-                            lastMeasuredNearBottom = false
-                            lastMeasuredAtBottom = false
-                            isQuickReturnToBottomVisible = false
-                        }
-                        // A selection updates both fields in one transaction.
-                        // Observe their composite value so the stable chat host
-                        // submits exactly one return-to-bottom operation.
-                        if model.pendingMessageTargetNavigationRequest?.conversationID
-                            == current.conversationID {
-                            schedulePendingMessageTargetNavigation()
-                        } else if let request = model.pendingUserMessageSendPositionRequest,
-                           request.conversationID == current.conversationID {
-                            scheduleUserMessageSendPositioning(request, using: scrollProxy)
-                        } else {
-                            scheduleConversationReturn(using: scrollProxy)
-                        }
-                    }
-                    .onChange(of: model.pendingUserMessageSendPositionRequest) { _, request in
-                        guard let request else {
-                            keyboardUnifiedSendHandoff = nil
-                            cancelUserMessageSendPositioning(consumingPendingRequest: false)
-                            return
-                        }
-                        if keyboardUnifiedSendHandoff?.requestID != request.id {
-                            keyboardUnifiedSendHandoff = nil
-                        }
-                        cancelCodeDisclosure(reason: "sendRequested")
-                        cancelAutomaticReasoningCollapseOwner(
-                            reason: "sendRequested"
-                        )
-                        scheduleUserMessageSendPositioning(request, using: scrollProxy)
-                    }
-                    .onChange(of: sendPresentationNativeReleaseID) { _, requestID in
-                        guard let requestID else { return }
-                        beginKeyboardUnifiedSendHandoff(requestID: requestID)
-                    }
-                    .onChange(of: isComposerKeyboardPresented) { wasPresented, isPresented in
-                        guard wasPresented,
-                              !isPresented,
-                              let request = model.pendingUserMessageSendPositionRequest,
-                              request.conversationID == model.selectedConversationID else {
-                            return
-                        }
-                        ChatBottomTrace.log(
-                            "SEND_LIFECYCLE_RESUME reason=keyboardDidHide"
-                                + " request=\(ChatBottomTrace.shortID(request.id)) "
-                                + chatBottomTraceState
-                        )
-                        scheduleUserMessageSendPositioning(request, using: scrollProxy)
-                    }
-                    .onChange(of: model.pendingMessageTargetNavigationRequest) { _, request in
-                        if activatedCoveredMessageTargetRequestID != nil,
-                           activatedCoveredMessageTargetRequestID != request?.id {
-                            activatedCoveredMessageTargetRequestID = nil
-                        }
-                        if let concreteFavoriteTargetMessageID,
-                           concreteFavoriteTargetMessageID != request?.messageID {
-                            self.concreteFavoriteTargetMessageID = nil
-                        }
-                        if request != nil {
-                            cancelCodeDisclosure(reason: "messageTargetRequested")
-                            cancelAutomaticReasoningCollapseOwner(
-                                reason: "messageTargetRequested"
-                            )
-                        }
-                        guard request?.conversationID == model.selectedConversationID else {
-                            messageTargetNavigationTask?.cancel()
-                            messageTargetNavigationTask = nil
-                            messageTargetCoordinatorRequestID = nil
-                            nativeReleasedMessageTargetRequestID = nil
-                            return
-                        }
-                        schedulePendingMessageTargetNavigation()
-                    }
-                    .onChange(of: model.isFavoritesPresented) { _, isPresented in
-                        if !isPresented,
-                           model.pendingMessageTargetNavigationRequest?.conversationID
-                            == model.selectedConversationID {
-                            schedulePendingMessageTargetNavigation()
-                        }
-                    }
-                    .onChange(of: model.preferences.autoScrollEnabled) { _, enabled in
-                        if !enabled {
-                            cancelAutomaticReasoningCollapseOwner(
-                                reason: "autoScrollDisabled"
-                            )
-                            invalidateVersionReplacement(reason: "autoScrollDisabled")
-                            cancelUserMessageSendPositioning(consumingPendingRequest: true)
-                            keyboardViewportPinTask?.cancel()
-                            keyboardViewportPinTask = nil
-                            pendingKeyboardViewportPin = nil
-                            invalidateKeyboardDismissalTransition()
-                            keyboardBottomFollowIntent = false
-                            streamFollowTask?.cancel()
-                            streamFollowTask = nil
-                            autoFollowEngaged = false
-                        } else {
-                            autoFollowEngaged = !isMessageTargetNavigationOwned
-                                && lastKnownNearBottom
-                        }
-                    }
-                    .onChange(of: layoutFollowRequest) { _, _ in
-                        scheduleLayoutFollowCorrection(using: scrollProxy)
-                    }
-                    .onChange(of: keyboardViewportPinRequest) { _, _ in
-                        cancelMessageReplacementLanding()
-                        scheduleKeyboardViewportPin(using: scrollProxy)
-                    }
-                    .onChange(of: visibleMessages.last?.id) { _, _ in
-                        completeFreshConversationBottomHandoffIfNeeded()
-                    }
-                    .onChange(of: automaticReasoningCollapseObservation) {
-                        previousObservation,
-                        observation in
-                        updateAutomaticReasoningCollapseAuthorization(
-                            from: previousObservation,
-                            to: observation
-                        )
-                    }
-                    .onChange(of: visibleMessages.last?.updatedAt) { _, _ in
-                        completeFreshConversationBottomHandoffIfNeeded()
-                        if abandonAutomaticReasoningCollapseOwnerForChangedTailIdentityIfNeeded() {
-                            return
-                        }
-                        if #available(iOS 18.0, *),
-                           model.selectedConversationIsStreaming,
-                           shouldKeepNativeBottomPosition,
-                           nativeConversationContentReadyAnchorID
-                            == currentConversationBottomAnchorID {
-                            // The current native ScrollPosition has acknowledged
-                            // this exact row revision, so its geometry correction
-                            // exclusively owns ordinary stream growth. Keeping the
-                            // proxy task here submits a second disabled bottom jump
-                            // for the same display update.
-                            streamFollowTask?.cancel()
-                            streamFollowTask = nil
-                            ChatBottomTrace.log(
-                                "STREAM_FOLLOW_SKIP reason=nativeReady "
-                                    + chatBottomTraceState
-                            )
-                        } else {
-                            // iOS 17, native-readiness gaps and non-stream tail
-                            // updates retain the established proxy fallback.
-                            scheduleStreamingFollow(using: scrollProxy)
-                        }
-                    }
-                    .background {
-                        ChatDrawerPresentationObserver { isPresented in
-                            if isPresented {
-                                // Use the existing semantic event, before the idle
-                                // cleanup gate; there is no drawer-frame observer.
-                                if reactionPicker != nil { reactionPicker = nil }
-                                guard hasActiveDrawerOpeningCleanupWork else {
-                                    return
-                                }
-                                cancelCodeDisclosure(reason: "drawerPresented")
-                                cancelAutomaticReasoningCollapseOwner(
-                                    reason: "drawerPresented"
-                                )
-                                cancelMessageTargetNavigationForUserInteraction()
-                                invalidateVersionReplacement(reason: "drawerPresented")
-                                cancelMessageReplacementLanding()
-                                cancelUserMessageSendPositioning(consumingPendingRequest: true)
-                                pendingKeyboardViewportPin = nil
-                                cancelMessageNavigationForUserInteraction(reason: "drawerPresented")
-                                navigationAnchorMessageID = nil
-                                isNativeVerticalScrollMotionArmed = false
-                                isNativeScrollPhaseActive = false
-                                // Do not keep relaying out a long TextKit message while
-                                // the horizontal drawer transition owns the frame.
-                                conversationReturnTask?.cancel()
-                                conversationReturnTask = nil
-                                bottomRowMaterializationTask?.cancel()
-                                bottomRowMaterializationTask = nil
-                                pendingBottomRowMaterializationAnchorID = nil
-                                layoutFollowTask?.cancel()
-                                layoutFollowTask = nil
-                                keyboardViewportPinTask?.cancel()
-                                keyboardViewportPinTask = nil
-                                if hasActiveKeyboardDismissalWork {
-                                    invalidateKeyboardDismissalTransition()
-                                }
-                                keyboardBottomFollowIntent = false
-                            } else if model.pendingMessageTargetNavigationRequest?.conversationID
-                                == model.selectedConversationID {
-                                schedulePendingMessageTargetNavigation()
-                            } else if let latestConversationBottomAnchorFrame {
-                                // Selection happens while chat scrolling is disabled
-                                // behind the drawer. Apply the pending native edge only
-                                // after the drawer releases scroll ownership.
-                                handleConversationBottomAnchorFrame(
-                                    latestConversationBottomAnchorFrame,
-                                    using: scrollProxy
-                                )
-                            }
-                        }
-                    }
-                }
+                ordinaryConversationTranscript(
+                    visibleMessages: visibleMessages,
+                    renderedMessageHosts: renderedMessageHosts,
+                    isGroupConversation: isGroupConversation,
+                    bottomAnchorID: bottomAnchorID,
+                    sendPresentationNativeReleaseID: sendPresentationNativeReleaseID,
+                    automaticReasoningCollapseObservation: automaticReasoningCollapseObservation
+                )
                 .modifier(
                     ConversationSwitchFadeModifier(
                         conversationID: model.selectedConversationID
@@ -4982,15 +5415,8 @@ private struct ChatView: View {
                     selectedReaction: message.reactions.userReaction,
                     onSelect: { reaction in
                         model.performCardHaptic()
-                        let shouldPreserveBottom = model.preferences.autoScrollEnabled
-                            && autoFollowEngaged
-                            && lastKnownNearBottom
-                            && !isUserScrollActive
                         let next = message.reactions.userReaction == reaction ? nil : reaction
                         model.setMessageUserReaction(message.id, reaction: next)
-                        if shouldPreserveBottom {
-                            requestLayoutFollowCorrection(requiresNearBottom: false)
-                        }
                     },
                     onMore: {
                         guard reactionPicker?.id == presentation.id else { return }
@@ -5063,11 +5489,6 @@ private struct ChatView: View {
                 keyboardViewportPinTask?.cancel()
                 keyboardViewportPinTask = nil
             }
-            if layoutFollowTask != nil {
-                ChatBottomTrace.log("LAYOUT_FOLLOW_CANCEL source=willHide " + chatBottomTraceState)
-                layoutFollowTask?.cancel()
-                layoutFollowTask = nil
-            }
             let pendingOpenWasBottomIntent = pendingKeyboardViewportPin.map {
                 $0.anchorID == currentConversationBottomAnchorID
                     && pendingKeyboardViewportPinHasReachedBottom($0)
@@ -5122,15 +5543,11 @@ private struct ChatView: View {
             invalidateVersionReplacement(reason: "viewDisappeared")
             keyboardUnifiedSendHandoff = nil
             userScrollIdleTask?.cancel()
-            streamFollowTask?.cancel()
+            streamingTailRecoveryTask?.cancel()
             if let gate = model.sendPresentationGate {
                 model.releaseSendPresentationGate(gate.requestID)
             }
             cancelUserMessageSendPositioning(consumingPendingRequest: false)
-            bottomRowMaterializationTask?.cancel()
-            bottomRowMaterializationTask = nil
-            pendingBottomRowMaterializationAnchorID = nil
-            layoutFollowTask?.cancel()
             keyboardViewportPinTask?.cancel()
             pendingKeyboardViewportPin = nil
             cancelKeyboardNativeSettleWatcher()
@@ -5148,8 +5565,6 @@ private struct ChatView: View {
             landedMessageTargetID = nil
             concreteFavoriteTargetMessageID = nil
             isComposerKeyboardPresented = false
-            messageWindowLoadTask?.cancel()
-            messageWindowLoadTask = nil
             cancelMessageReplacementLanding()
             cancelConversationReturnPositioning()
             navigationHideTask?.cancel()
@@ -5299,9 +5714,6 @@ private struct ChatView: View {
             || isNativeVerticalScrollMotionArmed
             || isNativeScrollPhaseActive
             || conversationReturnTask != nil
-            || bottomRowMaterializationTask != nil
-            || pendingBottomRowMaterializationAnchorID != nil
-            || layoutFollowTask != nil
             || keyboardViewportPinTask != nil
             || hasActiveKeyboardDismissalWork
             || keyboardBottomFollowIntent
@@ -5324,8 +5736,7 @@ private struct ChatView: View {
     private var currentChatViewportSessionID: ChatViewportSessionID {
         ChatViewportSessionID(
             conversationID: model.selectedConversationID,
-            positionRequest: model.conversationBottomReturnRequest,
-            lazyWindowGeneration: conversationLazyWindowGeneration
+            positionRequest: model.conversationBottomReturnRequest
         )
     }
 
@@ -5339,10 +5750,22 @@ private struct ChatView: View {
         return request.id
     }
 
-    @MainActor
-    private func advanceConversationLazyWindowGeneration() {
-        cancelCodeDisclosure(reason: "lazyWindowChanged")
-        conversationLazyWindowGeneration &+= 1
+    private func isUnarmedNativeControlTap(_ scrollView: UIScrollView) -> Bool {
+        let pan = scrollView.panGestureRecognizer
+        return !isVerticalScrollGestureActive && !isNativeVerticalScrollMotionArmed
+            && !scrollView.isDragging && !scrollView.isDecelerating
+            && !isNativeScrollAnimating(scrollView)
+            && pan.numberOfTouches <= 1
+            && pan.state != .began && pan.state != .changed
+    }
+
+    private var hasContentMutationScrollPhaseOwner: Bool {
+        guard isNativeScrollPhaseActive else { return false }
+        // A code button activates before its touch-up idle event is published.
+        // That unarmed control tap is the edit request, not a competing pan.
+        guard nativeTranscriptDriver.phase == .tracking,
+              let scrollView = chatScrollViewBox.scrollView else { return true }
+        return !isUnarmedNativeControlTap(scrollView)
     }
 
     private var hasContentMutationCompetingOwner: Bool {
@@ -5354,8 +5777,6 @@ private struct ChatView: View {
             || activeUserMessageSendPositionRequestID != nil
             || activeUserMessageSendPositionTaskID != nil
             || conversationReturnTask != nil
-            || bottomRowMaterializationTask != nil
-            || pendingBottomRowMaterializationAnchorID != nil
             || navigationRequest != nil
             || navigationScrollTask != nil
             || pendingNavigationRequest != nil
@@ -5369,18 +5790,17 @@ private struct ChatView: View {
             || isKeyboardDismissalTransition
             || isKeyboardDismissalGeometryRecoveryActive
             || keyboardDismissalViewportPinRequest != nil
-            || messageWindowLoadTask != nil
             || model.isDrawerPresented
             || model.isCompressingContext
             || isPositioningCurrentConversation
             || isVerticalScrollGestureActive
             || isNativeVerticalScrollMotionArmed
-            || isNativeScrollPhaseActive
+            || hasContentMutationScrollPhaseOwner
     }
 
     @MainActor
     private func acknowledgeCodeDisclosureLayout(
-        _ frames: [UUID: CGRect], using scrollProxy: ScrollViewProxy
+        _ frames: [UUID: CGRect], using scrollProxy: ChatTranscriptProxy
     ) {
         guard let request = messageReplacementRequest,
               request.didCommit,
@@ -5407,7 +5827,8 @@ private struct ChatView: View {
               let scrollView = chatScrollViewBox.scrollView,
               scrollView.window != nil, scrollView.bounds.height > 0,
               !messageReplacementLandingWasInterrupted(
-                  scrollView, expectedScrollViewIdentity: ObjectIdentifier(scrollView)
+                  scrollView, expectedScrollViewIdentity: ObjectIdentifier(scrollView),
+                  allowsInitiatingControlTap: true
               ),
               let frame = change.state.anchor.frameInWindow(matching: scrollView) else {
             ChatBottomTrace.log("CODE_DISCLOSURE_DROP reason=notReady")
@@ -5549,7 +5970,7 @@ private struct ChatView: View {
         )
         request.keepsExactBottom = keepBottom
         request.readingAnchorMaxY = inherited?.readingAnchorMaxY ?? sourceFrame.map {
-            min(max(1, $0.maxY), max(1, scrollViewportHeight - composerBottomClearance))
+            min(max(1, $0.maxY), max(1, nativeViewportHeight - composerBottomClearance))
         }
         prepareForMessageReplacementLanding()
         messageReplacementRequest = request
@@ -5643,8 +6064,7 @@ private struct ChatView: View {
                     continue
                 }
 
-                if #available(iOS 18.0, *),
-                   nativeReleasedMessageTargetRequestID != targetRequest.id {
+                if                    nativeReleasedMessageTargetRequestID != targetRequest.id {
                     continue
                 }
                 if isMessageTargetAttemptInFlight(targetRequest) {
@@ -5781,7 +6201,7 @@ private struct ChatView: View {
     private func acknowledgeEdgeNavigationPositionRelease(
         _ anchorID: ConversationBottomAnchorID,
         _ releaseID: EdgeNavigationNativeReleaseID,
-        using scrollProxy: ScrollViewProxy
+        using scrollProxy: ChatTranscriptProxy
     ) {
         guard anchorID == releaseID.sourceAnchorID,
               currentConversationBottomAnchorID == releaseID.sourceAnchorID,
@@ -5811,7 +6231,7 @@ private struct ChatView: View {
     private func acknowledgeSendPositionRelease(
         _ anchorID: ConversationBottomAnchorID,
         _ releaseID: SendPositionNativeReleaseID,
-        using scrollProxy: ScrollViewProxy
+        using scrollProxy: ChatTranscriptProxy
     ) {
         guard sendPositionNativeReleaseRequest == releaseID,
               anchorID == releaseID.sourceAnchorID,
@@ -6221,30 +6641,24 @@ private struct ChatView: View {
                 + " new=\(String(format: "%.1f", height)) "
                 + chatBottomTraceState
         )
-        requestLayoutFollowCorrection(requiresNearBottom: false)
+    }
+
+    /// Native message/spacer frames are relative to this mounted collection.
+    /// The outer SwiftUI surface also contains the header's safe-area bar;
+    /// keep its height for page sizing, never for native-frame visibility.
+    /// Read the existing registration without observing the per-pan geometry
+    /// relay from ChatView.body, which would rebuild all hosted messages.
+    private var nativeViewportHeight: CGFloat {
+        guard let scrollView = chatScrollViewBox.scrollView,
+              scrollView === nativeTranscriptDriver.scrollView,
+              scrollView.window != nil,
+              scrollView.bounds.height.isFinite,
+              scrollView.bounds.height > 0 else { return 0 }
+        return scrollView.bounds.height
     }
 
     private var composerBottomClearance: CGFloat {
         max(110, composerHeight + 12)
-    }
-
-    private func activeBottomNavigationTailClearance(
-        for anchorID: ConversationBottomAnchorID
-    ) -> CGFloat {
-        guard let request = navigationRequest,
-              request.action == .bottom,
-              request.positionRequest == anchorID.positionRequest,
-              anchorID == currentConversationBottomAnchorID,
-              !model.hasLaterMessages,
-              !model.isCompressingContext,
-              model.selectedLogicalTruncateIndex != model.messages.count,
-              let tailMessage = model.messages.last,
-              tailMessage.id == anchorID.messageIDs.last,
-              !tailMessage.isStreaming else { return 0 }
-        // Leave one concrete point on the existing revision-scoped sentinel;
-        // the remainder becomes part of the real lazy target for the complete
-        // lifetime of the already-existing navigation request.
-        return max(0, composerBottomClearance - 1)
     }
 
     private var floatingHeaderClearance: CGFloat {
@@ -6259,20 +6673,12 @@ private struct ChatView: View {
         return floatingHeaderClearance
     }
 
-    private var conversationContentMinimumHeight: CGFloat {
-        let viewportHeight = max(0, scrollViewportHeight)
-        if #available(iOS 26.0, *), isFreshConversationFirstMessage {
-            return max(0, viewportHeight - min(topSafeAreaInset, 48))
-        }
-        return viewportHeight
-    }
-
     private var messageListTopPadding: CGFloat {
         22
     }
 
     private var conversationMessageSpacing: CGFloat {
-        30
+        ConversationMessageLayout.stackSpacing
     }
 
     private func requestRegeneration(for message: ChatMessage) {
@@ -6334,15 +6740,20 @@ private struct ChatView: View {
         }
     }
 
-    private enum MessageWindowLoadDirection {
-        case earlier
-        case later
-    }
-
     private var isPositioningCurrentConversation: Bool {
         guard !model.messages.isEmpty else { return false }
         return positioningConversationID == model.selectedConversationID
             || model.conversationBottomReturnTargetID == model.selectedConversationID
+    }
+
+    private var isBoundedConversationEntry: Bool {
+        guard positioningConversationID == model.selectedConversationID
+                || model.conversationBottomReturnTargetID == model.selectedConversationID
+        else { return false }
+        // The drawer search keyboard belongs to the outgoing surface. It must
+        // not prevent the selected conversation's first real layout.
+        return !model.selectedConversationIsStreaming
+            && model.usesConcreteConversationEntryWindow
     }
 
     private var isOrdinaryConversationReturn: Bool {
@@ -6458,7 +6869,17 @@ private struct ChatView: View {
     private var shouldKeepNativeBottomPosition: Bool {
         guard messageReplacementRequest == nil else { return false }
         guard !model.messages.isEmpty else { return false }
-        guard !hasConcreteNativeUserScrollOwnership else { return false }
+        // A tap that dismisses the keyboard briefly tracks the scroll view,
+        // but does not transfer its existing keyboard motion to a user drag.
+        let isKeyboardFollowTouch = keyboardBottomFollowIntent
+            && !isVerticalScrollGestureActive
+            && !isNativeVerticalScrollMotionArmed
+            && chatScrollViewBox.scrollView.map {
+                !$0.isDragging && !$0.isDecelerating
+            } == true
+        guard !hasConcreteNativeUserScrollOwnership || isKeyboardFollowTouch else {
+            return false
+        }
         // A historical window's local bottom is not the semantic end of the
         // conversation. Never let it re-arm a retained native `.bottom` edge.
         guard !model.hasLaterMessages else { return false }
@@ -6469,12 +6890,12 @@ private struct ChatView: View {
         }
         // Sending owns a concrete-row handoff. Native edge pinning is withheld
         // until that real row and the current concrete tail both acknowledge;
-        // otherwise the cheap LazyVStack sentinel can move to an empty offset.
+        // a spacer coordinate alone cannot acknowledge a real message row.
         if isUserMessageSendPositioning {
             return false
         }
-        // A favorite owns a concrete message row. Keep the iOS 18 semantic
-        // bottom ScrollPosition from re-engaging while that exact target is
+        // A favorite owns a concrete message row. Keep the native semantic
+        // bottom position from re-engaging while that exact target is
         // materialized, animated, and corrected from measured geometry.
         if isMessageTargetNavigationOwned {
             return false
@@ -6491,17 +6912,22 @@ private struct ChatView: View {
     }
 
     private var shouldPauseStreamingFollowOnNativeTouch: Bool {
+        // A body tap that dismisses the composer belongs to the keyboard
+        // handoff. Do not turn its touch-down into a reading-position pause;
+        // real pans still acquire ownership through the drag paths below.
         model.selectedConversationIsStreaming
             && model.preferences.autoScrollEnabled
             && autoFollowEngaged
             && !isUserScrollActive
+            && !model.isComposerFocused
+            && !isComposerKeyboardPresented
+            && !nativeTranscriptDriver.externalViewportMotion
             && !isFreshConversationFollowSuppressed
             && !isUserMessageSendPositioning
             && !isMessageTargetNavigationOwned
             && !ownsCurrentDoubleEdgeNavigation
             && !isPositioningCurrentConversation
             && automaticReasoningCollapseOwner == nil
-            && pendingBottomRowMaterializationAnchorID == nil
             && !model.hasLaterMessages
     }
 
@@ -6879,8 +7305,6 @@ private struct ChatView: View {
               ),
               !isPositioningCurrentConversation,
               conversationReturnTask == nil,
-              pendingBottomRowMaterializationAnchorID == nil,
-              bottomRowMaterializationTask == nil,
               !isUserMessageSendPositioning,
               !isVersionReplacementInProgress,
               navigationRequest == nil,
@@ -6895,7 +7319,6 @@ private struct ChatView: View {
               !isKeyboardDismissalTransition,
               !isKeyboardDismissalGeometryRecoveryActive,
               keyboardDismissalViewportPinRequest == nil,
-              messageWindowLoadTask == nil,
               !isCodeDisclosureInProgress else {
             return consumeAutomaticReasoningCollapseAuthorization(
                 reason: "competingOwner",
@@ -6919,9 +7342,9 @@ private struct ChatView: View {
               checkpoint.contentOffsetY.isFinite,
               checkpoint.minimumOffsetY.isFinite,
               checkpoint.adjustedContentInsetBottom.isFinite,
-              scrollViewportHeight > 0,
+              nativeViewportHeight > 0,
               checkpoint.frame.maxY > 0,
-              checkpoint.frame.minY < scrollViewportHeight,
+              checkpoint.frame.minY < nativeViewportHeight,
               ObjectIdentifier(scrollView) == checkpoint.scrollViewIdentity,
               scrollView.window != nil,
               scrollView.bounds.height > 0,
@@ -7030,12 +7453,9 @@ private struct ChatView: View {
         // These tasks are programmatic writers for the same bottom intent.
         // Cancel them only after every user-motion and geometry proof above
         // has passed, immediately before this owner performs its single write.
-        let cancelledStreamFollow = streamFollowTask != nil
-        let cancelledLayoutFollow = layoutFollowTask != nil
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
+        let cancelledStreamFollow = streamingTailRecoveryTask != nil
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = nil
         automaticReasoningCollapseOwnerGeneration &+= 1
         let ownerID = AutomaticReasoningCollapseOwnerID(
             anchorID: change.anchorID,
@@ -7077,7 +7497,6 @@ private struct ChatView: View {
                 + " fromY=\(String(format: "%.1f", writeOffset.y))"
                 + " targetY=\(String(format: "%.1f", targetOffsetY))"
                 + " cancelStream=\(cancelledStreamFollow)"
-                + " cancelLayout=\(cancelledLayoutFollow) "
                 + chatBottomTraceState
         )
         UIView.performWithoutAnimation {
@@ -7167,9 +7586,9 @@ private struct ChatView: View {
               let tailFrame = messageFrames[owner.identity.tailMessageID],
               tailFrame != owner.checkpoint.frame,
               tailFrame.height < owner.checkpoint.frame.height - 2,
-              scrollViewportHeight > 0,
+              nativeViewportHeight > 0,
               tailFrame.maxY > 0,
-              tailFrame.minY < scrollViewportHeight,
+              tailFrame.minY < nativeViewportHeight,
               let scrollView = chatScrollViewBox.scrollView,
               ObjectIdentifier(scrollView)
                 == owner.checkpoint.scrollViewIdentity,
@@ -7786,7 +8205,7 @@ private struct ChatView: View {
 
     private func handleConversationBottomAnchorFrame(
         _ snapshot: ConversationBottomAnchorFrame?,
-        using scrollProxy: ScrollViewProxy
+        using scrollProxy: ChatTranscriptProxy
     ) {
         guard let snapshot,
               snapshot.anchorID == currentConversationBottomAnchorID,
@@ -7823,7 +8242,7 @@ private struct ChatView: View {
         #if DEBUG
         navigationStressLog(
             "anchor \(model.selectedConversation?.title ?? "?") req=\(snapshot.positionRequest.request) "
-                + "min=\(snapshot.frame.minY) max=\(snapshot.frame.maxY) viewport=\(scrollViewportHeight) "
+                + "min=\(snapshot.frame.minY) max=\(snapshot.frame.maxY) viewport=\(nativeViewportHeight) "
                 + "drawer=\(model.isDrawerPresented) positioning=\(isPositioningCurrentConversation)"
         )
         #endif
@@ -7850,52 +8269,22 @@ private struct ChatView: View {
         }
 
 
-        // A LazyVStack can lay out its inexpensive bottom sentinel while every
-        // real message row remains virtualized. A bottom command submitted at
-        // that point produces a valid geometry offset but a completely blank
-        // viewport. Materialize the concrete surviving tail row once, then let
-        // the native edge position perform the final true-bottom handoff.
-        if scheduleBottomRowMaterializationIfNeeded(
-            for: snapshot.anchorID,
-            using: scrollProxy
-        ) {
-            return
-        }
-
-        if holdsDrawerForConcreteTail,
-           !hasConcreteTailFrame(for: snapshot.anchorID) {
-            // A precondition can make the bounded materializer ineligible before
-            // it owns a lease. Keep the old liveness behavior instead of turning
-            // that condition into a drawer deadlock.
-            failOpenDrawerForConcreteTailIfCurrent(
-                snapshot.anchorID,
-                wasHeld: true,
-                reason: "ineligibleBeforeLease"
-            )
-            return
-        }
-
-        if pendingBottomRowMaterializationAnchorID == snapshot.anchorID {
-            bottomRowMaterializationTask?.cancel()
-            bottomRowMaterializationTask = nil
-            pendingBottomRowMaterializationAnchorID = nil
-        }
+        // Readiness requires an actual measured tail in the current native
+        // publication, independently of the inexpensive bottom spacer.
+        if needsNativeTailMeasurement(for: snapshot.anchorID) { return }
 
         // Regeneration replaces a tall selected reply with a new streaming
-        // tail without starting a conversation-return handoff. A LazyVStack
-        // can first report either the old offscreen sentinel or a new positive
-        // sentinel that is still far below the viewport; neither proves that
-        // the new reply row has materialized. Keep native readiness withheld
+        // tail without starting a conversation-return handoff. Neither an old
+        // spacer coordinate nor a new height estimate proves that the new
+        // reply has been measured. Keep native readiness withheld
         // until this exact message revision has both a concrete tail row and a
         // bottom sentinel intersecting the current viewport. The existing
         // one-shot proxy follow performs the recovery; native `.bottom` takes
         // ownership only after those two revision-scoped geometry facts agree.
-        if #available(iOS 18.0, *),
-           nativeConversationContentReadyAnchorID != snapshot.anchorID,
+        if            nativeConversationContentReadyAnchorID != snapshot.anchorID,
            shouldKeepNativeBottomPosition,
            !isPositioningCurrentConversation,
            model.isConversationStreaming(snapshot.positionRequest.conversationID),
-           pendingBottomRowMaterializationAnchorID == nil,
            let tailMessageID = snapshot.anchorID.messageIDs.last,
            let tailMessage = model.messages.last,
            tailMessage.id == tailMessageID,
@@ -7905,13 +8294,13 @@ private struct ChatView: View {
             let tailFrame = messageFramesAnchorID == snapshot.anchorID
                 ? messageFrames[tailMessageID]
                 : nil
-            let tailIntersectsViewport = scrollViewportHeight > 0
+            let tailIntersectsViewport = nativeViewportHeight > 0
                 && (tailFrame.map {
-                    $0.maxY > 0 && $0.minY < scrollViewportHeight
+                    $0.maxY > 0 && $0.minY < nativeViewportHeight
                 } ?? false)
-            let sentinelIntersectsViewport = scrollViewportHeight > 0
+            let sentinelIntersectsViewport = nativeViewportHeight > 0
                 && snapshot.frame.maxY > 0
-                && snapshot.frame.minY < scrollViewportHeight
+                && snapshot.frame.minY < nativeViewportHeight
 
             if !tailIntersectsViewport || !sentinelIntersectsViewport {
                 let tailFrameDescription = tailFrame.map {
@@ -7922,7 +8311,7 @@ private struct ChatView: View {
                         + " tailFrame=\(tailFrameDescription)"
                         + " anchorMinY=\(String(format: "%.1f", snapshot.frame.minY))"
                         + " anchorMaxY=\(String(format: "%.1f", snapshot.frame.maxY))"
-                        + " viewport=\(String(format: "%.1f", scrollViewportHeight)) "
+                        + " viewport=\(String(format: "%.1f", nativeViewportHeight)) "
                         + chatBottomTraceState
                 )
                 scheduleConcreteStreamingTailRecovery(
@@ -7937,21 +8326,20 @@ private struct ChatView: View {
             // coalesced proxy task is still waiting for its executor turn.
             // Cancel that now-redundant writer before native readiness resets
             // the edge, so recovery cannot land a late second bottom command.
-            streamFollowTask?.cancel()
-            streamFollowTask = nil
+            streamingTailRecoveryTask?.cancel()
+            streamingTailRecoveryTask = nil
             ChatBottomTrace.log(
                 "STREAM_READY_ACK reason=concreteTailAndSentinelInViewport"
                     + " tail=\(ChatBottomTrace.shortID(tailMessageID))"
                     + " anchorMaxY=\(String(format: "%.1f", snapshot.frame.maxY))"
-                    + " viewport=\(String(format: "%.1f", scrollViewportHeight)) "
+                    + " viewport=\(String(format: "%.1f", nativeViewportHeight)) "
                     + chatBottomTraceState
             )
         }
 
         // A sentinel is only a coordinate. Non-empty readiness additionally
         // requires the exact latest-window tail row to have a valid frame in
-        // this same revision; otherwise native `.bottom` can target an empty
-        // LazyVStack region.
+        // this same revision; estimated cell geometry is not sufficient.
         guard !model.hasLaterMessages,
               hasConcreteTailFrame(for: snapshot.anchorID) else {
             ChatBottomTrace.log(
@@ -7976,21 +8364,14 @@ private struct ChatView: View {
                     + " req=\(snapshot.positionRequest.request)"
                     + " rows=\(snapshot.anchorID.messageIDs.count)"
                     + " anchorMaxY=\(String(format: "%.1f", snapshot.frame.maxY))"
-                    + " viewport=\(String(format: "%.1f", scrollViewportHeight)) "
+                    + " viewport=\(String(format: "%.1f", nativeViewportHeight)) "
                     + chatBottomTraceState
             )
             // The current conversation's concrete sentinel has now completed a
             // layout pass. Only now is it safe to replace a retained native
             // ScrollPosition from the previous conversation.
             nativeConversationContentReadyAnchorID = snapshot.anchorID
-            if #unavailable(iOS 18.0) {
-                // Structural changes can happen while the user is deliberately
-                // reading older content. On iOS 17 only an actual conversation
-                // return owns a proxy jump; readiness alone must never create one.
-                if isPositioningCurrentConversation {
-                    scheduleConversationReturn(using: scrollProxy)
-                }
-            } else if isPositioningCurrentConversation {
+            if isPositioningCurrentConversation {
                 let readyAnchorID = snapshot.anchorID
                 Task { @MainActor in
                     // Let the modifier consume the readiness value and perform
@@ -8030,50 +8411,22 @@ private struct ChatView: View {
     private func shouldHoldDrawerForConcreteConversationTail(
         for anchorID: ConversationBottomAnchorID
     ) -> Bool {
-        guard #available(iOS 18.0, *) else { return false }
         return isCurrentDrawerCoveredConversationReturn(anchorID)
-    }
-
-    private func allowsBottomRowMaterialization(
-        for anchorID: ConversationBottomAnchorID,
-        heldDrawerReturn: Bool
-    ) -> Bool {
-        !model.isDrawerPresented
-            || (heldDrawerReturn
-                && isCurrentDrawerCoveredConversationReturn(anchorID))
     }
 
     private func hasConcreteTailFrame(
         for anchorID: ConversationBottomAnchorID
     ) -> Bool {
-        guard let tailMessageID = anchorID.messageIDs.last else { return false }
+        guard currentConversationBottomAnchorID == anchorID,
+              let tailMessageID = anchorID.messageIDs.last else { return false }
+        if isBoundedConversationEntry,
+           concreteEntryTailAnchorID == anchorID {
+            return true
+        }
         return validConcreteMessageFrame(
             tailMessageID,
             anchorID: anchorID
         ) != nil
-    }
-
-    private func failOpenDrawerForConcreteTailIfCurrent(
-        _ anchorID: ConversationBottomAnchorID,
-        wasHeld: Bool,
-        reason: String
-    ) {
-        guard wasHeld,
-              pendingBottomRowMaterializationAnchorID != anchorID,
-              isCurrentDrawerCoveredConversationReturn(anchorID) else { return }
-        ChatBottomTrace.log(
-            "DRAWER_TAIL_GATE_FAIL_OPEN"
-                + " conv=\(ChatBottomTrace.shortID(anchorID.positionRequest.conversationID))"
-                + " req=\(anchorID.positionRequest.request)"
-                + " reason=\(reason)"
-        )
-        VersionFlashTrace.record(
-            "DRAWER_TAIL_GATE_FAIL_OPEN"
-                + " conv=\(VersionFlashTrace.identifierToken(anchorID.positionRequest.conversationID))"
-                + " req=\(anchorID.positionRequest.request)"
-                + " reason=\(reason)"
-        )
-        onConversationContentReady(anchorID.positionRequest.conversationID)
     }
 
     private func finishConversationReturnIfConcreteTailIsAtBottom(
@@ -8082,275 +8435,14 @@ private struct ChatView: View {
         guard currentConversationBottomAnchorID == anchorID,
               nativeConversationContentReadyAnchorID == anchorID,
               isPositioningCurrentConversation,
-              let tailMessageID = anchorID.messageIDs.last,
-              messageFramesAnchorID == anchorID,
-              messageFrames[tailMessageID] != nil,
+              hasConcreteTailFrame(for: anchorID),
               !isNativeScrollMotionInFlight,
               currentUIKitBottomState?.isAtBottom == true else { return }
         finishConversationReturnPositioning(for: anchorID.positionRequest.conversationID)
     }
 
-    private func scheduleBottomRowMaterializationIfNeeded(
-        for anchorID: ConversationBottomAnchorID,
-        using scrollProxy: ScrollViewProxy
-    ) -> Bool {
-        if model.usesConcreteConversationEntryWindow {
-            // Every destination row already participates in concrete layout.
-            // Its frame preference will re-enter the existing readiness chain;
-            // a top seed and delayed tail retries would expose a false location.
-            return !hasConcreteTailFrame(for: anchorID)
-        }
-        guard shouldKeepNativeBottomPosition,
-              nativeConversationContentReadyAnchorID != anchorID,
-              !model.isComposerFocused,
-              !isUserScrollActive,
-              navigationRequest == nil,
-              pendingKeyboardViewportPin == nil,
-              pendingKeyboardDismissalDeadline == nil,
-              !model.isConversationStreaming(anchorID.positionRequest.conversationID),
-              !model.hasLaterMessages,
-              let tailMessageID = anchorID.messageIDs.last,
-              messageFramesAnchorID != anchorID
-                || messageFrames[tailMessageID] == nil else { return false }
-
-        let tailHostID = conversationMessageHostID(for: tailMessageID)
-        let topSeedID = ConversationTopMaterializationSeedID(anchorID: anchorID)
-
-        guard pendingBottomRowMaterializationAnchorID != anchorID else { return true }
-        if layoutFollowTask != nil {
-            ChatBottomTrace.log(
-                "LAYOUT_FOLLOW_CANCEL source=tailMaterialize "
-                    + chatBottomTraceState
-            )
-        }
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
-        bottomRowMaterializationTask?.cancel()
-        pendingBottomRowMaterializationAnchorID = anchorID
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
-        let heldDrawerReturn =
-            shouldHoldDrawerForConcreteConversationTail(for: anchorID)
-        VersionFlashTrace.record(
-            "TAIL_MATERIALIZE_QUEUED"
-                + " conv=\(VersionFlashTrace.identifierToken(anchorID.positionRequest.conversationID))"
-                + " req=\(anchorID.positionRequest.request)"
-                + " rows=\(anchorID.messageIDs.count)"
-                + " tail=\(VersionFlashTrace.identifierToken(tailMessageID))"
-        )
-        ChatBottomTrace.log(
-            "TAIL_MATERIALIZE_QUEUED conv=\(ChatBottomTrace.shortID(anchorID.positionRequest.conversationID))"
-                + " req=\(anchorID.positionRequest.request) rows=\(anchorID.messageIDs.count)"
-        )
-        bottomRowMaterializationTask = Task { @MainActor in
-            await Task.yield()
-            guard !Task.isCancelled,
-                  pendingBottomRowMaterializationAnchorID == anchorID,
-                  currentConversationBottomAnchorID == anchorID,
-                  nativeConversationContentReadyAnchorID != anchorID,
-                  shouldKeepNativeBottomPosition,
-                  !model.isComposerFocused,
-                  !isUserScrollActive,
-                  navigationRequest == nil,
-                  pendingKeyboardViewportPin == nil,
-                  pendingKeyboardDismissalDeadline == nil,
-                  !model.isConversationStreaming(anchorID.positionRequest.conversationID),
-                  !model.hasLaterMessages,
-                  allowsBottomRowMaterialization(
-                    for: anchorID,
-                    heldDrawerReturn: heldDrawerReturn
-                  ) else {
-                // Every external cancellation site synchronously releases this
-                // lease. A cancelled old task must never clear or fail-open a
-                // newer task that reused the same exact anchor.
-                if heldDrawerReturn, Task.isCancelled { return }
-                if pendingBottomRowMaterializationAnchorID == anchorID {
-                    pendingBottomRowMaterializationAnchorID = nil
-                    bottomRowMaterializationTask = nil
-                }
-                failOpenDrawerForConcreteTailIfCurrent(
-                    anchorID,
-                    wasHeld: heldDrawerReturn,
-                    reason: "initialGuard"
-                )
-                return
-            }
-            var seedTransaction = Transaction()
-            seedTransaction.disablesAnimations = true
-            traceScrollCommand(
-                source: "tailMaterialize.seedTop",
-                target: "topSeed",
-                animation: "disabled"
-            )
-            withTransaction(seedTransaction) {
-                scrollProxy.scrollTo(topSeedID, anchor: .top)
-            }
-            ChatBottomTrace.log(
-                "TAIL_MATERIALIZE_SEED_APPLIED"
-                    + " conv=\(ChatBottomTrace.shortID(anchorID.positionRequest.conversationID))"
-                    + " req=\(anchorID.positionRequest.request)"
-            )
-            VersionFlashTrace.record(
-                "TAIL_MATERIALIZE_SEED_APPLIED"
-                    + " conv=\(VersionFlashTrace.identifierToken(anchorID.positionRequest.conversationID))"
-                    + " req=\(anchorID.positionRequest.request)"
-                    + " tail=\(VersionFlashTrace.identifierToken(tailMessageID))"
-            )
-            try? await Task.sleep(for: .milliseconds(32))
-
-            for (attempt, delay) in [0, 40, 90, 180, 300].enumerated() {
-                if delay == 0 {
-                    await Task.yield()
-                } else {
-                    try? await Task.sleep(for: .milliseconds(delay))
-                }
-                guard !Task.isCancelled,
-                      pendingBottomRowMaterializationAnchorID == anchorID,
-                      currentConversationBottomAnchorID == anchorID,
-                      nativeConversationContentReadyAnchorID != anchorID,
-                      shouldKeepNativeBottomPosition,
-                      !model.isComposerFocused,
-                      !isUserScrollActive,
-                      navigationRequest == nil,
-                      pendingKeyboardViewportPin == nil,
-                      pendingKeyboardDismissalDeadline == nil,
-                      !model.isConversationStreaming(anchorID.positionRequest.conversationID),
-                      !model.hasLaterMessages,
-                      allowsBottomRowMaterialization(
-                        for: anchorID,
-                        heldDrawerReturn: heldDrawerReturn
-                      ) else {
-                    if heldDrawerReturn, Task.isCancelled { return }
-                    if pendingBottomRowMaterializationAnchorID == anchorID {
-                        pendingBottomRowMaterializationAnchorID = nil
-                        bottomRowMaterializationTask = nil
-                    }
-                    failOpenDrawerForConcreteTailIfCurrent(
-                        anchorID,
-                        wasHeld: heldDrawerReturn,
-                        reason: "attemptGuard"
-                    )
-                    return
-                }
-                if messageFramesAnchorID == anchorID,
-                   messageFrames[tailMessageID] != nil {
-                    VersionFlashTrace.record(
-                        "TAIL_MATERIALIZE_ACKED"
-                            + " conv=\(VersionFlashTrace.identifierToken(anchorID.positionRequest.conversationID))"
-                            + " req=\(anchorID.positionRequest.request)"
-                            + " tail=\(VersionFlashTrace.identifierToken(tailMessageID))"
-                            + " afterAttempt=\(attempt)"
-                    )
-                    ChatBottomTrace.log(
-                        "TAIL_MATERIALIZE_ACKED"
-                            + " conv=\(ChatBottomTrace.shortID(anchorID.positionRequest.conversationID))"
-                            + " req=\(anchorID.positionRequest.request)"
-                            + " tail=\(ChatBottomTrace.shortID(tailMessageID))"
-                            + " afterAttempt=\(attempt)"
-                    )
-                    bottomRowMaterializationTask = nil
-                    if heldDrawerReturn,
-                       pendingBottomRowMaterializationAnchorID == anchorID {
-                        pendingBottomRowMaterializationAnchorID = nil
-                    }
-                    if let snapshot = latestConversationBottomAnchorFrame,
-                       snapshot.anchorID == anchorID {
-                        handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
-                    } else {
-                        failOpenDrawerForConcreteTailIfCurrent(
-                            anchorID,
-                            wasHeld: heldDrawerReturn,
-                            reason: "ackMissingSnapshot"
-                        )
-                    }
-                    return
-                }
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                traceScrollCommand(
-                    source: "tailMaterialize.attempt\(attempt + 1)",
-                    target: "tailHost:\(ChatBottomTrace.shortID(tailMessageID))",
-                    animation: "disabled"
-                )
-                withTransaction(transaction) {
-                    scrollProxy.scrollTo(tailHostID, anchor: .bottom)
-                }
-                ChatBottomTrace.log(
-                    "TAIL_MATERIALIZE_APPLIED conv=\(ChatBottomTrace.shortID(anchorID.positionRequest.conversationID))"
-                        + " req=\(anchorID.positionRequest.request)"
-                        + " tail=\(ChatBottomTrace.shortID(tailMessageID))"
-                        + " attempt=\(attempt + 1)"
-                )
-                VersionFlashTrace.record(
-                    "TAIL_MATERIALIZE_APPLIED"
-                        + " conv=\(VersionFlashTrace.identifierToken(anchorID.positionRequest.conversationID))"
-                        + " req=\(anchorID.positionRequest.request)"
-                        + " tail=\(VersionFlashTrace.identifierToken(tailMessageID))"
-                        + " attempt=\(attempt + 1)"
-                )
-            }
-            try? await Task.sleep(for: .milliseconds(120))
-            // Cancellation is owned by the synchronous external cleanup that
-            // issued it. Do not let an old task touch a same-anchor successor.
-            guard !Task.isCancelled else { return }
-            guard pendingBottomRowMaterializationAnchorID == anchorID else {
-                failOpenDrawerForConcreteTailIfCurrent(
-                    anchorID,
-                    wasHeld: heldDrawerReturn,
-                    reason: "finalGuard"
-                )
-                return
-            }
-            bottomRowMaterializationTask = nil
-            if messageFramesAnchorID == anchorID,
-               messageFrames[tailMessageID] != nil,
-               let snapshot = latestConversationBottomAnchorFrame,
-               snapshot.anchorID == anchorID {
-                VersionFlashTrace.record(
-                    "TAIL_MATERIALIZE_ACKED"
-                        + " conv=\(VersionFlashTrace.identifierToken(anchorID.positionRequest.conversationID))"
-                        + " req=\(anchorID.positionRequest.request)"
-                        + " tail=\(VersionFlashTrace.identifierToken(tailMessageID))"
-                        + " afterAttempt=5"
-                )
-                ChatBottomTrace.log(
-                    "TAIL_MATERIALIZE_ACKED"
-                        + " conv=\(ChatBottomTrace.shortID(anchorID.positionRequest.conversationID))"
-                        + " req=\(anchorID.positionRequest.request)"
-                        + " tail=\(ChatBottomTrace.shortID(tailMessageID))"
-                        + " afterAttempt=5"
-                )
-                handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
-                return
-            }
-            pendingBottomRowMaterializationAnchorID = nil
-            let observedFrameIDs = messageFrames.keys
-                .map { ChatBottomTrace.shortID($0) }
-                .sorted()
-                .joined(separator: ",")
-            ChatBottomTrace.log(
-                "TAIL_MATERIALIZE_RELEASED conv=\(ChatBottomTrace.shortID(anchorID.positionRequest.conversationID))"
-                    + " req=\(anchorID.positionRequest.request)"
-                    + " reason=noAck"
-                    + " frameAnchorMatches=\(messageFramesAnchorID == anchorID)"
-                    + " observedFrames=[\(observedFrameIDs)]"
-            )
-            VersionFlashTrace.record(
-                "TAIL_MATERIALIZE_RELEASED"
-                    + " conv=\(VersionFlashTrace.identifierToken(anchorID.positionRequest.conversationID))"
-                    + " req=\(anchorID.positionRequest.request)"
-                    + " tail=\(VersionFlashTrace.identifierToken(tailMessageID))"
-                    + " reason=noAck"
-                    + " frameAnchorMatches=\(messageFramesAnchorID == anchorID)"
-                    + " observedFrameCount=\(messageFrames.count)"
-            )
-            failOpenDrawerForConcreteTailIfCurrent(
-                anchorID,
-                wasHeld: heldDrawerReturn,
-                reason: "noAck"
-            )
-        }
-        return true
+    private func needsNativeTailMeasurement(for anchorID: ConversationBottomAnchorID) -> Bool {
+        !hasConcreteTailFrame(for: anchorID)
     }
 
     private func updateNavigationVisibility(isScrolling: Bool) {
@@ -8379,22 +8471,7 @@ private struct ChatView: View {
     }
 
     private var navigationGuideY: CGFloat {
-        min(max(64, scrollViewportHeight * 0.10), 92)
-    }
-
-    private func navigationAnimation(
-        distance: CGFloat?,
-        isEdge: Bool
-    ) -> (animation: Animation, duration: TimeInterval) {
-        let viewport = max(scrollViewportHeight, 1)
-        let fallbackDistance = viewport * (isEdge ? 2.2 : 0.9)
-        let screens = min(abs(distance ?? fallbackDistance) / viewport, 4)
-        let duration = min(
-            isEdge ? 0.38 : 0.32,
-            (isEdge ? 0.28 : 0.20)
-                + (isEdge ? 0.06 : 0.07) * Double(screens.squareRoot())
-        )
-        return (.smooth(duration: duration, extraBounce: 0), duration)
+        min(max(64, nativeViewportHeight * 0.10), 92)
     }
 
     private func prepareMessageNavigation(for action: MessageNavigationAction) {
@@ -8417,546 +8494,322 @@ private struct ChatView: View {
         isNativeVerticalScrollMotionArmed = false
         cancelConversationReturnPositioning()
         userScrollIdleTask?.cancel()
-        streamFollowTask?.cancel()
-        layoutFollowTask?.cancel()
+        streamingTailRecoveryTask?.cancel()
         keyboardViewportPinTask?.cancel()
-        messageWindowLoadTask?.cancel()
-        messageWindowLoadTask = nil
+    }
+
+    @MainActor
+    private final class NativeTranscriptPublicationWaiter {
+        var continuation: CheckedContinuation<Bool, Never>?
+        var geometrySubscription: AnyCancellable?
+        var phaseSubscription: AnyCancellable?
+        var deadline: Task<Void, Never>?
+
+        func finish(_ result: Bool) {
+            guard let continuation else { return }
+            self.continuation = nil
+            geometrySubscription?.cancel()
+            geometrySubscription = nil
+            phaseSubscription?.cancel()
+            phaseSubscription = nil
+            deadline?.cancel()
+            deadline = nil
+            continuation.resume(returning: result)
+        }
+    }
+
+    private func awaitNativeNavigationPublication(
+        _ anchorID: ConversationBottomAnchorID,
+        request: MessageNavigationRequest
+    ) async -> Bool {
+        let publication = NativeChatPublicationID(
+            anchorID: anchorID,
+            layoutRequestID: activeCodeLayoutRequestID
+        )
+        func isCurrent() -> Bool {
+            navigationRequest == request
+                && currentConversationBottomAnchorID == anchorID
+                && currentConversationPositionRequest == request.positionRequest
+                && activeCodeLayoutRequestID == publication.layoutRequestID
+                && !hasConcreteNativeUserScrollOwnership
+                && !model.isDrawerPresented
+        }
+        return await awaitNativeTranscriptPublication(publication, isCurrent: isCurrent)
+    }
+
+    /// Await the actual native publication before handing it a command. The
+    /// same bounded acknowledgement serves navigation and send ownership;
+    /// queued main-loop turns alone cannot prove a hosted revision arrived.
+    private func awaitNativeTranscriptPublication(
+        _ publication: NativeChatPublicationID,
+        isCurrent: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        func matches(_ geometry: NativeChatScrollGeometry?) -> Bool {
+            guard let geometry,
+                  geometry.publicationID == AnyHashable(publication),
+                  geometry.containerSize.width > 0,
+                  geometry.containerSize.height > 0,
+                  let scrollView = chatScrollViewBox.scrollView,
+                  scrollView === nativeTranscriptDriver.scrollView,
+                  scrollView.window != nil else { return false }
+            return true
+        }
+        guard !Task.isCancelled, isCurrent() else { return false }
+        if matches(nativeTranscriptDriver.latestGeometry) { return true }
+        let waiter = NativeTranscriptPublicationWaiter()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiter.continuation = continuation
+                guard !Task.isCancelled, isCurrent() else {
+                    waiter.finish(false)
+                    return
+                }
+                waiter.geometrySubscription = nativeTranscriptDriver.geometryEvents.sink { geometry in
+                    guard isCurrent() else { waiter.finish(false); return }
+                    if matches(geometry) { waiter.finish(true) }
+                }
+                waiter.phaseSubscription = nativeTranscriptDriver.phaseEvents.sink { event in
+                    if !isCurrent()
+                        || event.newPhase == .tracking
+                        || event.newPhase == .interacting
+                        || event.newPhase == .decelerating {
+                        waiter.finish(false)
+                    }
+                }
+                // This is one bounded event acknowledgement, never a polling
+                // loop, offset retry, or nominal animation-completion delay.
+                waiter.deadline = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled else { return }
+                    waiter.finish(false)
+                }
+                if matches(nativeTranscriptDriver.latestGeometry) {
+                    waiter.finish(true)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in waiter.finish(false) }
+        }
+    }
+
+    private func nativeNavigationLandingGeometry(
+        _ request: MessageNavigationRequest,
+        anchorID: ConversationBottomAnchorID
+    ) -> NativeChatScrollGeometry? {
+        guard navigationRequest == request,
+              currentConversationBottomAnchorID == anchorID,
+              anchorID.positionRequest == request.positionRequest else { return nil }
+        return currentNativeLandingGeometry(anchorID: anchorID)
+    }
+
+    private func currentNativeLandingGeometry(
+        anchorID: ConversationBottomAnchorID
+    ) -> NativeChatScrollGeometry? {
+        guard currentConversationBottomAnchorID == anchorID,
+              let geometry = nativeTranscriptDriver.latestGeometry,
+              geometry.sessionID == AnyHashable(model.selectedConversationID),
+              geometry.publicationID == AnyHashable(NativeChatPublicationID(
+                anchorID: anchorID,
+                layoutRequestID: activeCodeLayoutRequestID
+              )),
+              let scrollView = chatScrollViewBox.scrollView,
+              scrollView === nativeTranscriptDriver.scrollView,
+              scrollView.window != nil,
+              !nativeScrollHasActiveTouch(scrollView),
+              !scrollView.isTracking,
+              !scrollView.isDragging,
+              !scrollView.isDecelerating,
+              !isNativeScrollAnimating(scrollView),
+              geometry.contentOffset.y.isFinite,
+              geometry.contentSize.height.isFinite,
+              geometry.containerSize.height.isFinite,
+              geometry.containerSize.height > 0,
+              geometry.contentInsets.top.isFinite,
+              geometry.contentInsets.bottom.isFinite,
+              abs(geometry.contentInsets.top - scrollView.adjustedContentInset.top) <= 0.5,
+              abs(geometry.contentInsets.bottom - scrollView.adjustedContentInset.bottom) <= 0.5,
+              abs(geometry.contentOffset.y - scrollView.contentOffset.y) <= 2,
+              abs(geometry.contentSize.height - scrollView.contentSize.height) <= 2,
+              abs(geometry.containerSize.width - scrollView.bounds.width) <= 0.5,
+              abs(geometry.containerSize.height - scrollView.bounds.height) <= 2 else { return nil }
+        return geometry
+    }
+
+    private func isNativeEdgeBottomLanding(
+        _ request: MessageNavigationRequest,
+        anchorID: ConversationBottomAnchorID,
+        tailMessageID: UUID
+    ) -> Bool {
+        guard !model.hasLaterMessages,
+              anchorID.messageIDs.last == tailMessageID,
+              let geometry = nativeNavigationLandingGeometry(request, anchorID: anchorID) else { return false }
+        return hasNativeConcreteBottomLanding(geometry, tailMessageID: tailMessageID)
+    }
+
+    private func hasNativeConcreteBottomLanding(
+        _ geometry: NativeChatScrollGeometry,
+        tailMessageID: UUID
+    ) -> Bool {
+        guard let tail = geometry.frames[tailMessageID],
+              tail.minY.isFinite, tail.maxY.isFinite,
+              tail.width.isFinite, tail.height.isFinite,
+              tail.width > 0, tail.height > 0,
+              tail.maxY > geometry.contentInsets.top,
+              tail.maxY <= geometry.containerSize.height - geometry.contentInsets.bottom + 2,
+              geometry.bottomSpacerFrame.maxY.isFinite else { return false }
+        let bottomOffset = max(
+            -geometry.contentInsets.top,
+            geometry.contentSize.height - geometry.containerSize.height
+                + geometry.contentInsets.bottom
+        )
+        // Short content has legal min-height space after the intrinsic spacer.
+        // Its real bottom is the native content boundary, not the spacer alone.
+        let measuredContentEnd = max(
+            geometry.bottomSpacerFrame.maxY + geometry.contentOffset.y,
+            geometry.minimumContentHeight
+        )
+        return abs(geometry.contentOffset.y - bottomOffset) <= 2
+            && abs(measuredContentEnd - geometry.contentSize.height) <= 2
     }
 
     private func scrollToTop(
-        using scrollProxy: ScrollViewProxy,
+        using scrollProxy: ChatTranscriptProxy,
         request: MessageNavigationRequest
     ) {
-        if request.action == .top {
-            // A top request replaces the compact latest window. Clear the
-            // retained eager owner in the same update that loads the start
-            // window so no eager-to-lazy handoff is exposed at the old bottom.
-            bottomNavigationCompactWindowConversationID = nil
-            navigationAnchorMessageID = nil
-            navigationScrollTask = Task { @MainActor in
-                defer {
-                    if navigationRequest == request {
-                        navigationRequest = nil
-                        navigationScrollTask = nil
-                    }
-                }
-                guard !hasConcreteNativeUserScrollOwnership else { return }
-                if model.hasEarlierMessages {
-                    if model.loadStartMessageWindow() {
-                        advanceConversationLazyWindowGeneration()
-                    }
-                }
-                await awaitNextMainQueueTurn()
-                let hostAnchorID = currentConversationBottomAnchorID
-                guard !Task.isCancelled,
-                      navigationRequest == request,
-                      hostAnchorID.positionRequest == request.positionRequest,
-                      !hasConcreteNativeUserScrollOwnership,
-                      let firstID = hostAnchorID.messageIDs.first else { return }
-                let firstHostID = conversationMessageHostID(for: firstID)
-                let animation = navigationAnimation(
-                    distance: messageFrames[firstID].map {
-                        $0.minY - navigationGuideY
-                    },
-                    isEdge: true
-                )
-                traceScrollCommand(
-                    source: "navigation.top",
-                    target: "messageHost:\(ChatBottomTrace.shortID(firstID))",
-                    animation: "smooth"
-                )
-                withAnimation(animation.animation) {
-                    scrollProxy.scrollTo(firstHostID, anchor: .top)
-                }
-                try? await Task.sleep(
-                    for: .seconds(animation.duration + 0.04)
-                )
-                guard !Task.isCancelled,
-                      navigationRequest == request,
-                      currentConversationBottomAnchorID == hostAnchorID else {
-                    return
-                }
-                guard hasVisibleConcreteMessageFrame(
-                    firstID,
-                    anchorID: hostAnchorID
-                ) else {
-                    await failClosedEdgeNavigation(
-                        request,
-                        anchorID: hostAnchorID,
-                        using: scrollProxy,
-                        reason: "topFrameNotReady"
-                    )
-                    return
-                }
-                // A successful top navigation is a detached reading position,
-                // never a semantic bottom for this historical window.
-                lastKnownNearBottom = false
-                lastMeasuredNearBottom = false
-                lastMeasuredAtBottom = false
-                isUserScrollActive = true
-                autoFollowEngaged = false
-            }
-            keepNavigationVisibleBriefly()
-            return
+        if request.action != .top {
+            prepareMessageNavigation(for: request.action)
         }
-        if model.hasEarlierMessages {
-            if model.loadStartMessageWindow() {
-                advanceConversationLazyWindowGeneration()
-            }
-        }
-        guard let firstID = model.messages.first?.id else { return }
-        let hostAnchorID = currentConversationBottomAnchorID
-        let hostHasLaterMessages = model.hasLaterMessages
-        guard hostAnchorID.positionRequest == request.positionRequest else { return }
-        let firstHostID = conversationMessageHostID(
-            for: firstID
-        )
-        let animation = navigationAnimation(
-            distance: messageFrames[firstID].map { $0.minY - navigationGuideY },
-            isEdge: true
-        )
-        prepareMessageNavigation(for: request.action)
         navigationAnchorMessageID = nil
         navigationScrollTask = Task { @MainActor in
-            await Task.yield()
-            guard !Task.isCancelled,
-                  navigationRequest == request,
-                  currentConversationBottomAnchorID == hostAnchorID,
-                  model.hasLaterMessages == hostHasLaterMessages else { return }
-            traceScrollCommand(
-                source: "navigation.top",
-                target: "messageHost:\(ChatBottomTrace.shortID(firstID))",
-                animation: "smooth"
-            )
-            withAnimation(animation.animation) {
-                scrollProxy.scrollTo(firstHostID, anchor: .top)
-            }
-            try? await Task.sleep(for: .seconds(animation.duration + 0.02))
-            guard !Task.isCancelled,
-                  navigationRequest == request,
-                  currentConversationPositionRequest == request.positionRequest else { return }
-            navigationRequest = nil
-            navigationScrollTask = nil
-        }
-        keepNavigationVisibleBriefly()
-    }
-
-    private func awaitCompactBottomNavigationPreflight(
-        request: MessageNavigationRequest,
-        anchorID: ConversationBottomAnchorID,
-        tailMessageID: UUID
-    ) async -> Bool {
-        var previousSnapshot: MessageTargetLandingSnapshot?
-        var consecutiveStablePasses = 0
-
-        // The window contains at most twelve canonical rows, so this is a
-        // bounded layout acknowledgement rather than a fixed wait for an
-        // unbounded LazyVStack estimate to settle.
-        for attempt in 0..<12 {
-            if attempt == 0 {
-                await awaitNextMainQueueTurn()
-            } else {
-                try? await Task.sleep(for: .milliseconds(16))
-            }
-            guard !Task.isCancelled,
-                  navigationRequest == request,
-                  bottomNavigationCompactWindowConversationID
-                    == anchorID.positionRequest.conversationID,
-                  currentConversationBottomAnchorID == anchorID,
-                  !model.hasLaterMessages,
-                  let scrollView = chatScrollViewBox.scrollView,
-                  scrollView.window != nil,
-                  !nativeScrollHasActiveTouch(scrollView),
-                  !scrollView.isTracking,
-                  !scrollView.isDragging,
-                  !scrollView.isDecelerating else { return false }
-
-            let allRowsConcrete = messageFramesAnchorID == anchorID
-                && anchorID.messageIDs.allSatisfy {
-                    validConcreteMessageFrame($0, anchorID: anchorID) != nil
-                }
-            guard allRowsConcrete,
-                  let snapshot = messageTargetLandingSnapshot(
-                    tailMessageID,
-                    anchorID: anchorID,
-                    scrollView: scrollView
-                  ),
-                  latestConversationBottomAnchorFrame?.anchorID == anchorID else {
-                previousSnapshot = nil
-                consecutiveStablePasses = 0
-                continue
-            }
-
-            if let previousSnapshot,
-               snapshot.isStable(comparedTo: previousSnapshot, tolerance: 1) {
-                consecutiveStablePasses += 1
-            } else {
-                consecutiveStablePasses = 1
-            }
-            previousSnapshot = snapshot
-            guard consecutiveStablePasses >= 2 else { continue }
-
-            ChatBottomTrace.log(
-                "EDGE_COMPACT_PREFLIGHT_READY"
-                    + " sequence=\(request.sequence)"
-                    + " rows=\(anchorID.messageIDs.count)"
-                    + " attempt=\(attempt)"
-                    + " contentH=\(String(format: "%.1f", snapshot.contentSize.height)) "
-                    + chatBottomTraceState
-            )
-            return true
-        }
-
-        ChatBottomTrace.log(
-            "EDGE_COMPACT_PREFLIGHT_DROP"
-                + " sequence=\(request.sequence)"
-                + " reason=unstableConcreteWindow "
-                + chatBottomTraceState
-        )
-        return false
-    }
-
-    private func scrollToBottom(
-        using scrollProxy: ScrollViewProxy,
-        request: MessageNavigationRequest
-    ) {
-        if request.action == .bottom {
-            navigationAnchorMessageID = nil
-            navigationScrollTask = Task { @MainActor in
-                var didComplete = false
-                var landingAnchorID: ConversationBottomAnchorID?
-                defer {
-                    if !didComplete,
-                       let landingAnchorID,
-                       navigationRequest == request,
+            var didComplete = false
+            var landingAnchorID: ConversationBottomAnchorID?
+            defer {
+                if navigationRequest == request {
+                    if !didComplete, let landingAnchorID,
                        currentConversationBottomAnchorID == landingAnchorID {
+                        nativeTranscriptDriver.releasePosition(userOwned: true)
                         lastKnownNearBottom = false
                         lastMeasuredNearBottom = false
                         lastMeasuredAtBottom = false
                         isUserScrollActive = true
                         autoFollowEngaged = false
                     }
-                    if navigationRequest == request {
-                        navigationRequest = nil
-                        navigationScrollTask = nil
-                    }
+                    navigationRequest = nil
+                    navigationScrollTask = nil
                 }
-
-                guard !hasConcreteNativeUserScrollOwnership else { return }
-                let sourceAnchorID = currentConversationBottomAnchorID
-                let sourceTailMessageID = sourceAnchorID.messageIDs.last
-                let sourceTailIsConcrete = sourceTailMessageID.map {
-                    validConcreteMessageFrame(
-                        $0,
-                        anchorID: sourceAnchorID
-                    ) != nil
-                } ?? false
-                let requiresCompactWindow = model.hasLaterMessages
-                    || !sourceTailIsConcrete
-                if requiresCompactWindow {
-                    let replacedWindow = model.loadLatestBottomNavigationWindow()
-                    if replacedWindow {
-                        advanceConversationLazyWindowGeneration()
-                    }
-                    bottomNavigationCompactWindowConversationID =
-                        model.selectedConversationID
-                    ChatBottomTrace.log(
-                        "EDGE_COMPACT_WINDOW_ACTIVATE"
-                            + " sequence=\(request.sequence)"
-                            + " replaced=\(replacedWindow)"
-                            + " sourceRows=\(sourceAnchorID.messageIDs.count) "
-                            + chatBottomTraceState
-                    )
-                }
-                await awaitNextMainQueueTurn()
-                let bottomAnchorID = currentConversationBottomAnchorID
-                landingAnchorID = bottomAnchorID
-                guard !Task.isCancelled,
-                      navigationRequest == request,
-                      bottomAnchorID.positionRequest == request.positionRequest,
-                      !model.hasLaterMessages,
-                      let tailMessageID = bottomAnchorID.messageIDs.last else {
-                    return
-                }
-
-                if isConcreteEdgeBottomLanding(
-                    request,
-                    anchorID: bottomAnchorID,
-                    tailMessageID: tailMessageID
-                ) {
-                    didComplete = true
-                    lastKnownNearBottom = true
-                    lastMeasuredNearBottom = true
-                    lastMeasuredAtBottom = true
-                    isUserScrollActive = false
-                    autoFollowEngaged = model.preferences.autoScrollEnabled
-                    keepNavigationVisibleBriefly()
-                    return
-                }
-
-                if requiresCompactWindow {
-                    guard !hasConcreteNativeUserScrollOwnership else { return }
-                    // The latest window is now a bounded eager destination.
-                    // Start from its real top seed, then require every canonical
-                    // row and the native geometry to agree before animating.
-                    var seedTransaction = Transaction()
-                    seedTransaction.disablesAnimations = true
-                    traceScrollCommand(
-                        source: "navigation.bottomCompactSeed",
-                        target: "topSeed",
-                        animation: "disabled"
-                    )
-                    withTransaction(seedTransaction) {
-                        scrollProxy.scrollTo(
-                            ConversationTopMaterializationSeedID(
-                                anchorID: bottomAnchorID
-                            ),
-                            anchor: .top
-                        )
-                    }
-                    await awaitNextMainQueueTurn()
-                    guard await awaitCompactBottomNavigationPreflight(
-                        request: request,
-                        anchorID: bottomAnchorID,
-                        tailMessageID: tailMessageID
-                    ) else {
-                        await failClosedEdgeNavigation(
-                            request,
-                            anchorID: bottomAnchorID,
-                            using: scrollProxy,
-                            preserveViewportOnFailure: true,
-                            reason: "compactWindowNotReady"
-                        )
-                        return
-                    }
-                }
-
-                guard !Task.isCancelled,
-                      navigationRequest == request,
-                      currentConversationBottomAnchorID == bottomAnchorID else {
-                    return
-                }
-                guard !hasConcreteNativeUserScrollOwnership else { return }
-                let tailWasVisible = hasVisibleConcreteTailBottomEdge(
-                    tailMessageID,
-                    anchorID: bottomAnchorID
-                )
-                let frameCheckpoint = messageFrameGeneration
-                let animation = navigationAnimation(
-                    distance: latestConversationBottomAnchorFrame.map {
-                        $0.frame.maxY - scrollViewportHeight
-                    },
-                    isEdge: true
-                )
-                traceScrollCommand(
-                    source: "navigation.bottom",
-                    target: "messageHost:\(ChatBottomTrace.shortID(tailMessageID))",
-                    animation: "smooth"
-                )
-                let tailClearance = activeBottomNavigationTailClearance(
-                    for: bottomAnchorID
-                )
-                if tailClearance > 0 {
-                    ChatBottomTrace.log(
-                        "EDGE_NAVIGATION_COUPLED_TARGET"
-                            + " sequence=\(request.sequence)"
-                            + " clearance=\(String(format: "%.1f", tailClearance))"
-                            + " sentinel=\(String(format: "%.1f", composerBottomClearance - tailClearance)) "
-                            + chatBottomTraceState
-                    )
-                }
-                withAnimation(animation.animation) {
-                    scrollProxy.scrollTo(
-                        conversationMessageHostID(for: tailMessageID),
-                        anchor: .bottom
-                    )
-                }
-                try? await Task.sleep(
-                    for: .seconds(animation.duration + 0.06)
-                )
-                guard await awaitEdgeNavigationPhysicalIdle(
-                    request,
-                    anchorID: bottomAnchorID
-                ) else {
-                    await failClosedEdgeNavigation(
-                        request,
-                        anchorID: bottomAnchorID,
-                        using: scrollProxy,
-                        preserveViewportOnFailure: true,
-                        reason: "animationNotSettled"
-                    )
-                    return
-                }
-                guard !Task.isCancelled,
-                      navigationRequest == request,
-                      currentConversationBottomAnchorID == bottomAnchorID else {
-                    return
-                }
-                guard let scrollView = chatScrollViewBox.scrollView,
-                      scrollView.window != nil,
-                      !nativeScrollHasActiveTouch(scrollView),
-                      !scrollView.isTracking,
-                      !scrollView.isDragging,
-                      !scrollView.isDecelerating else {
-                    // UIKit touch ownership can precede SwiftUI's DragGesture
-                    // callback. Do not submit the landing correction in that
-                    // recognition gap; defer cleanup leaves the reader detached.
-                    return
-                }
-                guard hasVisibleConcreteTailBottomEdge(
-                    tailMessageID,
-                    anchorID: bottomAnchorID
-                ),
-                      tailWasVisible
-                        || messageFrameGeneration > frameCheckpoint else {
-                    await failClosedEdgeNavigation(
-                        request,
-                        anchorID: bottomAnchorID,
-                        using: scrollProxy,
-                        preserveViewportOnFailure: true,
-                        reason: "tailBottomNotReady"
-                    )
-                    return
-                }
-
-                if !isCurrentNavigationSentinelExact(
-                    request.positionRequest,
-                    anchorID: bottomAnchorID
-                ) {
-                    // One landing correction is permitted only after the real
-                    // tail bottom is visible in this exact revision.
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    traceScrollCommand(
-                        source: "navigation.bottomCorrection",
-                        target: "bottomSentinel",
-                        animation: "disabled"
-                    )
-                    withTransaction(transaction) {
-                        scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                    }
-                    try? await Task.sleep(for: .milliseconds(50))
-                }
-                guard !Task.isCancelled,
-                      navigationRequest == request,
-                      currentConversationBottomAnchorID == bottomAnchorID,
-                      isConcreteEdgeBottomLanding(
-                        request,
-                        anchorID: bottomAnchorID,
-                        tailMessageID: tailMessageID
-                      ) else {
-                    await failClosedEdgeNavigation(
-                        request,
-                        anchorID: bottomAnchorID,
-                        using: scrollProxy,
-                        preserveViewportOnFailure: true,
-                        reason: "landingNotExact"
-                    )
-                    return
-                }
-                didComplete = true
-                lastKnownNearBottom = true
-                lastMeasuredNearBottom = true
-                lastMeasuredAtBottom = true
-                isUserScrollActive = false
-                autoFollowEngaged = model.preferences.autoScrollEnabled
             }
-            keepNavigationVisibleBriefly()
-            return
-        }
-        if model.hasLaterMessages {
-            if model.loadLatestMessageWindow() {
-                advanceConversationLazyWindowGeneration()
-            }
-        }
-        let animation = navigationAnimation(
-            distance: latestConversationBottomAnchorFrame.map { $0.frame.maxY - scrollViewportHeight },
-            isEdge: true
-        )
-        prepareMessageNavigation(for: request.action)
-        navigationAnchorMessageID = nil
-        let bottomAnchorID = currentConversationBottomAnchorID
-        guard bottomAnchorID.positionRequest == request.positionRequest else { return }
-        let concreteTailMessageID = bottomAnchorID.messageIDs.last
-        let hostHasLaterMessages = model.hasLaterMessages
-        let concreteTailHostID = concreteTailMessageID.map {
-            conversationMessageHostID(for: $0)
-        }
-        navigationScrollTask = Task { @MainActor in
-            await Task.yield()
             guard !Task.isCancelled,
                   navigationRequest == request,
-                  currentConversationBottomAnchorID == bottomAnchorID,
-                  model.hasLaterMessages == hostHasLaterMessages else { return }
+                  currentConversationPositionRequest == request.positionRequest,
+                  !hasConcreteNativeUserScrollOwnership else { return }
+            nativeTranscriptDriver.releasePosition()
+            if model.hasEarlierMessages {
+                cancelCodeDisclosure(reason: "messageWindowChanged")
+                model.loadStartMessageWindow()
+            }
+            let anchorID = currentConversationBottomAnchorID
+            landingAnchorID = anchorID
+            guard !model.hasEarlierMessages,
+                  let firstID = anchorID.messageIDs.first,
+                  await awaitNativeNavigationPublication(anchorID, request: request),
+                  !Task.isCancelled,
+                  navigationRequest == request,
+                  currentConversationBottomAnchorID == anchorID,
+                  !hasConcreteNativeUserScrollOwnership else { return }
             traceScrollCommand(
-                source: "navigation.bottom",
-                target: concreteTailMessageID.map {
-                    "messageHost:\(ChatBottomTrace.shortID($0))"
-                } ?? "bottomSentinel",
-                animation: "smooth"
+                source: "navigation.top",
+                target: "messageHost:\(ChatBottomTrace.shortID(firstID))",
+                animation: "system"
             )
-            withAnimation(animation.animation) {
-                if let concreteTailHostID {
-                    scrollProxy.scrollTo(concreteTailHostID, anchor: .bottom)
-                } else {
-                    scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                }
-            }
-            try? await Task.sleep(for: .seconds(animation.duration + 0.06))
-            guard !Task.isCancelled,
-                  navigationRequest == request,
-                  currentConversationPositionRequest == request.positionRequest else { return }
+            let completed = await scrollProxy.navigate(
+                conversationMessageHostID(for: firstID), anchor: .top
+            )
+            guard completed, !Task.isCancelled,
+                  !model.hasEarlierMessages,
+                  let geometry = nativeNavigationLandingGeometry(request, anchorID: anchorID),
+                  let frame = geometry.frames[firstID],
+                  frame.minY.isFinite, frame.maxY.isFinite,
+                  frame.width.isFinite, frame.height.isFinite,
+                  frame.width > 0, frame.height > 0,
+                  frame.maxY > geometry.contentInsets.top,
+                  frame.minY < geometry.containerSize.height - geometry.contentInsets.bottom else { return }
+            nativeTranscriptDriver.releasePosition(userOwned: true)
+            lastKnownNearBottom = false
+            lastMeasuredNearBottom = false
+            lastMeasuredAtBottom = false
+            isUserScrollActive = true
+            autoFollowEngaged = false
+            didComplete = true
+        }
+        keepNavigationVisibleBriefly()
+    }
 
-            // Lazy layout can settle one frame after the animated target. Permit
-            // one token-guarded, non-animated correction, never a retry lease.
-            if !isNavigationAtExactBottom(request, anchorID: bottomAnchorID) {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                traceScrollCommand(
-                    source: "navigation.bottomCorrection",
-                    target: "bottomSentinel",
-                    animation: "disabled"
-                )
-                withTransaction(transaction) {
-                    scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
+    private func scrollToBottom(
+        using scrollProxy: ChatTranscriptProxy,
+        request: MessageNavigationRequest
+    ) {
+        if request.action != .bottom {
+            prepareMessageNavigation(for: request.action)
+        }
+        navigationAnchorMessageID = nil
+        navigationScrollTask = Task { @MainActor in
+            var didComplete = false
+            var landingAnchorID: ConversationBottomAnchorID?
+            defer {
+                if navigationRequest == request {
+                    if !didComplete, let landingAnchorID,
+                       currentConversationBottomAnchorID == landingAnchorID {
+                        nativeTranscriptDriver.releasePosition(userOwned: true)
+                        lastKnownNearBottom = false
+                        lastMeasuredNearBottom = false
+                        lastMeasuredAtBottom = false
+                        isUserScrollActive = true
+                        autoFollowEngaged = false
+                    }
+                    navigationRequest = nil
+                    navigationScrollTask = nil
                 }
-                try? await Task.sleep(for: .milliseconds(50))
             }
             guard !Task.isCancelled,
                   navigationRequest == request,
-                  currentConversationBottomAnchorID == bottomAnchorID else { return }
-            let reachedExactBottom = isNavigationAtExactBottom(
-                request,
-                anchorID: bottomAnchorID
-            )
-            navigationRequest = nil
-            navigationScrollTask = nil
-            guard reachedExactBottom else {
-                // Geometry remains authoritative. Do not fabricate a bottom fact
-                // or hand auto-follow an offset that a user may have interrupted.
-                return
+                  currentConversationPositionRequest == request.positionRequest,
+                  !hasConcreteNativeUserScrollOwnership else { return }
+            nativeTranscriptDriver.releasePosition()
+            // Offscreen rows have valid native semantic destinations. Only a
+            // genuinely historical model window needs replacement at this edge.
+            if model.hasLaterMessages {
+                cancelCodeDisclosure(reason: "messageWindowChanged")
+                model.loadLatestMessageWindow()
+            }
+            let anchorID = currentConversationBottomAnchorID
+            landingAnchorID = anchorID
+            guard !model.hasLaterMessages,
+                  let tailMessageID = anchorID.messageIDs.last,
+                  await awaitNativeNavigationPublication(anchorID, request: request),
+                  !Task.isCancelled,
+                  navigationRequest == request,
+                  currentConversationBottomAnchorID == anchorID,
+                  !hasConcreteNativeUserScrollOwnership else { return }
+            if !isNativeEdgeBottomLanding(request, anchorID: anchorID, tailMessageID: tailMessageID) {
+                traceScrollCommand(
+                    source: "navigation.bottom", target: "bottomSentinel", animation: "system"
+                )
+                let completed = await scrollProxy.navigate(anchorID, anchor: .bottom)
+                guard completed, !Task.isCancelled,
+                      isNativeEdgeBottomLanding(request, anchorID: anchorID, tailMessageID: tailMessageID) else { return }
+            }
+            if !model.preferences.autoScrollEnabled {
+                nativeTranscriptDriver.releasePosition()
             }
             lastKnownNearBottom = true
             lastMeasuredNearBottom = true
             lastMeasuredAtBottom = true
             isUserScrollActive = false
             autoFollowEngaged = model.preferences.autoScrollEnabled
+            didComplete = true
         }
         keepNavigationVisibleBriefly()
     }
-
-    private func isNavigationAtExactBottom(
-        _ request: MessageNavigationRequest,
-        anchorID: ConversationBottomAnchorID
-    ) -> Bool {
-        guard scrollViewportHeight > 0,
-              let snapshot = latestConversationBottomAnchorFrame,
-              snapshot.anchorID == anchorID,
-              anchorID.positionRequest == request.positionRequest else { return false }
-        return abs(snapshot.frame.maxY - scrollViewportHeight) <= 2
-    }
-
     private func validConcreteMessageFrame(
         _ messageID: UUID,
         anchorID: ConversationBottomAnchorID
@@ -9000,28 +8853,13 @@ private struct ChatView: View {
         _ messageID: UUID,
         anchorID: ConversationBottomAnchorID
     ) -> Bool {
-        guard scrollViewportHeight.isFinite,
-              scrollViewportHeight > 0,
+        guard nativeViewportHeight.isFinite,
+              nativeViewportHeight > 0,
               let frame = validConcreteMessageFrame(
                 messageID,
                 anchorID: anchorID
               ) else { return false }
-        return frame.maxY > 0 && frame.minY < scrollViewportHeight
-    }
-
-    private func hasVisibleConcreteTailBottomEdge(
-        _ tailMessageID: UUID,
-        anchorID: ConversationBottomAnchorID
-    ) -> Bool {
-        guard !model.hasLaterMessages,
-              anchorID.messageIDs.last == tailMessageID,
-              scrollViewportHeight.isFinite,
-              scrollViewportHeight > 0,
-              let frame = validConcreteMessageFrame(
-                tailMessageID,
-                anchorID: anchorID
-              ) else { return false }
-        return frame.maxY > 0 && frame.maxY <= scrollViewportHeight + 2
+        return frame.maxY > 0 && frame.minY < nativeViewportHeight
     }
 
     private var selectedStreamingDisplayLeaseCandidate:
@@ -9044,8 +8882,8 @@ private struct ChatView: View {
         isAtBottom explicitIsAtBottom: Bool? = nil,
         isNearBottom explicitIsNearBottom: Bool? = nil
     ) {
-        guard scrollViewportHeight.isFinite,
-              scrollViewportHeight > 0,
+        guard nativeViewportHeight.isFinite,
+              nativeViewportHeight > 0,
               let candidate = selectedStreamingDisplayLeaseCandidate else {
             releaseOffscreenStreamingDisplayLease(reason: "inactiveStream")
             return
@@ -9074,7 +8912,7 @@ private struct ChatView: View {
         }
         let desiredState = OffscreenStreamingDisplayPolicy.desiredState(
             for: OffscreenStreamingDisplayPolicyInput(
-                viewportHeight: scrollViewportHeight,
+                viewportHeight: nativeViewportHeight,
                 userDetachedFromTail:
                     offscreenStreamingDisplayState.didUserDetachFromTail,
                 isScrolling: isScrolling,
@@ -9110,7 +8948,7 @@ private struct ChatView: View {
                     + " conv=\(ChatBottomTrace.shortID(candidate.conversationID))"
                     + " msg=\(ChatBottomTrace.shortID(candidate.messageID))"
                     + " tailMaxY=\(tailFrame.map { String(format: "%.1f", $0.maxY) } ?? "lazy")"
-                    + " viewportH=\(String(format: "%.1f", scrollViewportHeight))"
+                    + " viewportH=\(String(format: "%.1f", nativeViewportHeight))"
             )
         }
     }
@@ -9139,279 +8977,29 @@ private struct ChatView: View {
         )
     }
 
-    private func isCurrentNavigationSentinelExact(
-        _ positionRequest: ConversationPositionRequestKey,
-        anchorID: ConversationBottomAnchorID
-    ) -> Bool {
-        guard currentConversationBottomAnchorID == anchorID,
-              anchorID.positionRequest == positionRequest,
-              scrollViewportHeight.isFinite,
-              scrollViewportHeight > 0,
-              let snapshot = latestConversationBottomAnchorFrame,
-              snapshot.anchorID == anchorID,
-              snapshot.frame.maxY.isFinite else { return false }
-        return abs(snapshot.frame.maxY - scrollViewportHeight) <= 2
-    }
-
-    private func isConcreteEdgeBottomLanding(
-        _ request: MessageNavigationRequest,
-        anchorID: ConversationBottomAnchorID,
-        tailMessageID: UUID
-    ) -> Bool {
-        guard navigationRequest == request,
-              hasVisibleConcreteTailBottomEdge(
-                tailMessageID,
-                anchorID: anchorID
-              ),
-              isCurrentNavigationSentinelExact(
-                request.positionRequest,
-                anchorID: anchorID
-              ),
-              currentUIKitBottomState?.isAtBottom == true,
-              let scrollView = chatScrollViewBox.scrollView,
+    private var canLoadMessageWindow: Bool {
+        // Read the existing native interaction gate only inside paging events.
+        // Do not subscribe the transcript body to drawer presentation/progress.
+        guard let scrollView = chatScrollViewBox.scrollView,
               scrollView.window != nil,
-              !nativeScrollHasActiveTouch(scrollView),
-              !scrollView.isTracking,
-              !scrollView.isDragging,
-              !scrollView.isDecelerating,
-              !isNativeScrollAnimating(scrollView) else { return false }
-        return true
-    }
-
-    private func failClosedEdgeNavigation(
-        _ request: MessageNavigationRequest,
-        anchorID: ConversationBottomAnchorID,
-        using scrollProxy: ScrollViewProxy,
-        preserveViewportOnFailure: Bool = false,
-        reason: String
-    ) async {
-        guard navigationRequest == request,
-              currentConversationBottomAnchorID == anchorID else { return }
-        ChatBottomTrace.log(
-            "EDGE_NAVIGATION_DROP reason=\(reason) " + chatBottomTraceState
-        )
-        lastKnownNearBottom = false
-        lastMeasuredNearBottom = false
-        lastMeasuredAtBottom = false
-        isUserScrollActive = true
-        autoFollowEngaged = false
-        // A failed smooth command can outlive its nominal duration by a few
-        // display turns. Observe only; do not issue another physical scroll
-        // write. If a real touch begins, the user owns the viewport. Otherwise
-        // keep the animation's settled viewport instead of forcing a top seed.
-        for _ in 0..<12 {
-            guard !Task.isCancelled,
-                  navigationRequest == request,
-                  currentConversationBottomAnchorID == anchorID,
-                  let scrollView = chatScrollViewBox.scrollView,
-                  scrollView.window != nil else { return }
-            guard !nativeScrollHasActiveTouch(scrollView),
-                  !scrollView.isTracking,
-                  !scrollView.isDragging,
-                  !scrollView.isDecelerating else { return }
-            if !isNativeScrollAnimating(scrollView) {
-                break
-            }
-            await awaitNextMainQueueTurn()
-            try? await Task.sleep(for: .milliseconds(16))
-        }
-        guard !Task.isCancelled,
-              navigationRequest == request,
-              currentConversationBottomAnchorID == anchorID,
-              let scrollView = chatScrollViewBox.scrollView,
-              scrollView.window != nil,
-              !nativeScrollHasActiveTouch(scrollView),
-              !scrollView.isTracking,
-              !scrollView.isDragging,
-              !scrollView.isDecelerating else { return }
-        if preserveViewportOnFailure {
-            ChatBottomTrace.log(
-                "EDGE_NAVIGATION_PRESERVE_VIEWPORT reason=\(reason) "
-                    + chatBottomTraceState
-            )
-            return
-        }
-        // Top navigation's established failure fallback is already the user's
-        // requested edge. Preserve it; only failed bottom navigation must not
-        // convert into a new top command.
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        traceScrollCommand(
-            source: "navigation.edgeFailClosed",
-            target: "topSeed",
-            animation: "disabled"
-        )
-        withTransaction(transaction) {
-            scrollProxy.scrollTo(
-                ConversationTopMaterializationSeedID(anchorID: anchorID),
-                anchor: .top
-            )
-        }
-    }
-
-    private func awaitEdgeNavigationPhysicalIdle(
-        _ request: MessageNavigationRequest,
-        anchorID: ConversationBottomAnchorID
-    ) async -> Bool {
-        // SwiftUI's nominal spring duration can end before the underlying
-        // UIScrollView reports its real idle phase while LazyVStack finishes
-        // measuring. Observe that existing motion only; do not submit another
-        // target or change the accepted animation curve.
-        for _ in 0..<12 {
-            guard !Task.isCancelled,
-                  navigationRequest == request,
-                  currentConversationBottomAnchorID == anchorID,
-                  let scrollView = chatScrollViewBox.scrollView,
-                  scrollView.window != nil,
-                  !nativeScrollHasActiveTouch(scrollView),
-                  !scrollView.isTracking,
-                  !scrollView.isDragging,
-                  !scrollView.isDecelerating else { return false }
-            if !isNativeScrollAnimating(scrollView) {
-                return true
-            }
-            await awaitNextMainQueueTurn()
-            try? await Task.sleep(for: .milliseconds(16))
-        }
-        guard !Task.isCancelled,
-              navigationRequest == request,
-              currentConversationBottomAnchorID == anchorID,
-              let scrollView = chatScrollViewBox.scrollView,
-              scrollView.window != nil,
-              !nativeScrollHasActiveTouch(scrollView),
-              !scrollView.isTracking,
-              !scrollView.isDragging,
-              !scrollView.isDecelerating else { return false }
-        return !isNativeScrollAnimating(scrollView)
-    }
-
-    private func handleMessageWindowEdge(
-        _ frame: CGRect,
-        direction: MessageWindowLoadDirection,
-        using scrollProxy: ScrollViewProxy
-    ) {
-        // A newly bounded deletion or entry window can expose a paging sentinel.
-        // Keep it concrete until the reader actually scrolls toward that edge.
-        guard messageReplacementRequest == nil,
-              (messageReplacementConcreteWindowSessionID != currentChatViewportSessionID
-                && !model.usesConcreteConversationEntryWindow)
-                || hasConcreteNativeUserScrollOwnership
-                || isVerticalScrollGestureActive else { return }
-        guard frame != .zero,
-              scrollViewportHeight > 0,
+              scrollView.isScrollEnabled,
+              nativeViewportHeight.isFinite,
+              nativeViewportHeight > 0,
+              messageReplacementRequest == nil,
+              messageReplacementLandingTask == nil,
               !isPositioningCurrentConversation,
               !isUserMessageSendPositioning,
               !isMessageTargetNavigationOwned,
               !ownsCurrentDoubleEdgeNavigation,
-              automaticReasoningCollapseOwner == nil,
-              messageWindowLoadTask == nil else { return }
-
-        let shouldLoad: Bool
-        switch direction {
-        case .earlier:
-            shouldLoad = model.hasEarlierMessages
-                && frame.minY <= 96
-                && frame.maxY >= -160
-        case .later:
-            shouldLoad = model.hasLaterMessages
-                && frame.maxY >= scrollViewportHeight - 96
-                && frame.minY <= scrollViewportHeight + 160
-        }
-        guard shouldLoad else { return }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastMessageWindowLoadAt) >= 0.12 else { return }
-        scheduleMessageWindowLoad(direction: direction, using: scrollProxy)
-    }
-
-    private func scheduleMessageWindowLoad(
-        direction: MessageWindowLoadDirection,
-        using scrollProxy: ScrollViewProxy
-    ) {
-        guard !isUserMessageSendPositioning,
-              !isMessageTargetNavigationOwned,
-              !ownsCurrentDoubleEdgeNavigation,
-              messageReplacementRequest == nil,
-              messageReplacementLandingTask == nil,
-              automaticReasoningCollapseOwner == nil else { return }
-        let positionRequest = currentConversationPositionRequest
-        let anchorID: UUID?
-        let anchor: UnitPoint
-        switch direction {
-        case .earlier:
-            anchorID = model.messages.first?.id
-            anchor = .top
-        case .later:
-            anchorID = model.messages.last?.id
-            anchor = .bottom
-        }
-
-        messageWindowLoadTask?.cancel()
-        messageWindowLoadTask = Task { @MainActor in
-            lastMessageWindowLoadAt = Date()
-            await Task.yield()
-            guard !Task.isCancelled,
-                  currentConversationPositionRequest == positionRequest,
-                  automaticReasoningCollapseOwner == nil,
-                  !isUserMessageSendPositioning,
-                  !isMessageTargetNavigationOwned,
-                  messageReplacementLandingTask == nil,
-                  !ownsCurrentDoubleEdgeNavigation else {
-                messageWindowLoadTask = nil
-                return
-            }
-            bottomNavigationCompactWindowConversationID = nil
-            let loaded = switch direction {
-            case .earlier:
-                model.loadEarlierMessages()
-            case .later:
-                model.loadLaterMessages()
-            }
-            guard loaded else {
-                messageWindowLoadTask = nil
-                return
-            }
-            await Task.yield()
-            guard !Task.isCancelled,
-                  currentConversationPositionRequest == positionRequest,
-                  automaticReasoningCollapseOwner == nil,
-                  !isUserMessageSendPositioning,
-                  !isMessageTargetNavigationOwned,
-                  !ownsCurrentDoubleEdgeNavigation else {
-                messageWindowLoadTask = nil
-                return
-            }
-            if let anchorID {
-                let hostID = conversationMessageHostID(
-                    for: anchorID
-                )
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                traceScrollCommand(
-                    source: "messageWindow.\(String(describing: direction))",
-                    target: "messageHost:\(ChatBottomTrace.shortID(anchorID))",
-                    animation: "disabled"
-                )
-                withTransaction(transaction) {
-                    scrollProxy.scrollTo(hostID, anchor: anchor)
-                }
-            }
-            try? await Task.sleep(for: .milliseconds(140))
-            guard !Task.isCancelled,
-                  currentConversationPositionRequest == positionRequest,
-                  automaticReasoningCollapseOwner == nil,
-                  !isUserMessageSendPositioning,
-                  !isMessageTargetNavigationOwned else {
-                messageWindowLoadTask = nil
-                return
-            }
-            messageWindowLoadTask = nil
-        }
+              automaticReasoningCollapseOwner == nil else { return false }
+        // The collection admits paging only from actual drag/deceleration.
+        // Business owners above still fence changes to the model's 20/360 window.
+        return true
     }
 
     private func scrollToMessage(
         _ messageID: UUID,
-        using scrollProxy: ScrollViewProxy,
+        using scrollProxy: ChatTranscriptProxy,
         request: MessageNavigationRequest
     ) {
         guard let targetRequest = selectedMessageTargetNavigationRequest,
@@ -9434,12 +9022,6 @@ private struct ChatView: View {
         }
 
         let targetHostID = conversationMessageHostID(for: messageID)
-        let animation = navigationAnimation(
-            distance: messageFrames[messageID].map {
-                $0.minY - navigationGuideY
-            },
-            isEdge: false
-        )
         let ownsViewportTransition =
             regenerationViewportTransitionCoordinator.owns(
                 requestID: targetRequest.id
@@ -9487,28 +9069,17 @@ private struct ChatView: View {
                             ? "disabledBehindViewportCover"
                             : "disabledCoverUnavailable"
                 )
-                withTransaction(transaction) {
-                    scrollProxy.scrollTo(
-                        targetHostID,
-                        anchor: .top
-                    )
-                }
+                guard await scrollProxy.animate(
+                    targetHostID, anchor: .top, duration: 0, timing: .smooth
+                ) else { return }
                 await awaitNextMainQueueTurn()
             } else {
                 traceScrollCommand(
                     source: "navigation.messageTarget",
                     target: "messageHost:\(ChatBottomTrace.shortID(messageID))",
-                    animation: "smooth"
+                    animation: "system"
                 )
-                withAnimation(animation.animation) {
-                    scrollProxy.scrollTo(
-                        targetHostID,
-                        anchor: .top
-                    )
-                }
-                try? await Task.sleep(
-                    for: .seconds(animation.duration + 0.02)
-                )
+                guard await scrollProxy.navigate(targetHostID, anchor: .top) else { return }
             }
             guard !Task.isCancelled,
                   navigationRequest == request,
@@ -9549,7 +9120,6 @@ private struct ChatView: View {
                     // second preference change.
                     loadedEarlierWindow = model.loadEarlierMessages()
                     if loadedEarlierWindow {
-                        lastMessageWindowLoadAt = Date()
                         await Task.yield()
                         guard !Task.isCancelled,
                               navigationRequest == request,
@@ -9562,29 +9132,9 @@ private struct ChatView: View {
                               }) else {
                             return
                         }
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        traceScrollCommand(
-                            source: "favoriteTarget.earlierWindowHandoff",
-                            target: "messageHost:\(ChatBottomTrace.shortID(messageID))",
-                            animation: "disabledBehindViewportCover"
-                        )
-                        withTransaction(transaction) {
-                            scrollProxy.scrollTo(
-                                targetHostID,
-                                anchor: .top
-                            )
-                        }
-                        await awaitNextMainQueueTurn()
-                        try? await Task.sleep(for: .milliseconds(140))
-                        guard !Task.isCancelled,
-                              navigationRequest == request,
-                              currentConversationPositionRequest
-                                == request.positionRequest,
-                              model.pendingMessageTargetNavigationRequest
-                                == targetRequest else {
-                            return
-                        }
+                        guard await awaitNativeNavigationPublication(
+                            currentConversationBottomAnchorID, request: request
+                        ) else { return }
                     }
                 }
                 concreteFavoriteTargetMessageID = nil
@@ -9928,7 +9478,7 @@ private struct ChatView: View {
 
     private func scrollToAdjacentUserMessage(
         direction: Int,
-        using scrollProxy: ScrollViewProxy,
+        using scrollProxy: ChatTranscriptProxy,
         request: MessageNavigationRequest
     ) {
         let indexedUsers = model.messages.enumerated().compactMap { index, message in
@@ -9959,7 +9509,7 @@ private struct ChatView: View {
             : nil
         let visibleIndexes = messageFrames.compactMap { id, frame -> Int? in
             let isVisible = frame.maxY >= 0
-                && (scrollViewportHeight <= 0 || frame.minY <= scrollViewportHeight - 110)
+                && (nativeViewportHeight <= 0 || frame.minY <= nativeViewportHeight - 110)
             guard isVisible else { return nil }
             return model.messages.firstIndex { $0.id == id }
         }.sorted()
@@ -9980,10 +9530,6 @@ private struct ChatView: View {
             return
         }
 
-        let animation = navigationAnimation(
-            distance: messageFrames[target.1].map { $0.minY - navigationGuideY },
-            isEdge: false
-        )
         let hostAnchorID = currentConversationBottomAnchorID
         let hostHasLaterMessages = model.hasLaterMessages
         guard hostAnchorID.positionRequest == request.positionRequest else { return }
@@ -10006,12 +9552,15 @@ private struct ChatView: View {
             traceScrollCommand(
                 source: "navigation.adjacentUser",
                 target: "messageHost:\(ChatBottomTrace.shortID(target.1))",
-                animation: "smooth"
+                animation: "system"
             )
-            withAnimation(animation.animation) {
-                scrollProxy.scrollTo(targetHostID, anchor: navigationLandingAnchor)
+            guard await scrollProxy.navigate(targetHostID, anchor: navigationLandingAnchor) else {
+                if navigationRequest == request {
+                    navigationRequest = nil
+                    navigationScrollTask = nil
+                }
+                return
             }
-            try? await Task.sleep(for: .seconds(animation.duration + 0.02))
             guard !Task.isCancelled,
                   navigationRequest == request,
                   currentConversationPositionRequest == request.positionRequest else { return }
@@ -10047,12 +9596,10 @@ private struct ChatView: View {
             }
             userScrollIdleTask?.cancel()
             userScrollIdleTask = nil
-            streamFollowTask?.cancel()
-            streamFollowTask = nil
+            streamingTailRecoveryTask?.cancel()
+            streamingTailRecoveryTask = nil
             conversationReturnTask?.cancel()
             conversationReturnTask = nil
-            layoutFollowTask?.cancel()
-            layoutFollowTask = nil
             isUserScrollActive = true
             if !isNearBottom {
                 autoFollowEngaged = false
@@ -10140,11 +9687,13 @@ private struct ChatView: View {
 
     private func messageReplacementLandingWasInterrupted(
         _ scrollView: UIScrollView,
-        expectedScrollViewIdentity: ObjectIdentifier
+        expectedScrollViewIdentity: ObjectIdentifier,
+        allowsInitiatingControlTap: Bool = false
     ) -> Bool {
-        ObjectIdentifier(scrollView) != expectedScrollViewIdentity
-            || nativeScrollHasActiveTouch(scrollView)
-            || scrollView.isTracking
+        let admitsControlTap = allowsInitiatingControlTap && isUnarmedNativeControlTap(scrollView)
+        return ObjectIdentifier(scrollView) != expectedScrollViewIdentity
+            || (!admitsControlTap && nativeScrollHasActiveTouch(scrollView))
+            || (!admitsControlTap && scrollView.isTracking)
             || scrollView.isDragging
             || scrollView.isDecelerating
             || isNativeScrollAnimating(scrollView)
@@ -10155,15 +9704,8 @@ private struct ChatView: View {
     private func prepareForMessageReplacementLanding() {
         cancelAutomaticReasoningCollapseOwner(reason: "messageReplacement")
         invalidateVersionReplacement(reason: "messageReplacement")
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
-        messageWindowLoadTask?.cancel()
-        messageWindowLoadTask = nil
-        bottomRowMaterializationTask?.cancel()
-        bottomRowMaterializationTask = nil
-        pendingBottomRowMaterializationAnchorID = nil
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = nil
         autoFollowEngaged = false
     }
 
@@ -10265,7 +9807,10 @@ private struct ChatView: View {
             guard id != message.id,
                   let frame = validConcreteMessageFrame(id, anchorID: sourceAnchorID)
             else { return false }
-            return frame.maxY > 0 && frame.minY < max(0, scrollViewportHeight - composerBottomClearance)
+            // Native row frames are relative to the collection viewport. The
+            // outer SwiftUI height includes the header's safe-area bar and can
+            // incorrectly count a row covered by the composer as readable.
+            return frame.maxY > 0 && frame.minY < max(0, scrollView.bounds.height - composerBottomClearance)
         }
         let readingAnchorID = precedingUserID.flatMap {
             visibleIDs.contains($0) ? $0 : nil
@@ -10296,7 +9841,7 @@ private struct ChatView: View {
     private func commitMessageReplacementAfterRelease(
         _ requestID: UUID,
         sourceAnchorID: ConversationBottomAnchorID,
-        using scrollProxy: ScrollViewProxy
+        using scrollProxy: ChatTranscriptProxy
     ) {
         guard var request = messageReplacementRequest,
               request.id == requestID,
@@ -10309,6 +9854,15 @@ private struct ChatView: View {
               ) else {
             cancelMessageReplacementLanding()
             return
+        }
+        if let change = request.codeDisclosure {
+            let anchor: NativeChatRowResizeAnchor = request.keepsExactBottom
+                ? .transcriptBottom : change.edge == .header ? .top : .bottom
+            // Install the native sizing owner before observable disclosure
+            // state changes. Child layout can precede the outer view update.
+            guard nativeTranscriptDriver.beginRowResize(
+                requestID: request.id, rowID: request.message.id, anchor: anchor
+            ) else { cancelMessageReplacementLanding(); return }
         }
         // Mark committed before touching the model: a cancellation can discard
         // viewport work, but must never repeat or lose the explicit deletion.
@@ -10331,11 +9885,12 @@ private struct ChatView: View {
                 survivingIDs: currentConversationBottomAnchorID.messageIDs
                 )
             }
-            if let targetID = request.targetMessageID,
-               model.limitMessageWindowForConcreteLayout(around: targetID) {
-                messageReplacementConcreteWindowSessionID = currentChatViewportSessionID
-            }
+            messageReplacementLayoutSessionID = currentChatViewportSessionID
             request.landingAnchorID = currentConversationBottomAnchorID
+            // UIKit applies the replacement destination with the row update.
+            // Root only acknowledges measured completion; it never reveals the
+            // new row's top or performs a second offset correction.
+            request.didIssueLanding = request.replacementMessage != nil || request.codeDisclosure != nil
             messageReplacementRequest = request
         }
         guard request.targetMessageID != nil else {
@@ -10349,6 +9904,7 @@ private struct ChatView: View {
                 + " rows=\(currentConversationBottomAnchorID.messageIDs.count) "
                 + chatBottomTraceState
         )
+        guard request.replacementMessage == nil, request.codeDisclosure == nil else { return }
         // One initial opportunity after the view update. Subsequent progress is
         // driven by actual row/bottom geometry callbacks, never by a retry loop.
         messageReplacementLandingTask = Task { @MainActor in
@@ -10365,7 +9921,7 @@ private struct ChatView: View {
     ) -> String? {
         guard let anchorID = request.landingAnchorID,
               anchorID == currentConversationBottomAnchorID,
-              messageReplacementConcreteWindowSessionID == currentChatViewportSessionID else {
+              messageReplacementLayoutSessionID == currentChatViewportSessionID else {
             return "windowNotCurrent"
         }
         guard let targetID = request.targetMessageID,
@@ -10393,11 +9949,14 @@ private struct ChatView: View {
         guard !messageReplacementLandingWasInterrupted(
             scrollView, expectedScrollViewIdentity: request.scrollViewIdentity
         ) else { return "scrollInterrupted" }
-        // The content wrapper fills at least one viewport; its trailing
-        // underflow space sits after the intrinsic bottom sentinel.
+        guard let geometry = currentNativeLandingGeometry(anchorID: anchorID) else {
+            return "nativeLayoutPending"
+        }
+        // Use the layout's actual minimum, including its current safe-area
+        // insets, rather than calculating a second minimum in the outer view.
         let measuredContentEnd = max(
             bottom.frame.maxY + scrollView.contentOffset.y,
-            conversationContentMinimumHeight
+            geometry.minimumContentHeight
         )
         guard measuredContentEnd.isFinite, scrollView.contentSize.height.isFinite,
               scrollView.bounds.height > 0 else { return "geometryInvalid" }
@@ -10423,12 +9982,73 @@ private struct ChatView: View {
             return frame.minY + sourceEdgeY - change.edge.position(in: codeFrame)
         }
         return request.readingAnchorMaxY.map {
-            min($0, max(1, scrollViewportHeight - composerBottomClearance)) - frame.height
+            min($0, max(1, nativeViewportHeight - composerBottomClearance)) - frame.height
         }
     }
 
-    private func advanceMessageReplacementIfReady(using scrollProxy: ScrollViewProxy) {
-        guard let request = messageReplacementRequest,
+    private func revealMessageReplacementTargetIfNeeded(
+        _ request: MessageReplacementViewportRequest,
+        using scrollProxy: ChatTranscriptProxy
+    ) {
+        guard messageReplacementLandingTask == nil,
+              messageReplacementRequest?.id == request.id,
+              !request.didRequestTargetReveal,
+              request.didCommit, !request.didIssueLanding,
+              let anchorID = request.landingAnchorID,
+              anchorID == currentConversationBottomAnchorID,
+              messageReplacementLayoutSessionID == currentChatViewportSessionID,
+              let targetID = request.targetMessageID,
+              anchorID.messageIDs.contains(targetID),
+              let geometry = nativeTranscriptDriver.latestGeometry,
+              geometry.publicationID == AnyHashable(NativeChatPublicationID(
+                anchorID: anchorID,
+                layoutRequestID: activeCodeLayoutRequestID
+              )),
+              geometry.containerSize.width > 0,
+              geometry.containerSize.height > 0,
+              let scrollView = chatScrollViewBox.scrollView,
+              scrollView === nativeTranscriptDriver.scrollView,
+              scrollView.window != nil,
+              !hasConcreteNativeUserScrollOwnership,
+              !model.isDrawerPresented,
+              !messageReplacementLandingWasInterrupted(
+                scrollView, expectedScrollViewIdentity: request.scrollViewIdentity
+              ) else { return }
+        // Set before dispatching: synchronous geometry and the later preference
+        // ACK must not turn this one reveal into a retrying position writer.
+        messageReplacementRequest?.didRequestTargetReveal = true
+        messageReplacementLandingTask = Task { @MainActor in
+            let completed = await scrollProxy.animate(
+                conversationMessageHostID(for: targetID), anchor: .top,
+                duration: 0, timing: .smooth
+            )
+            guard !Task.isCancelled,
+                  messageReplacementRequest?.id == request.id else { return }
+            guard completed,
+                  currentConversationBottomAnchorID == anchorID,
+                  messageReplacementLayoutSessionID == currentChatViewportSessionID,
+                  chatScrollViewBox.scrollView === scrollView,
+                  scrollView === nativeTranscriptDriver.scrollView,
+                  !hasConcreteNativeUserScrollOwnership,
+                  !model.isDrawerPresented,
+                  !messageReplacementLandingWasInterrupted(
+                    scrollView, expectedScrollViewIdentity: request.scrollViewIdentity
+                  ) else {
+                cancelMessageReplacementLanding()
+                return
+            }
+            messageReplacementLandingTask = nil
+            // Completion proves the actual native target was measured. Root's
+            // exact current preference may arrive later; keep that existing
+            // layout guard and let its event finish the correction once ready.
+            advanceMessageReplacementIfReady(using: scrollProxy)
+            finishMessageReplacementIfReady()
+        }
+    }
+
+    private func advanceMessageReplacementIfReady(using scrollProxy: ChatTranscriptProxy) {
+        guard messageReplacementLandingTask == nil,
+              let request = messageReplacementRequest,
               request.didCommit, !request.didIssueLanding,
               let anchorID = request.landingAnchorID,
               let targetID = request.targetMessageID else { return }
@@ -10440,6 +10060,9 @@ private struct ChatView: View {
                         + " reason=\(reason) " + chatBottomTraceState
                 )
             }
+            if reason == "targetFrameMissing" {
+                revealMessageReplacementTargetIfNeeded(request, using: scrollProxy)
+            }
             return
         }
         messageReplacementRequest?.didIssueLanding = true
@@ -10448,6 +10071,7 @@ private struct ChatView: View {
             "MESSAGE_REPLACEMENT_LAYOUT_READY request=\(ChatBottomTrace.shortID(request.id)) "
                 + chatBottomTraceState
         )
+        var needsNativeLanding = false
         let desiredMinY = messageReplacementDesiredMinY(request)
         if let desiredMinY,
            applyMessageReplacementLandingCorrection(targetMessageID: targetID, desiredMinY: desiredMinY,
@@ -10462,19 +10086,28 @@ private struct ChatView: View {
                expectedScrollViewIdentity: request.scrollViewIdentity
            ) {
             // Keep the reader's visible row in the same screen position.
-        } else {
+        } else if !request.didRequestTargetReveal {
             traceScrollCommand(
                 source: "messageReplacement.realRow",
                 target: "messageHost:\(ChatBottomTrace.shortID(targetID))",
                 animation: "disabled"
             )
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                scrollProxy.scrollTo(conversationMessageHostID(for: targetID), anchor: .top)
-            }
+            needsNativeLanding = true
         }
+        let requiresNativeCommand = needsNativeLanding
         messageReplacementLandingTask = Task { @MainActor in
+            if requiresNativeCommand {
+                let completed = await scrollProxy.animate(
+                    conversationMessageHostID(for: targetID), anchor: .top,
+                    duration: 0, timing: .smooth
+                )
+                guard completed else {
+                    if messageReplacementRequest?.id == request.id {
+                        cancelMessageReplacementLanding()
+                    }
+                    return
+                }
+            }
             await awaitNextMainQueueTurn()
             guard !Task.isCancelled,
                   messageReplacementRequest?.id == request.id else { return }
@@ -10491,8 +10124,8 @@ private struct ChatView: View {
               anchorID == currentConversationBottomAnchorID,
               let targetID = request.targetMessageID,
               let frame = validConcreteMessageFrame(targetID, anchorID: anchorID),
-              frame.maxY > 0, frame.minY < max(0, scrollViewportHeight - composerBottomClearance),
               let scrollView = chatScrollViewBox.scrollView,
+              frame.maxY > 0, frame.minY < max(0, scrollView.bounds.height - composerBottomClearance),
               !messageReplacementLandingWasInterrupted(
                   scrollView, expectedScrollViewIdentity: request.scrollViewIdentity
               ) else { return }
@@ -10506,6 +10139,7 @@ private struct ChatView: View {
         }
         MessageTextViewportDrawing.refreshAfterLayout(in: scrollView)
         request.codeDisclosure?.state.finish(request.id, didLand: true)
+        nativeTranscriptDriver.endRowResize(request.id)
         messageReplacementRequest = nil
         messageReplacementLandingTask?.cancel()
         messageReplacementLandingTask = nil
@@ -10529,6 +10163,7 @@ private struct ChatView: View {
         messageReplacementLandingTask?.cancel()
         messageReplacementLandingTask = nil
         if let pending {
+            nativeTranscriptDriver.endRowResize(pending.id)
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
@@ -10658,7 +10293,7 @@ private struct ChatView: View {
                 anchorID: currentConversationBottomAnchorID
               ),
               userFrame.maxY > 0,
-              userFrame.minY < scrollViewportHeight,
+              userFrame.minY < nativeViewportHeight,
               let scrollView = chatScrollViewBox.scrollView,
               scrollView.window != nil,
               !nativeScrollHasActiveTouch(scrollView),
@@ -10705,9 +10340,9 @@ private struct ChatView: View {
               frame.height.isFinite,
               frame.width > 0,
               frame.height > 0,
-              scrollViewportHeight > 0,
+              nativeViewportHeight > 0,
               frame.maxY > 0,
-              frame.minY < scrollViewportHeight else { return false }
+              frame.minY < nativeViewportHeight else { return false }
         return true
     }
 
@@ -10784,29 +10419,8 @@ private struct ChatView: View {
               anchorID.messageIDs.count >= 2,
               Array(anchorID.messageIDs.suffix(2))
                 == [handoff.userMessageID, handoff.assistantMessageID],
-              messageFramesAnchorID == anchorID,
-              let assistantFrame = messageFrames[handoff.assistantMessageID],
-              assistantFrame.minY.isFinite,
-              assistantFrame.maxY.isFinite,
-              assistantFrame.width > 0,
-              assistantFrame.height > 0,
-              scrollViewportHeight > 0,
-              assistantFrame.maxY > 0,
-              assistantFrame.minY < scrollViewportHeight,
-              assistantFrame.maxY <= scrollViewportHeight + 2,
-              isCurrentNavigationSentinelExact(
-                anchorID.positionRequest,
-                anchorID: anchorID
-              ),
-              currentUIKitBottomState?.isAtBottom == true,
-              let scrollView = chatScrollViewBox.scrollView,
-              scrollView.window != nil,
-              !nativeScrollHasActiveTouch(scrollView),
-              !scrollView.isTracking,
-              !scrollView.isDragging,
-              !scrollView.isDecelerating,
-              !isNativeScrollAnimating(scrollView) else { return false }
-        return true
+              let geometry = currentNativeLandingGeometry(anchorID: anchorID) else { return false }
+        return hasNativeConcreteBottomLanding(geometry, tailMessageID: handoff.assistantMessageID)
     }
 
     @discardableResult
@@ -10823,10 +10437,8 @@ private struct ChatView: View {
         invalidateKeyboardDismissalTransition()
         userScrollIdleTask?.cancel()
         userScrollIdleTask = nil
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = nil
         isUserScrollActive = false
         lastKnownNearBottom = true
         lastMeasuredNearBottom = true
@@ -10850,43 +10462,18 @@ private struct ChatView: View {
 
     private func animateInitialSendPlacement(
         to userHostID: ConversationMessageHostID,
-        using scrollProxy: ScrollViewProxy
-    ) async {
-        await withCheckedContinuation {
-            (continuation: CheckedContinuation<Void, Never>) in
-            withAnimation(
-                .easeOut(duration: 0.32),
-                completionCriteria: .logicallyComplete
-            ) {
-                scrollProxy.scrollTo(
-                    userHostID,
-                    anchor: UnitPoint(x: 0.5, y: 0.68)
-                )
-            } completion: {
-                continuation.resume()
-            }
-        }
+        using scrollProxy: ChatTranscriptProxy
+    ) async -> Bool {
+        await scrollProxy.animate(userHostID, anchor: UnitPoint(x: 0.5, y: 0.68),
+                                  duration: 0.32, timing: .easeOut)
     }
 
     private func animateOffBottomSendPlacement<Target: Hashable>(
         to targetID: Target,
-        using scrollProxy: ScrollViewProxy,
+        using scrollProxy: ChatTranscriptProxy,
         anchor: UnitPoint = UnitPoint(x: 0.5, y: 0.68)
-    ) async {
-        await withCheckedContinuation {
-            (continuation: CheckedContinuation<Void, Never>) in
-            withAnimation(
-                .easeOut(duration: 0.32),
-                completionCriteria: .removed
-            ) {
-                scrollProxy.scrollTo(
-                    targetID,
-                    anchor: anchor
-                )
-            } completion: {
-                continuation.resume()
-            }
-        }
+    ) async -> Bool {
+        await scrollProxy.navigate(targetID, anchor: anchor)
     }
 
     private func awaitConcreteOffBottomUserLanding(
@@ -10994,8 +10581,8 @@ private struct ChatView: View {
             // The ordinary 4742 path explicitly released ScrollPosition before
             // proxy placement. Do not consume the native re-arm generation
             // here: the ensuing shouldPin transition must rebuild `.bottom`
-            // semantics for streaming growth. The keyboard-unified path never
-            // releases that position and retains its separate skip token.
+            // semantics for streaming growth. The keyboard-unified path uses
+            // its separate token to re-arm the native edge without scrolling.
             autoFollowEngaged = model.preferences.autoScrollEnabled
             keyboardBottomFollowIntent = model.isComposerFocused
         } else {
@@ -11021,23 +10608,25 @@ private struct ChatView: View {
               !model.hasLaterMessages,
               currentConversationBottomAnchorID == anchorID,
               anchorID.messageIDs.last == tailMessageID,
-              hasVisibleConcreteTailBottomEdge(
-                tailMessageID,
-                anchorID: anchorID
-              ),
-              isCurrentNavigationSentinelExact(
-                anchorID.positionRequest,
-                anchorID: anchorID
-              ),
-              currentUIKitBottomState?.isAtBottom == true,
-              let scrollView = chatScrollViewBox.scrollView,
-              scrollView.window != nil,
-              !nativeScrollHasActiveTouch(scrollView),
-              !scrollView.isTracking,
-              !scrollView.isDragging,
-              !scrollView.isDecelerating,
-              !isNativeScrollAnimating(scrollView) else { return false }
-        return true
+              let geometry = currentNativeLandingGeometry(anchorID: anchorID) else { return false }
+        if let gate = model.sendPresentationGate,
+           gate.requestID == request.id,
+           tailMessageID == gate.userMessageID {
+            // The hidden reply is a real reserved row. Before releasing it,
+            // require its current measurement, not an estimated content end.
+            guard let user = geometry.frames[tailMessageID],
+                  let reservation = geometry.frames[gate.assistantMessageID],
+                  reservation.minY.isFinite, reservation.maxY.isFinite,
+                  reservation.width.isFinite, reservation.height.isFinite,
+                  reservation.width > 0, reservation.height > 0,
+                  reservation.minY >= user.maxY,
+                  abs(reservation.maxY - geometry.bottomSpacerFrame.minY) <= 2 else { return false }
+        }
+        // The collection's legal min-height is part of its real content size.
+        // Its intrinsic spacer need not touch the viewport in a short chat.
+        // Keep the same concrete row, idle and exact-offset requirements used
+        // by native bottom navigation instead of the retired SwiftUI sentinel.
+        return hasNativeConcreteBottomLanding(geometry, tailMessageID: tailMessageID)
     }
 
     private func awaitConcreteSendBottomLanding(
@@ -11102,7 +10691,7 @@ private struct ChatView: View {
               let snapshot = latestConversationBottomAnchorFrame,
               snapshot.anchorID == anchorID,
               snapshot.frame.maxY > 0,
-              snapshot.frame.minY < scrollViewportHeight else { return false }
+              snapshot.frame.minY < nativeViewportHeight else { return false }
         return hasShortContentTopSendHandoff(
             liveBottomState: liveBottomState,
             hasUserDrivenMotion: hasUserDrivenMotion
@@ -11149,7 +10738,7 @@ private struct ChatView: View {
 
     private func scheduleUserMessageSendPositioning(
         _ request: UserMessageSendPositionRequest,
-        using scrollProxy: ScrollViewProxy
+        using scrollProxy: ChatTranscriptProxy
     ) {
         cancelCodeDisclosure(reason: "sendPositioning")
         cancelAutomaticReasoningCollapseOwner(reason: "sendPositioning")
@@ -11203,15 +10792,8 @@ private struct ChatView: View {
         navigationRequest = nil
         cancelPendingMessageNavigation()
         navigationAnchorMessageID = nil
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
-        bottomRowMaterializationTask?.cancel()
-        bottomRowMaterializationTask = nil
-        pendingBottomRowMaterializationAnchorID = nil
-        messageWindowLoadTask?.cancel()
-        messageWindowLoadTask = nil
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = nil
         if isPositioningCurrentConversation {
             cancelConversationReturnPositioning()
         }
@@ -11251,6 +10833,15 @@ private struct ChatView: View {
             return
         }
 
+        if nativeTranscriptDriver.externalViewportMotion {
+            ChatBottomTrace.log(
+                "SEND_LIFECYCLE_WAIT phase=keyboardViewportMotion"
+                    + " request=\(ChatBottomTrace.shortID(request.id)) "
+                    + chatBottomTraceState
+            )
+            return
+        }
+
         // Only the ordinary keyboard-cleared fallback takes new proxy
         // ownership. The keyboard-unified waits above deliberately keep their
         // established dismissal trajectory intact. Before publishing this
@@ -11268,15 +10859,8 @@ private struct ChatView: View {
         keyboardViewportPinTask = nil
         userScrollIdleTask?.cancel()
         userScrollIdleTask = nil
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
-        bottomRowMaterializationTask?.cancel()
-        bottomRowMaterializationTask = nil
-        pendingBottomRowMaterializationAnchorID = nil
-        messageWindowLoadTask?.cancel()
-        messageWindowLoadTask = nil
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = nil
         if isPositioningCurrentConversation {
             cancelConversationReturnPositioning()
         }
@@ -11301,7 +10885,7 @@ private struct ChatView: View {
         // completion. Near-bottom and keyboard-unified sends retain 4744's
         // accepted timing. Waiting for the exact user-row animation to leave
         // the transaction prevents a logical completion from racing the
-        // LazyVStack frame acknowledgement.
+        // current native row-frame acknowledgement.
         let shouldAwaitOffBottomSendPhysicalCompletion =
             stagedAssistantMessageID != nil
             && !isSendPresentationUserFrameReady(request)
@@ -11350,17 +10934,10 @@ private struct ChatView: View {
         invalidateKeyboardDismissalTransition()
         userScrollIdleTask?.cancel()
         userScrollIdleTask = nil
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = nil
         keyboardViewportPinTask?.cancel()
         keyboardViewportPinTask = nil
-        bottomRowMaterializationTask?.cancel()
-        bottomRowMaterializationTask = nil
-        pendingBottomRowMaterializationAnchorID = nil
-        messageWindowLoadTask?.cancel()
-        messageWindowLoadTask = nil
         navigationScrollTask?.cancel()
         navigationScrollTask = nil
         navigationRequest = nil
@@ -11400,6 +10977,16 @@ private struct ChatView: View {
                 && model.sendPresentationGate?.requestID == request.id
             let usesKeyboardUnifiedTrajectory = unifiedHandoff != nil
                 && keyboardUnifiedSendHandoff == unifiedHandoff
+            // A visible, current user row has already been materialized. Its
+            // send destination is the reserved reply's bottom, not a point
+            // inside the user row followed by a second bottom animation.
+            // The native bottom command measures its real tail before ACK;
+            // the concrete user + reservation landing is checked below too.
+            let visibleStagedAnchorID: ConversationBottomAnchorID? =
+                ownsStagedPresentation
+                    && !model.hasLaterMessages
+                    && isSendPresentationUserFrameReady(request)
+                    ? currentConversationBottomAnchorID : nil
             let measuredStagedAnchorID: ConversationBottomAnchorID? = {
                 let anchorID = currentConversationBottomAnchorID
                 // The staged assistant already reserves a real row. When the
@@ -11428,22 +11015,23 @@ private struct ChatView: View {
                       sentinel.anchorID == anchorID,
                       sentinel.frame.minY.isFinite,
                       sentinel.frame.maxY.isFinite,
-                      scrollViewportHeight.isFinite,
-                      scrollViewportHeight > 0,
+                      nativeViewportHeight.isFinite,
+                      nativeViewportHeight > 0,
                       let bottomState = currentUIKitBottomState,
                       abs(sentinel.frame.minY - reservation.maxY) <= 2,
                       abs(sentinel.frame.height - composerBottomClearance) <= 2,
                       abs(
-                        sentinel.frame.maxY - scrollViewportHeight
+                        sentinel.frame.maxY - nativeViewportHeight
                             - (bottomState.bottomOffsetY - bottomState.contentOffsetY)
                       ) <= 2,
                       hasValidConcreteMessageFrames(for: anchorID)
                       else { return nil }
                 return anchorID
             }()
+            let stagedBottomAnchorID = visibleStagedAnchorID ?? measuredStagedAnchorID
             let usesOffBottomPhysicalCompletion = ownsStagedPresentation
                 && (shouldAwaitOffBottomSendPhysicalCompletion
-                    || measuredStagedAnchorID != nil)
+                    || stagedBottomAnchorID != nil)
             if usesKeyboardUnifiedTrajectory {
                 ChatBottomTrace.log(
                     "SEND_INITIAL_PLACEMENT_SKIP reason=keyboardUnifiedTrajectory"
@@ -11452,44 +11040,54 @@ private struct ChatView: View {
                         + chatBottomTraceState
                 )
             } else {
-                // A fully measured staged window needs one destination. An
-                // unmeasured lazy window still reveals its real user row first.
+                // Already materialized sends keep one destination through
+                // their existing ease-out. Detached, unmeasured sends retain
+                // the system scroll that materializes their user row.
                 traceScrollCommand(
-                    source: measuredStagedAnchorID != nil
+                    source: visibleStagedAnchorID != nil
+                        ? "sendPosition.visibleStagedBottom"
+                        : measuredStagedAnchorID != nil
                         ? "sendPosition.stagedBottom"
                         : "sendPosition.userMessage",
-                    target: measuredStagedAnchorID != nil
+                    target: stagedBottomAnchorID != nil
                         ? "stagedBottomSentinel"
                         : "messageHost:\(ChatBottomTrace.shortID(request.messageID))",
-                    animation: usesOffBottomPhysicalCompletion
-                        ? "easeOut.removed"
+                    animation: usesOffBottomPhysicalCompletion && visibleStagedAnchorID == nil
+                        ? "system"
                         : "easeOut"
                 )
-                if let measuredStagedAnchorID {
-                    await animateOffBottomSendPlacement(
+                let placementCompleted: Bool
+                if let visibleStagedAnchorID {
+                    placementCompleted = await scrollProxy.animate(
+                        visibleStagedAnchorID, anchor: .bottom,
+                        duration: 0.32, timing: .easeOut
+                    )
+                } else if let measuredStagedAnchorID {
+                    placementCompleted = await animateOffBottomSendPlacement(
                         to: measuredStagedAnchorID,
                         using: scrollProxy,
                         anchor: .bottom
                     )
                 } else if ownsStagedPresentation {
                     if usesOffBottomPhysicalCompletion {
-                        await animateOffBottomSendPlacement(
+                        placementCompleted = await animateOffBottomSendPlacement(
                             to: userHostID,
                             using: scrollProxy
                         )
                     } else {
-                        await animateInitialSendPlacement(
+                        placementCompleted = await animateInitialSendPlacement(
                             to: userHostID,
                             using: scrollProxy
                         )
                     }
                 } else {
-                    withAnimation(.easeOut(duration: 0.32)) {
-                        scrollProxy.scrollTo(
-                            userHostID,
-                            anchor: UnitPoint(x: 0.5, y: 0.68)
-                        )
-                    }
+                    placementCompleted = await animateInitialSendPlacement(
+                        to: userHostID, using: scrollProxy
+                    )
+                }
+                guard placementCompleted else {
+                    abandonUserMessageSendPositioningTask(request, taskID: taskID)
+                    return
                 }
             }
             guard !Task.isCancelled,
@@ -11558,9 +11156,8 @@ private struct ChatView: View {
                             + chatBottomTraceState
                     )
                     // Failure never submits a second physical target. In
-                    // particular, the detached reader is not sent to the
-                    // revision's transparent top seed merely because a lazy
-                    // frame acknowledgement missed this bounded handoff.
+                    // particular, a missing measured row does not authorize
+                    // moving the detached reader to a different destination.
                     abandonUserMessageSendPositioningTask(
                         request,
                         taskID: taskID
@@ -11575,12 +11172,9 @@ private struct ChatView: View {
                             + chatBottomTraceState
                     )
                 }
-                // The canonical assistant row may already contain streamed
-                // text. Give the new row revision two queued turns before this
-                // same send owner asks for its concrete tail. This is bounded
-                // observation only; it never submits a retrying scroll writer.
-                await awaitNextMainQueueTurn()
-                await awaitNextMainQueueTurn()
+                // Releasing the gate synchronously exposes the canonical
+                // assistant row. Await its actual native publication below;
+                // a fixed number of queued turns is not a layout receipt.
             }
 
             guard !Task.isCancelled,
@@ -11640,89 +11234,25 @@ private struct ChatView: View {
                 )
                 return
             }
-            let hasMeasuredTailDestination = ownsStagedPresentation && {
-                let anchorID = landingAnchorID
-                // A bounded, fully measured window can address its final destination
-                // even while the assistant is below the viewport. Keep an unmeasured
-                // lazy tail on the existing real-row materialization path.
-                guard !model.hasLaterMessages,
-                      anchorID.messageIDs.count <= 24,
-                      anchorID.messageIDs.last == tailMessageID,
-                      messageFramesAnchorID == anchorID,
-                      let tailFrame = validConcreteMessageFrame(
-                        tailMessageID,
-                        anchorID: anchorID
-                      ),
-                      let sentinel = latestConversationBottomAnchorFrame,
-                      sentinel.anchorID == anchorID,
-                      sentinel.frame.minY.isFinite,
-                      sentinel.frame.maxY.isFinite,
-                      scrollViewportHeight.isFinite,
-                      scrollViewportHeight > 0,
-                      let bottomState = currentUIKitBottomState,
-                      abs(sentinel.frame.minY - tailFrame.maxY) <= 2,
-                      abs(sentinel.frame.height - composerBottomClearance) <= 2,
-                      abs(
-                        sentinel.frame.maxY - scrollViewportHeight
-                            - (bottomState.bottomOffsetY - bottomState.contentOffsetY)
-                      ) <= 2 else { return false }
-                return hasValidConcreteMessageFrames(for: anchorID)
-            }()
-            if hasMeasuredTailDestination {
-                ChatBottomTrace.log(
-                    "SEND_TAIL_DESTINATION source=measuredWindow"
-                        + " tail=\(ChatBottomTrace.shortID(tailMessageID)) "
-                        + chatBottomTraceState
-                )
-            }
-            if !hasMeasuredTailDestination,
-               !hasVisibleConcreteMessageFrame(
-                tailMessageID,
-                anchorID: landingAnchorID
-            ) {
-                guard !hasConcreteNativeUserScrollOwnership else {
-                    abandonUserMessageSendPositioningTask(
-                        request,
-                        taskID: taskID
-                    )
-                    return
-                }
-                // Exactly one real-tail wake-up is allowed. A failed row ACK
-                // ends detached; it never falls through to the cheap sentinel.
-                traceScrollCommand(
-                    source: "sendPosition.materialize",
-                    target: "messageHost:\(ChatBottomTrace.shortID(tailMessageID))",
-                    animation: "easeOut"
-                )
-                withAnimation(.easeOut(duration: 0.16)) {
-                    scrollProxy.scrollTo(
-                        conversationMessageHostID(for: tailMessageID),
-                        anchor: .bottom
-                    )
-                }
-                try? await Task.sleep(for: .milliseconds(190))
-            }
-            guard !Task.isCancelled,
-                  isCurrentUserMessageSendPositionRequest(request, taskID: taskID),
-                  currentConversationBottomAnchorID == landingAnchorID,
-                  (hasMeasuredTailDestination || hasVisibleConcreteMessageFrame(
-                    tailMessageID,
-                    anchorID: landingAnchorID
-                  )) else {
-                finishUserMessageSendPositioning(
-                    request,
-                    taskID: taskID,
-                    reachedExactBottom: false,
-                    landingAnchorID: landingAnchorID,
-                    tailMessageID: tailMessageID
-                )
+            guard !hasConcreteNativeUserScrollOwnership else {
+                abandonUserMessageSendPositioningTask(request, taskID: taskID)
                 return
             }
-            guard !hasConcreteNativeUserScrollOwnership else {
-                abandonUserMessageSendPositioningTask(
-                    request,
-                    taskID: taskID
-                )
+            let publication = NativeChatPublicationID(
+                anchorID: landingAnchorID,
+                layoutRequestID: activeCodeLayoutRequestID
+            )
+            guard await awaitNativeTranscriptPublication(publication, isCurrent: {
+                isCurrentUserMessageSendPositionRequest(request, taskID: taskID)
+                    && currentConversationBottomAnchorID == landingAnchorID
+                    && activeCodeLayoutRequestID == publication.layoutRequestID
+                    && !hasConcreteNativeUserScrollOwnership
+            }), !Task.isCancelled,
+                isCurrentUserMessageSendPositionRequest(request, taskID: taskID),
+                currentConversationBottomAnchorID == landingAnchorID,
+                activeCodeLayoutRequestID == publication.layoutRequestID,
+                !hasConcreteNativeUserScrollOwnership else {
+                abandonUserMessageSendPositioningTask(request, taskID: taskID)
                 return
             }
             let duration: TimeInterval = 0.30
@@ -11731,10 +11261,11 @@ private struct ChatView: View {
                 target: "bottomSentinel",
                 animation: "easeOut"
             )
-            withAnimation(.easeOut(duration: duration)) {
-                scrollProxy.scrollTo(landingAnchorID, anchor: .bottom)
+            guard await scrollProxy.animate(landingAnchorID, anchor: .bottom,
+                                            duration: duration, timing: .easeOut) else {
+                abandonUserMessageSendPositioningTask(request, taskID: taskID)
+                return
             }
-            try? await Task.sleep(for: .seconds(duration + 0.05))
             let reachedExactBottom = await awaitConcreteSendBottomLanding(
                 request,
                 taskID: taskID,
@@ -11751,7 +11282,7 @@ private struct ChatView: View {
         }
     }
 
-    private func scheduleStreamingFollow(using scrollProxy: ScrollViewProxy) {
+    private func scheduleStreamingFollow() {
         let bottomAnchorID = currentConversationBottomAnchorID
         guard model.preferences.autoScrollEnabled,
               !isFreshConversationFollowSuppressed,
@@ -11760,50 +11291,20 @@ private struct ChatView: View {
               !ownsCurrentDoubleEdgeNavigation,
               automaticReasoningCollapseOwner == nil,
               !isCodeDisclosureInProgress,
-              pendingBottomRowMaterializationAnchorID == nil,
               !model.hasLaterMessages,
               nativeConversationContentReadyAnchorID == bottomAnchorID,
               hasConcreteTailFrame(for: bottomAnchorID),
               autoFollowEngaged,
               !hasConcreteNativeUserScrollOwnership,
               !isUserScrollActive else { return }
-        ChatBottomTrace.log("STREAM_FOLLOW_SCHEDULE " + chatBottomTraceState)
-        streamFollowTask?.cancel()
-        streamFollowTask = Task { @MainActor in
-            await Task.yield()
-            guard !Task.isCancelled,
-                  currentConversationBottomAnchorID == bottomAnchorID,
-                  model.preferences.autoScrollEnabled,
-                  !isUserMessageSendPositioning,
-                  !isMessageTargetNavigationOwned,
-                  !ownsCurrentDoubleEdgeNavigation,
-                  automaticReasoningCollapseOwner == nil,
-                  !isCodeDisclosureInProgress,
-                  pendingBottomRowMaterializationAnchorID == nil,
-                  !model.hasLaterMessages,
-                  nativeConversationContentReadyAnchorID == bottomAnchorID,
-                  hasConcreteTailFrame(for: bottomAnchorID),
-                  autoFollowEngaged,
-                  !hasConcreteNativeUserScrollOwnership,
-                  !isUserScrollActive else { return }
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            traceScrollCommand(
-                source: "streamFollow",
-                target: "bottomSentinel",
-                animation: "disabled"
-            )
-            withTransaction(transaction) {
-                scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
-            }
-            ChatBottomTrace.log("STREAM_FOLLOW_COMPLETE " + chatBottomTraceState)
-        }
+        guard !nativeTranscriptDriver.isPinnedToBottom else { return }
+        nativeTranscriptDriver.pinToBottom()
     }
 
     private func scheduleConcreteStreamingTailRecovery(
         anchorID: ConversationBottomAnchorID,
         tailMessageID: UUID,
-        using scrollProxy: ScrollViewProxy
+        using scrollProxy: ChatTranscriptProxy
     ) {
         guard currentConversationBottomAnchorID == anchorID,
               anchorID.messageIDs.last == tailMessageID,
@@ -11815,12 +11316,11 @@ private struct ChatView: View {
               !ownsCurrentDoubleEdgeNavigation,
               automaticReasoningCollapseOwner == nil,
               !isCodeDisclosureInProgress,
-              pendingBottomRowMaterializationAnchorID == nil,
               autoFollowEngaged,
               !hasConcreteNativeUserScrollOwnership,
               !isUserScrollActive else { return }
-        streamFollowTask?.cancel()
-        streamFollowTask = Task { @MainActor in
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = Task { @MainActor in
             await awaitNextMainQueueTurn()
             guard !Task.isCancelled,
                   currentConversationBottomAnchorID == anchorID,
@@ -11831,7 +11331,6 @@ private struct ChatView: View {
                   !ownsCurrentDoubleEdgeNavigation,
                   automaticReasoningCollapseOwner == nil,
                   !isCodeDisclosureInProgress,
-                  pendingBottomRowMaterializationAnchorID == nil,
                   autoFollowEngaged,
                   !hasConcreteNativeUserScrollOwnership,
                   !isUserScrollActive else { return }
@@ -11845,111 +11344,13 @@ private struct ChatView: View {
             )
             var transaction = Transaction()
             transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                scrollProxy.scrollTo(
-                    conversationMessageHostID(for: tailMessageID),
-                    anchor: .bottom
-                )
-            }
-        }
-    }
-
-    private func requestLayoutFollowCorrection(requiresNearBottom: Bool = true) {
-        let bottomAnchorID = currentConversationBottomAnchorID
-        guard model.preferences.autoScrollEnabled,
-              !isFreshConversationFollowSuppressed,
-              !isUserMessageSendPositioning,
-              !isMessageTargetNavigationOwned,
-              !ownsCurrentDoubleEdgeNavigation,
-              automaticReasoningCollapseOwner == nil,
-              !isCodeDisclosureInProgress,
-              pendingBottomRowMaterializationAnchorID == nil,
-              !model.hasLaterMessages,
-              nativeConversationContentReadyAnchorID == bottomAnchorID,
-              hasConcreteTailFrame(for: bottomAnchorID),
-              !isKeyboardDismissalTransition,
-              !isKeyboardDismissalGeometryRecoveryActive,
-              autoFollowEngaged,
-              !isUserScrollActive else { return }
-        if requiresNearBottom && !lastKnownNearBottom {
-            return
-        }
-        layoutFollowRequiresNearBottom = requiresNearBottom
-        layoutFollowRequest += 1
-        ChatBottomTrace.log(
-            "LAYOUT_FOLLOW_REQUEST value=\(layoutFollowRequest)"
-                + " requiresNear=\(requiresNearBottom) "
-                + chatBottomTraceState
-        )
-    }
-
-    private func scheduleLayoutFollowCorrection(using scrollProxy: ScrollViewProxy) {
-        if #available(iOS 18.0, *),
-           shouldKeepNativeBottomPosition,
-           nativeConversationContentReadyAnchorID == currentConversationBottomAnchorID {
-            layoutFollowTask?.cancel()
-            layoutFollowTask = nil
-            return
-        }
-        let requiresNearBottom = layoutFollowRequiresNearBottom
-        let bottomAnchorID = currentConversationBottomAnchorID
-        guard model.preferences.autoScrollEnabled,
-              !isUserMessageSendPositioning,
-              !isMessageTargetNavigationOwned,
-              !ownsCurrentDoubleEdgeNavigation,
-              automaticReasoningCollapseOwner == nil,
-              !isCodeDisclosureInProgress,
-              pendingBottomRowMaterializationAnchorID == nil,
-              !model.hasLaterMessages,
-              nativeConversationContentReadyAnchorID == bottomAnchorID,
-              hasConcreteTailFrame(for: bottomAnchorID),
-              autoFollowEngaged,
-              (!requiresNearBottom || lastKnownNearBottom),
-              !hasConcreteNativeUserScrollOwnership,
-              !isUserScrollActive else { return }
-        if layoutFollowTask != nil {
-            ChatBottomTrace.log("LAYOUT_FOLLOW_CANCEL source=reschedule " + chatBottomTraceState)
-        }
-        layoutFollowTask?.cancel()
-        ChatBottomTrace.log(
-            "LAYOUT_FOLLOW_SCHEDULE requiresNear=\(requiresNearBottom) "
-                + chatBottomTraceState
-        )
-        layoutFollowTask = Task { @MainActor in
-            for delay in [0, 20, 70, 140] {
-                if delay == 0 {
-                    await Task.yield()
-                } else {
-                    try? await Task.sleep(for: .milliseconds(delay))
-                }
-                guard !Task.isCancelled,
-                      currentConversationBottomAnchorID == bottomAnchorID,
-                      model.preferences.autoScrollEnabled,
-                      !isUserMessageSendPositioning,
-                      !isMessageTargetNavigationOwned,
-                      !ownsCurrentDoubleEdgeNavigation,
-                      automaticReasoningCollapseOwner == nil,
-                      !isCodeDisclosureInProgress,
-                      pendingBottomRowMaterializationAnchorID == nil,
-                      !model.hasLaterMessages,
-                      nativeConversationContentReadyAnchorID == bottomAnchorID,
-                      hasConcreteTailFrame(for: bottomAnchorID),
-                      autoFollowEngaged,
-                      (!requiresNearBottom || lastKnownNearBottom),
-                      !hasConcreteNativeUserScrollOwnership,
-                      !isUserScrollActive else { return }
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                traceScrollCommand(
-                    source: "layoutFollow.delay\(delay)",
-                    target: "bottomSentinel",
-                    animation: "disabled"
-                )
-                withTransaction(transaction) {
-                    scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                }
-            }
-            ChatBottomTrace.log("LAYOUT_FOLLOW_COMPLETE " + chatBottomTraceState)
+            let completed = await scrollProxy.animate(
+                conversationMessageHostID(for: tailMessageID),
+                anchor: .bottom, duration: 0, timing: .easeOut
+            )
+            guard completed, !Task.isCancelled,
+                  currentConversationBottomAnchorID == anchorID else { return }
+            streamingTailRecoveryTask = nil
         }
     }
 
@@ -11962,10 +11363,21 @@ private struct ChatView: View {
     }
 
     private func updateKeyboardAnimationTiming(from notification: Notification) {
+        if let input = ComposerTextSelectionInteractionGate.focusedComposerInput,
+           input.identity.conversationID == model.selectedConversationID {
+            composerKeyboardMotionSource.inputView = input
+        }
         if let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue,
            duration.isFinite,
-           duration >= 0.01 {
+           duration >= 0 {
             lastKeyboardAnimationDuration = duration
+            let removed = composerKeyboardMotionSource.updateTiming(
+                duration: duration, conversationID: model.selectedConversationID,
+                scrollView: nativeTranscriptDriver.scrollView
+            )
+            if duration == 0 {
+                ChatBottomTrace.log("KEYBOARD_IMMEDIATE_INPUT removed=\(removed)")
+            }
         }
         if let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue {
             lastKeyboardAnimationCurveRawValue = curve
@@ -12312,14 +11724,11 @@ private struct ChatView: View {
         keyboardViewportPinTask = nil
         ChatBottomTrace.log(
             "KEYBOARD_DISMISS_CANCEL_FOLLOW"
-                + " layout=\(layoutFollowTask != nil)"
-                + " stream=\(streamFollowTask != nil) "
+                + " stream=\(streamingTailRecoveryTask != nil) "
                 + chatBottomTraceState
         )
-        layoutFollowTask?.cancel()
-        layoutFollowTask = nil
-        streamFollowTask?.cancel()
-        streamFollowTask = nil
+        streamingTailRecoveryTask?.cancel()
+        streamingTailRecoveryTask = nil
         let dismissalRequest = keyboardViewportPinRequest + 1
         keyboardDismissalViewportPinRequest = dismissalRequest
         keyboardViewportPinRequest = dismissalRequest
@@ -12452,8 +11861,8 @@ private struct ChatView: View {
         keyboardNativeSettleTask?.cancel()
         keyboardNativeSettleTask = Task { @MainActor in
             // This watcher never submits scroll commands while native motion is
-            // active. It only bridges iOS 17 (no phase callback) and the single
-            // layout turn where UIKit/SwiftUI publish idle and exact in opposite
+            // active. It bridges the layout turn where the native phase and
+            // root geometry publish idle and exact in opposite
             // orders. A strict exact-bottom fact is still required for one commit.
             for frame in 0..<120 {
                 if frame == 0 {
@@ -12539,130 +11948,25 @@ private struct ChatView: View {
         keyboardNativeSettleTask = nil
     }
 
-    private func scheduleKeyboardViewportPin(using scrollProxy: ScrollViewProxy) {
-        let allowsUnfocused = keyboardViewportPinAllowsUnfocused
-        let dismissalAnimationDuration = keyboardDismissalAnimationDuration
-        let dismissalTransitionGeneration = keyboardDismissalTransitionGeneration
-        let isEligible = model.preferences.autoScrollEnabled
-            && !isUserMessageSendPositioning
-            && !isMessageTargetNavigationOwned
-            && !ownsCurrentDoubleEdgeNavigation
-            && hasCurrentConcreteLatestBottomContent
-            && (allowsUnfocused || model.isComposerFocused)
-            && autoFollowEngaged
-            && !hasConcreteNativeUserScrollOwnership
-            && !isUserScrollActive
-        guard isEligible else {
-            ChatBottomTrace.log(
-                "KEYBOARD_SCHEDULE_DROP allowsUnfocused=\(allowsUnfocused)"
-                    + " duration=\(dismissalAnimationDuration.map { String(format: "%.3f", $0) } ?? "nil") "
-                    + chatBottomTraceState
-            )
-            return
-        }
-        ChatBottomTrace.log(
-            "KEYBOARD_SCHEDULE mode=\(isKeyboardDismissalTransition ? "dismissal" : "opening")"
-                + " allowsUnfocused=\(allowsUnfocused)"
-                + " duration=\(dismissalAnimationDuration.map { String(format: "%.3f", $0) } ?? "nil") "
-                + chatBottomTraceState
-        )
+    private func scheduleKeyboardViewportPin() {
         keyboardViewportPinTask?.cancel()
         keyboardViewportPinTask = nil
-        if #available(iOS 18.0, *),
-           !isKeyboardDismissalTransition,
-           shouldKeepNativeBottomPosition,
-           nativeConversationContentReadyAnchorID == currentConversationBottomAnchorID {
-            // The ready native position owns keyboard motion. Proxy retries
-            // here would replace its intermediate frames with disabled jumps.
-            return
-        }
-        let bottomAnchorID = currentConversationBottomAnchorID
+        guard isKeyboardDismissalTransition,
+              let duration = keyboardDismissalAnimationDuration else { return }
+        let generation = keyboardDismissalTransitionGeneration
+        let anchorID = currentConversationBottomAnchorID
         keyboardViewportPinTask = Task { @MainActor in
-            if isKeyboardDismissalTransition,
-               let dismissalAnimationDuration {
-                // Keep native edge pinning active while the keyboard changes
-                // the viewport. Its measured geometry now moves the transcript
-                // frame-for-frame with the keyboard instead of asking a UIKit
-                // animation block to animate a SwiftUI ScrollViewProxy command.
-                // At the keyboard's reported completion time, make one final
-                // no-animation correction for any fractional settling error.
-                try? await Task.sleep(for: .seconds(dismissalAnimationDuration))
-                guard !Task.isCancelled,
-                      dismissalTransitionGeneration == keyboardDismissalTransitionGeneration,
-                      currentConversationBottomAnchorID == bottomAnchorID,
-                      !isUserMessageSendPositioning,
-                      !isMessageTargetNavigationOwned,
-                      !ownsCurrentDoubleEdgeNavigation,
-                      hasCurrentConcreteLatestBottomContent,
-                      !model.isDrawerPresented,
-                      autoFollowEngaged,
-                      !hasConcreteNativeUserScrollOwnership,
-                      !isUserScrollActive else { return }
-                let liveBottomState = currentUIKitBottomState
-                if let liveBottomState, liveBottomState.isAtBottom {
-                    let signedDistance = liveBottomState.bottomOffsetY
-                        - liveBottomState.contentOffsetY
-                    ChatBottomTrace.log(
-                        "KEYBOARD_FINAL_CORRECTION_SKIP reason=alreadyExact"
-                            + " generation=\(dismissalTransitionGeneration)"
-                            + " distance=\(String(format: "%.2f", signedDistance)) "
-                            + chatBottomTraceState
-                    )
-                } else if #unavailable(iOS 18.0) {
-                    ChatBottomTrace.log(
-                        "KEYBOARD_FINAL_CORRECTION generation=\(dismissalTransitionGeneration) "
-                            + chatBottomTraceState
-                    )
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    traceScrollCommand(
-                        source: "keyboard.dismissFinal.generation\(dismissalTransitionGeneration)",
-                        target: "bottomSentinel",
-                        animation: "disabled"
-                    )
-                    withTransaction(transaction) {
-                        scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                    }
-                }
-                guard dismissalTransitionGeneration == keyboardDismissalTransitionGeneration else { return }
-                isKeyboardDismissalTransition = false
-                keyboardDismissalAnimationDuration = nil
-                keyboardViewportPinAllowsUnfocused = false
-                keyboardBottomFollowIntent = false
-                isKeyboardDismissalGeometryRecoveryActive = false
-                keyboardDismissalViewportPinRequest = nil
-                keyboardViewportPinTask = nil
-                return
-            }
-            for delay in [0, 20, 70, 140, 260, 420] {
-                if delay == 0 {
-                    await Task.yield()
-                } else {
-                    try? await Task.sleep(for: .milliseconds(delay))
-                }
-                guard !Task.isCancelled,
-                      currentConversationBottomAnchorID == bottomAnchorID,
-                      model.preferences.autoScrollEnabled,
-                      !isUserMessageSendPositioning,
-                      !isMessageTargetNavigationOwned,
-                      !ownsCurrentDoubleEdgeNavigation,
-                      hasCurrentConcreteLatestBottomContent,
-                      (allowsUnfocused || model.isComposerFocused),
-                      (!allowsUnfocused || !model.isDrawerPresented),
-                      autoFollowEngaged,
-                      !hasConcreteNativeUserScrollOwnership,
-                      !isUserScrollActive else { return }
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                traceScrollCommand(
-                    source: "keyboard.openRetry.delay\(delay)",
-                    target: "bottomSentinel",
-                    animation: "disabled"
-                )
-                withTransaction(transaction) {
-                    scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                }
-            }
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled,
+                  generation == keyboardDismissalTransitionGeneration,
+                  currentConversationBottomAnchorID == anchorID else { return }
+            isKeyboardDismissalTransition = false
+            keyboardDismissalAnimationDuration = nil
+            keyboardViewportPinAllowsUnfocused = false
+            keyboardBottomFollowIntent = false
+            isKeyboardDismissalGeometryRecoveryActive = false
+            keyboardDismissalViewportPinRequest = nil
+            keyboardViewportPinTask = nil
         }
     }
 
@@ -12678,10 +11982,9 @@ private struct ChatView: View {
         keyboardScrollActivityIgnoreUntil = .distantPast
     }
 
-    private func scheduleConversationReturn(using scrollProxy: ScrollViewProxy) {
+    private func scheduleConversationReturn(using scrollProxy: ChatTranscriptProxy) {
         cancelCodeDisclosure(reason: "conversationReturn")
         cancelAutomaticReasoningCollapseOwner(reason: "conversationReturn")
-        bottomNavigationCompactWindowConversationID = nil
         guard !isMessageTargetNavigationOwned else {
             ChatBottomTrace.log(
                 "CONVERSATION_RETURN_DROP reason=messageTarget "
@@ -12691,21 +11994,17 @@ private struct ChatView: View {
         }
         ChatBottomTrace.log(
             "CONVERSATION_RETURN_SCHEDULE"
-                + " cancelStream=\(streamFollowTask != nil)"
+                + " cancelStream=\(streamingTailRecoveryTask != nil)"
                 + " cancelReturn=\(conversationReturnTask != nil)"
-                + " cancelLayout=\(layoutFollowTask != nil)"
                 + " cancelKeyboard=\(keyboardViewportPinTask != nil) "
                 + chatBottomTraceState
         )
         pendingKeyboardViewportPin = nil
         cancelKeyboardNativeSettleWatcher()
         userScrollIdleTask?.cancel()
-        streamFollowTask?.cancel()
+        streamingTailRecoveryTask?.cancel()
         conversationReturnTask?.cancel()
-        layoutFollowTask?.cancel()
         keyboardViewportPinTask?.cancel()
-        messageWindowLoadTask?.cancel()
-        messageWindowLoadTask = nil
         if model.hasLaterMessages {
             model.loadLatestMessageWindow()
         }
@@ -12714,11 +12013,6 @@ private struct ChatView: View {
         // The new sentinel can publish before this composite selection callback.
         // Preserve a concrete-tail handshake that already belongs to this exact
         // conversation/request/row revision; only obsolete work is cancelled.
-        if pendingBottomRowMaterializationAnchorID != bottomAnchorID {
-            bottomRowMaterializationTask?.cancel()
-            bottomRowMaterializationTask = nil
-            pendingBottomRowMaterializationAnchorID = nil
-        }
         #if DEBUG
         navigationStressLog(
             "schedule return \(model.selectedConversation?.title ?? "?") "
@@ -12740,61 +12034,14 @@ private struct ChatView: View {
         positioningConversationID = conversationID
 
         conversationReturnTask = Task { @MainActor in
-            if #available(iOS 18.0, *) {
-                // Native ScrollPosition owns iOS 18+ conversation returns. Its
-                // reset is triggered by the laid-out conversation sentinel. If
-                // that preference edge arrived just before this return was armed,
-                // replay the cached current-revision snapshot once.
-                await Task.yield()
-                guard !Task.isCancelled,
-                      currentConversationBottomAnchorID == bottomAnchorID,
-                      !isUserScrollActive,
-                      !model.isDrawerPresented else { return }
-                if let snapshot = latestConversationBottomAnchorFrame,
-                   snapshot.anchorID == bottomAnchorID {
-                    ChatBottomTrace.log("CONVERSATION_RETURN_REPLAY_SNAPSHOT " + chatBottomTraceState)
-                    handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
-                }
-                return
-            }
-
-            @MainActor
-            func jumpToBottomNoAnimation() {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                traceScrollCommand(
-                    source: "conversationReturn.iOS17",
-                    target: "bottomSentinel",
-                    animation: "disabled"
-                )
-                withTransaction(transaction) {
-                    scrollProxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                }
-            }
-
             await Task.yield()
             guard !Task.isCancelled,
                   currentConversationBottomAnchorID == bottomAnchorID,
-                  nativeConversationContentReadyAnchorID == bottomAnchorID,
                   !isUserScrollActive,
                   !model.isDrawerPresented else { return }
-            jumpToBottomNoAnimation()
-            // A proxy command is only a request. Finish positioning after the
-            // concrete tail and UIKit both acknowledge the true bottom, so the
-            // iOS 17 fallback cannot cancel materialization one turn too early.
-            for delay in [0, 20, 70, 140] {
-                if delay == 0 {
-                    await Task.yield()
-                } else {
-                    try? await Task.sleep(for: .milliseconds(delay))
-                }
-                guard !Task.isCancelled,
-                      currentConversationBottomAnchorID == bottomAnchorID,
-                      nativeConversationContentReadyAnchorID == bottomAnchorID,
-                      !isUserScrollActive,
-                      !model.isDrawerPresented else { return }
-                finishConversationReturnIfConcreteTailIsAtBottom(anchorID: bottomAnchorID)
-                if !isPositioningCurrentConversation { return }
+            if let snapshot = latestConversationBottomAnchorFrame,
+               snapshot.anchorID == bottomAnchorID {
+                handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
             }
         }
     }
@@ -12818,18 +12065,12 @@ private struct ChatView: View {
         }
         conversationReturnTask?.cancel()
         conversationReturnTask = nil
-        bottomRowMaterializationTask?.cancel()
-        bottomRowMaterializationTask = nil
-        pendingBottomRowMaterializationAnchorID = nil
     }
 
     private func cancelConversationReturnPositioning() {
         ChatBottomTrace.log("CONVERSATION_RETURN_CANCEL " + chatBottomTraceState)
         conversationReturnTask?.cancel()
         conversationReturnTask = nil
-        bottomRowMaterializationTask?.cancel()
-        bottomRowMaterializationTask = nil
-        pendingBottomRowMaterializationAnchorID = nil
         if let positioningConversationID {
             model.finishConversationBottomReturn(for: positioningConversationID)
         }
@@ -12965,19 +12206,17 @@ private struct EmptyOrLegacyChatHeader: ViewModifier {
     let topSafeAreaInset: CGFloat
     let onOpenDrawer: () -> Void
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            if isConversationEmpty {
-                content.overlay(alignment: .top) {
+        // Keep one content identity when the first message replaces the empty
+        // state. Branching around content can mount two native transcripts
+        // during the transition, letting a departing copy take their driver.
+        content.overlay(alignment: .top) {
+            if #available(iOS 26.0, *) {
+                if isConversationEmpty {
                     ChatHeader(onOpenDrawer: onOpenDrawer)
                         .padding(.top, topSafeAreaInset)
                 }
             } else {
-                content
-            }
-        } else {
-            content.overlay(alignment: .top) {
                 ChatHeader(onOpenDrawer: onOpenDrawer)
             }
         }
@@ -13073,48 +12312,6 @@ private struct ConversationBottomAnchorFramePreferenceKey: PreferenceKey {
     }
 }
 
-private struct MessageWindowTopFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
-    }
-}
-
-private struct MessageWindowBottomFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
-    }
-}
-
-private struct ChatScrollViewProbe: UIViewRepresentable {
-    let scrollViewBox: WeakChatScrollViewBox
-    let onStatusBarScrollToTop: () -> Void
-    let onResolved: () -> Void
-
-    func makeUIView(context: Context) -> ChatScrollViewProbeUIView {
-        ChatScrollViewProbeUIView(
-            scrollViewBox: scrollViewBox,
-            onStatusBarScrollToTop: onStatusBarScrollToTop,
-            onResolved: onResolved
-        )
-    }
-
-    func updateUIView(_ uiView: ChatScrollViewProbeUIView, context: Context) {
-        uiView.update(
-            scrollViewBox: scrollViewBox,
-            onStatusBarScrollToTop: onStatusBarScrollToTop,
-            onResolved: onResolved
-        )
-    }
-
-    static func dismantleUIView(_ uiView: ChatScrollViewProbeUIView, coordinator: ()) {
-        uiView.dismantle()
-    }
-}
-
 /// Owns the box, native gate and delegate as one registration. A new probe can
 /// replace an older registration without briefly releasing the shared host.
 @MainActor
@@ -13181,121 +12378,6 @@ private final class ChatScrollViewRegistration {
         delegateBridge.uninstall()
         scrollView = nil
         box = nil
-    }
-}
-
-private final class ChatScrollViewProbeUIView: UIView {
-    private var scrollViewBox: WeakChatScrollViewBox
-    private var onResolved: () -> Void
-    private let registration = ChatScrollViewRegistration()
-    private var resolutionGeneration: UInt64 = 0
-    private var resolutionScheduled = false
-    private var isDismantled = false
-
-    init(
-        scrollViewBox: WeakChatScrollViewBox,
-        onStatusBarScrollToTop: @escaping () -> Void,
-        onResolved: @escaping () -> Void
-    ) {
-        self.scrollViewBox = scrollViewBox
-        self.onResolved = onResolved
-        super.init(frame: .zero)
-        registration.onStatusBarScrollToTop = onStatusBarScrollToTop
-        registration.onRelease = { [weak self] in self?.invalidateResolution() }
-        isUserInteractionEnabled = false
-        backgroundColor = .clear
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        scheduleResolution()
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if window == nil {
-            registration.release()
-        } else {
-            scheduleResolution()
-        }
-    }
-
-    func update(
-        scrollViewBox: WeakChatScrollViewBox,
-        onStatusBarScrollToTop: @escaping () -> Void,
-        onResolved: @escaping () -> Void
-    ) {
-        guard !isDismantled else { return }
-        if self.scrollViewBox !== scrollViewBox { invalidateResolution() }
-        self.scrollViewBox = scrollViewBox
-        self.onResolved = onResolved
-        registration.onStatusBarScrollToTop = onStatusBarScrollToTop
-        scheduleResolution()
-    }
-
-    func dismantle() {
-        isDismantled = true
-        registration.release()
-    }
-
-    private func invalidateResolution() {
-        resolutionGeneration &+= 1
-        resolutionScheduled = false
-    }
-
-    func scheduleResolution() {
-        guard !isDismantled else { return }
-        guard window != nil else {
-            registration.release()
-            return
-        }
-        if let scrollView = nearestAncestorScrollView() {
-            guard registration.canAttach(to: scrollView, box: scrollViewBox) else {
-                registration.release()
-                return
-            }
-            if registration.scrollView === scrollView,
-               scrollViewBox.registration === registration {
-                registration.attach(to: scrollView, box: scrollViewBox)
-                return
-            }
-        } else if registration.scrollView != nil {
-            registration.release()
-        }
-        guard !resolutionScheduled else { return }
-        resolutionScheduled = true
-        let generation = resolutionGeneration
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  !self.isDismantled,
-                  self.resolutionGeneration == generation else { return }
-            self.resolutionScheduled = false
-            self.resolveScrollView()
-        }
-    }
-
-    private func resolveScrollView() {
-        guard !isDismantled else { return }
-        guard window != nil, let scrollView = nearestAncestorScrollView(),
-              registration.attach(to: scrollView, box: scrollViewBox) else {
-            registration.release()
-            return
-        }
-        onResolved()
-    }
-
-    private func nearestAncestorScrollView() -> UIScrollView? {
-        var ancestor = superview
-        while let current = ancestor {
-            if let scrollView = current as? UIScrollView { return scrollView }
-            ancestor = current.superview
-        }
-        return nil
     }
 }
 
@@ -13586,206 +12668,34 @@ private final class MessageNavigationUIControl: UIControl {
     }
 }
 
-private struct ChatScrollAnchorsModifier: ViewModifier {
-    let alignsShortContentAtBottom: Bool
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            if alignsShortContentAtBottom {
-                content
-                    // Existing conversations reopen at their real bottom.
-                    .defaultScrollAnchor(.bottom, for: .initialOffset)
-                    .defaultScrollAnchor(.top, for: .alignment)
-            } else {
-                content
-                    // The first prompt in a brand-new chat starts below the
-                    // header rather than floating in a bottom-aligned gap.
-                    .defaultScrollAnchor(.top, for: .initialOffset)
-                    .defaultScrollAnchor(.top, for: .alignment)
-            }
-        } else {
-            content.defaultScrollAnchor(alignsShortContentAtBottom ? .bottom : .top)
-        }
-    }
-}
-
-private struct ChatNativeBottomPositionModifier: ViewModifier {
-    let conversationID: UUID
-    let request: Int
-    let bottomAnchorID: ConversationBottomAnchorID
-    let edgeRearmRequest: Int
-    let sendExactBottomHandoffRequest: Int
-    let contentReadyAnchorID: ConversationBottomAnchorID?
-    let keyboardRequest: Int
-    let keyboardDismissalRequest: Int?
-    let keyboardAnimationDuration: TimeInterval
-    let keyboardAnimationCurveRawValue: Int
-    let scrollViewBox: WeakChatScrollViewBox
-    let shouldPinToBottom: Bool
-    let isOrdinaryConversationReturn: Bool
-    let messageReplacementReleaseID: UUID?
-    let onMessageReplacementPositionReleased: (ConversationBottomAnchorID, UUID) -> Void
-    let shouldPauseStreamingFollowOnUserTouch: Bool
-    let automaticReasoningCollapseOwnerID:
-        AutomaticReasoningCollapseOwnerID?
-    let automaticReasoningCollapseOwnerLifecycle: UInt64
-    let automaticReasoningCollapseRearmRequest:
-        AutomaticReasoningCollapseRearmRequest?
-    let messageTargetReleaseID: UUID?
-    let edgeNavigationReleaseID: EdgeNavigationNativeReleaseID?
-    let edgeNavigationSequence: Int?
-    let onEdgeNavigationUserTouch: (ConversationBottomAnchorID, Int) -> Bool
-    let sendPositionReleaseID: SendPositionNativeReleaseID?
-    let onBottomStateChanged: (ConversationBottomAnchorID, Bool, Bool) -> Void
-    let onAutomaticReasoningCollapseGeometry:
-        (
-            AutomaticReasoningCollapseGeometryChange,
-            (AutomaticReasoningCollapseOwnerID) -> Void
-        )
-            -> AutomaticReasoningCollapseGeometryDisposition
-    let onAutomaticReasoningCollapseBottomRearmed:
-        (AutomaticReasoningCollapseOwnerID) -> Void
-    let onScrollMotionChanged: (ConversationBottomAnchorID, Bool, Bool, Bool) -> Void
-    let onScrollPhaseActivityChanged: (ConversationBottomAnchorID, Bool, Bool, Bool) -> Void
-    let onSystemScrollToTopStarted: (ConversationBottomAnchorID) -> Void
-    let onMessageTargetPositionReleased: (ConversationBottomAnchorID, UUID) -> Void
-    let onEdgeNavigationPositionReleased:
-        (ConversationBottomAnchorID, EdgeNavigationNativeReleaseID) -> Void
-    let onSendPositionReleased:
-        (ConversationBottomAnchorID, SendPositionNativeReleaseID) -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.modifier(
-                IOS18ChatNativeBottomPositionModifier(
-                    conversationID: conversationID,
-                    request: request,
-                    bottomAnchorID: bottomAnchorID,
-                    edgeRearmRequest: edgeRearmRequest,
-                    sendExactBottomHandoffRequest: sendExactBottomHandoffRequest,
-                    contentReadyAnchorID: contentReadyAnchorID,
-                    keyboardRequest: keyboardRequest,
-                    keyboardDismissalRequest: keyboardDismissalRequest,
-                    keyboardAnimationDuration: keyboardAnimationDuration,
-                    keyboardAnimationCurveRawValue: keyboardAnimationCurveRawValue,
-                    scrollViewBox: scrollViewBox,
-                    shouldPinToBottom: shouldPinToBottom,
-                    isOrdinaryConversationReturn: isOrdinaryConversationReturn,
-                    messageReplacementReleaseID: messageReplacementReleaseID,
-                    onMessageReplacementPositionReleased: onMessageReplacementPositionReleased,
-                    shouldPauseStreamingFollowOnUserTouch:
-                        shouldPauseStreamingFollowOnUserTouch,
-                    automaticReasoningCollapseOwnerID:
-                        automaticReasoningCollapseOwnerID,
-                    automaticReasoningCollapseOwnerLifecycle:
-                        automaticReasoningCollapseOwnerLifecycle,
-                    automaticReasoningCollapseRearmRequest:
-                        automaticReasoningCollapseRearmRequest,
-                    messageTargetReleaseID: messageTargetReleaseID,
-                    edgeNavigationReleaseID: edgeNavigationReleaseID,
-                    edgeNavigationSequence: edgeNavigationSequence,
-                    onEdgeNavigationUserTouch: onEdgeNavigationUserTouch,
-                    sendPositionReleaseID: sendPositionReleaseID,
-                    onBottomStateChanged: onBottomStateChanged,
-                    onAutomaticReasoningCollapseGeometry:
-                        onAutomaticReasoningCollapseGeometry,
-                    onAutomaticReasoningCollapseBottomRearmed:
-                        onAutomaticReasoningCollapseBottomRearmed,
-                    onScrollMotionChanged: onScrollMotionChanged,
-                    onScrollPhaseActivityChanged: onScrollPhaseActivityChanged,
-                    onSystemScrollToTopStarted: onSystemScrollToTopStarted,
-                    onMessageTargetPositionReleased:
-                        onMessageTargetPositionReleased,
-                    onEdgeNavigationPositionReleased:
-                        onEdgeNavigationPositionReleased,
-                    onSendPositionReleased: onSendPositionReleased
-                )
-            )
-        } else {
-            content
-                .task(id: messageReplacementReleaseID) {
-                    guard let requestID = messageReplacementReleaseID else { return }
-                    onMessageReplacementPositionReleased(bottomAnchorID, requestID)
-                }
-                .onAppear {
-                    if let messageTargetReleaseID {
-                        onMessageTargetPositionReleased(
-                            bottomAnchorID,
-                            messageTargetReleaseID
-                        )
-                    }
-                    if let edgeNavigationReleaseID {
-                        onEdgeNavigationPositionReleased(
-                            bottomAnchorID,
-                            edgeNavigationReleaseID
-                        )
-                    }
-                    if let sendPositionReleaseID {
-                        onSendPositionReleased(
-                            bottomAnchorID,
-                            sendPositionReleaseID
-                        )
-                    }
-                }
-                .onChange(of: messageTargetReleaseID) { _, requestID in
-                    if let requestID {
-                        onMessageTargetPositionReleased(
-                            bottomAnchorID,
-                            requestID
-                        )
-                    }
-                }
-                .onChange(of: edgeNavigationReleaseID) { _, releaseID in
-                    if let releaseID {
-                        onEdgeNavigationPositionReleased(
-                            bottomAnchorID,
-                            releaseID
-                        )
-                    }
-                }
-                .onChange(of: sendPositionReleaseID) { _, releaseID in
-                    if let releaseID {
-                        onSendPositionReleased(
-                            bottomAnchorID,
-                            releaseID
-                        )
-                    }
-                }
-        }
-    }
-}
-
-@available(iOS 18.0, *)
-private struct IOS18ChatScrollGeometrySnapshot: Equatable {
+private struct ChatNativeScrollGeometrySnapshot: Equatable {
     let anchorID: ConversationBottomAnchorID
     let contentHeight: CGFloat
     let bottomBoundaryY: CGFloat
-    let containerHeight: CGFloat
+    let viewportHeight: CGFloat
     let signedDistanceFromBottom: CGFloat
     let bottomOffsetY: CGFloat
     let isAtBottom: Bool
     let isNearBottom: Bool
 
     static func == (
-        lhs: IOS18ChatScrollGeometrySnapshot,
-        rhs: IOS18ChatScrollGeometrySnapshot
+        lhs: ChatNativeScrollGeometrySnapshot,
+        rhs: ChatNativeScrollGeometrySnapshot
     ) -> Bool {
         // Preserve clean 4708's action trigger surface. contentHeight and
         // bottomOffsetY are payloads used only after one of the original six
         // observed fields changes; they must not create additional callbacks.
         lhs.anchorID == rhs.anchorID
             && lhs.bottomBoundaryY == rhs.bottomBoundaryY
-            && lhs.containerHeight == rhs.containerHeight
+            && lhs.viewportHeight == rhs.viewportHeight
             && lhs.signedDistanceFromBottom == rhs.signedDistanceFromBottom
             && lhs.isAtBottom == rhs.isAtBottom
             && lhs.isNearBottom == rhs.isNearBottom
     }
 }
 
-@available(iOS 18.0, *)
-private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
+private struct ChatNativeBottomPositionModifier: ViewModifier {
+    let nativeDriver: NativeChatScrollDriver
     let conversationID: UUID
     let request: Int
     let bottomAnchorID: ConversationBottomAnchorID
@@ -13793,11 +12703,16 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
     let sendExactBottomHandoffRequest: Int
     let contentReadyAnchorID: ConversationBottomAnchorID?
     let keyboardRequest: Int
+    let keyboardBottomFollowIntent: Bool
     let keyboardDismissalRequest: Int?
+    let keyboardIsPresented: Bool
+    let pendingSendRequestID: UUID?
     let keyboardAnimationDuration: TimeInterval
     let keyboardAnimationCurveRawValue: Int
+    let keyboardMotionSource: ComposerKeyboardMotionSource
     let scrollViewBox: WeakChatScrollViewBox
     let shouldPinToBottom: Bool
+    let allowsAutomaticBottomFollow: Bool
     let isOrdinaryConversationReturn: Bool
     let messageReplacementReleaseID: UUID?
     let onMessageReplacementPositionReleased: (ConversationBottomAnchorID, UUID) -> Void
@@ -13829,11 +12744,6 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         (ConversationBottomAnchorID, EdgeNavigationNativeReleaseID) -> Void
     let onSendPositionReleased:
         (ConversationBottomAnchorID, SendPositionNativeReleaseID) -> Void
-    // Start unpositioned so a newly created LazyVStack gets one real layout
-    // pass before an edge command is submitted. Initializing directly at the
-    // bottom can make SwiftUI resolve only the zero-cost sentinel and leave
-    // every lazy message row outside the realized viewport after a switch.
-    @State private var position = ScrollPosition()
     // The modifier is scoped to one conversation surface. Later return requests
     // and message revisions must retain the baseline's explicit positioning.
     @State private var initialBottomAnchorID: ConversationBottomAnchorID?
@@ -13842,11 +12752,31 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
     @MainActor
     private final class BottomDistanceMeasurement {
         var signedDistanceFromBottom = CGFloat.infinity
+        var nativePreviousSnapshot: ChatNativeScrollGeometrySnapshot?
+        var nativePublicationID: AnyHashable?
+        // The shared driver/registration may move to a newer conversation
+        // before this modifier disappears. Only this concrete host is ours.
+        weak var keyboardMotionScrollView: UIScrollView?
+        // UIKit layout can deliver before SwiftUI has finished its update.
+        // Animation bookkeeping must not publish view state from that stack.
+        var keyboardAnimationDeadline = Date.distantPast
+        var keyboardCompletionTask: Task<Void, Never>?
+        var keyboardMotionTargetY: CGFloat?
+        var preservedSendRequestID: UUID?
+        weak var synchronousViewportScrollView: UIScrollView?
+        var synchronousViewportPublication: AnyHashable?
+        var synchronousViewportHeight: CGFloat?
     }
     @State private var bottomDistanceMeasurement = BottomDistanceMeasurement()
     @State private var consumedSendExactBottomHandoffRequest = 0
-    @State private var keyboardViewportAnimationDeadline = Date.distantPast
-    @State private var keyboardViewportCompletionTask: Task<Void, Never>?
+    private var keyboardViewportAnimationDeadline: Date {
+        get { bottomDistanceMeasurement.keyboardAnimationDeadline }
+        nonmutating set { bottomDistanceMeasurement.keyboardAnimationDeadline = newValue }
+    }
+    private var keyboardViewportCompletionTask: Task<Void, Never>? {
+        get { bottomDistanceMeasurement.keyboardCompletionTask }
+        nonmutating set { bottomDistanceMeasurement.keyboardCompletionTask = newValue }
+    }
     @State private var releasedMessageTargetRequestID: UUID?
     @State private var messageTargetReleaseAckTask: Task<Void, Never>?
     @State private var releasedEdgeNavigationID: EdgeNavigationNativeReleaseID?
@@ -13873,12 +12803,61 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         return false
     }
 
+    private var positionIsUserOwned: Bool {
+        nativeDriver.positionIsUserOwned
+    }
+
+    private var ownsCurrentSendViewportPreservation: Bool {
+        guard let pendingSendRequestID,
+              bottomDistanceMeasurement.preservedSendRequestID == pendingSendRequestID,
+              Date() < keyboardViewportAnimationDeadline,
+              bottomDistanceMeasurement.keyboardMotionScrollView === nativeDriver.scrollView,
+              let publication = bottomDistanceMeasurement.synchronousViewportPublication?.base
+                as? NativeChatPublicationID else { return false }
+        return publication.anchorID == bottomAnchorID
+    }
+
+    private var positionIsBottomPinned: Bool {
+        nativeDriver.positionIsBottomPinned
+    }
+
+    private var positionHasNoStoredTarget: Bool {
+        !nativeDriver.positionIsUserOwned
+            && !nativeDriver.positionIsBottomPinned
+            && !nativeDriver.positionHasExplicitTarget
+    }
+
+    private func releaseSemanticPosition(userOwned: Bool) {
+        nativeDriver.releasePosition(userOwned: userOwned)
+    }
+
+    private func pinSemanticBottom() {
+        nativeDriver.pinToBottom()
+        if !allowsAutomaticBottomFollow {
+            // Entry may own one exact landing even when automatic following is
+            // disabled. Retain that offset without a persistent growth target.
+            nativeDriver.releasePosition()
+        }
+    }
+
+    private func finishInitialBottomPositioningIfReady() {
+        guard contentReadyAnchorID == bottomAnchorID,
+              let publication = nativeDriver.latestGeometry?.publicationID.base
+                as? NativeChatPublicationID,
+              publication.anchorID == bottomAnchorID else { return }
+        // The driver consumes only its bootstrap owner. A send/navigation
+        // command or user release has already revoked that owner and is safe.
+        nativeDriver.finishInitialBottomPositioning(
+            keepBottomPinned: shouldPinToBottom && allowsAutomaticBottomFollow
+        )
+    }
+
     private var chatBottomTracePosition: String {
-        let pointY = position.point.map { String(format: "%.1f", $0.y) } ?? "nil"
-        return "conv=\(ChatBottomTrace.shortID(conversationID)) req=\(request)"
-            + " positionUser=\(position.isPositionedByUser)"
-            + " positionEdge=\(String(describing: position.edge))"
-            + " pointY=\(pointY)"
+        "conv=\(ChatBottomTrace.shortID(conversationID)) req=\(request)"
+            + " positionUser=\(positionIsUserOwned)"
+            + " positionEdge=\(positionIsBottomPinned ? "bottom" : "nil")"
+            + " positionID=\(nativeDriver.positionHasExplicitTarget ? "native" : "nil")"
+            + " pointY=native"
             + " shouldPin=\(shouldPinToBottom)"
             + " ready=\(contentReadyAnchorID == bottomAnchorID)"
             + " collapseClaim=\(hasAutomaticReasoningCollapseClaim)"
@@ -13889,7 +12868,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        let positionedContent = content.scrollPosition($position)
+        let positionedContent = content
             .task(id: messageReplacementReleaseID) { @MainActor in
                 guard let requestID = messageReplacementReleaseID else { return }
                 let sourceAnchorID = bottomAnchorID
@@ -13897,7 +12876,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
-                    position.isPositionedByUser = true
+                    releaseSemanticPosition(userOwned: true)
                 }
                 // Commit the released position before changing the transcript.
                 // This is a lifecycle handoff, not a timed geometry retry.
@@ -13933,6 +12912,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
                 // unified-send token cannot be mistaken for a new handoff.
                 consumedSendExactBottomHandoffRequest =
                     sendExactBottomHandoffRequest
+                finishInitialBottomPositioningIfReady()
                 if let messageTargetReleaseID {
                     releaseBottomPosition(for: messageTargetReleaseID)
                 }
@@ -13964,9 +12944,15 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
                 locallyClaimedAutomaticReasoningCollapseOwnerID = nil
             }
             .onChange(of: bottomAnchorID) { _, _ in
-                cancelKeyboardViewportMotion()
+                // A synchronous layout can already have installed this new
+                // publication's send motion before the observer is delivered.
+                if !ownsCurrentSendViewportPreservation { cancelKeyboardViewportMotion() }
                 locallyClaimedAutomaticReasoningCollapseOwnerID = nil
                 ownsStreamingFollowTouchPause = false
+            }
+            .onChange(of: pendingSendRequestID) { _, requestID in
+                if let owner = bottomDistanceMeasurement.preservedSendRequestID,
+                   owner != requestID { cancelKeyboardViewportMotion() }
             }
             .onChange(of: automaticReasoningCollapseOwnerID) { oldOwnerID, newOwnerID in
                 if newOwnerID?.anchorID == bottomAnchorID {
@@ -13986,7 +12972,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
             .onChange(of: shouldPinToBottom) { _, shouldPin in
                 ChatBottomTrace.log("SHOULD_PIN_CHANGE value=\(shouldPin) " + chatBottomTracePosition)
                 if !shouldPin {
-                    cancelKeyboardViewportMotion()
+                    if !ownsCurrentSendViewportPreservation { cancelKeyboardViewportMotion() }
                     locallyClaimedAutomaticReasoningCollapseOwnerID = nil
                 }
                 let hasNewExactSendHandoff =
@@ -14008,13 +12994,18 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
                     // exact with no touch or inertia. SwiftUI's geometry can
                     // lag that native fact by one frame, so it must not veto
                     // the already-authorized handoff and add a visible reset.
+                    // The keyboard animator released the native edge while
+                    // it owned the viewport. Exact landing authorizes restoring
+                    // that edge, without issuing another offset or animation.
+                    nativeDriver.armBottomPin()
                     ChatBottomTrace.log(
-                        "SHOULD_PIN_SKIP reason=exactSendHandoff "
+                        "SHOULD_PIN_REARM reason=exactSendHandoff "
                             + chatBottomTracePosition
                     )
                     return
                 }
                 guard !canReuseInitialBottomOffset() else { return }
+                guard !resumeKeyboardViewportMotionIfNeeded() else { return }
                 pinToBottom(source: "shouldPinChange")
                 ChatBottomTrace.log("SHOULD_PIN_APPLIED " + chatBottomTracePosition)
             }
@@ -14100,6 +13091,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
                 ChatBottomTrace.log("EDGE_REARM_APPLIED after " + chatBottomTracePosition)
             }
             .onChange(of: contentReadyAnchorID) { _, readyAnchorID in
+                finishInitialBottomPositioningIfReady()
                 if ChatBottomTrace.enabled {
                     let readyDescription = readyAnchorID.map {
                         "conv=\(ChatBottomTrace.shortID($0.positionRequest.conversationID))"
@@ -14147,15 +13139,16 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
                     )
                     return
                 }
+                guard !resumeKeyboardViewportMotionIfNeeded() else { return }
                 guard Date() >= keyboardViewportAnimationDeadline,
-                      position.isPositionedByUser || position.edge != .bottom else {
+                      positionIsUserOwned || !positionIsBottomPinned else {
                     // An already armed edge includes a running viewport
                     // animation. Replacing it here would cancel that motion.
                     return
                 }
                 // Recreate edge identity only for a keyboard transition.
                 // Ordinary drag/deceleration/tap interactions keep their
-                // user-positioned ScrollPosition and native physical feel.
+                // user-owned native position and physical feel.
                 resetToBottom(source: "keyboardRequest")
                 ChatBottomTrace.log("KEYBOARD_RESET_APPLIED after " + chatBottomTracePosition)
             }
@@ -14165,232 +13158,353 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         to content: ObservedContent
     ) -> some View {
         content
-            .onScrollGeometryChange(for: IOS18ChatScrollGeometrySnapshot.self) { geometry in
-                let bottomBoundaryY = geometry.contentSize.height + geometry.contentInsets.bottom
-                let signedDistanceFromBottom = bottomBoundaryY - geometry.visibleRect.maxY
-                return IOS18ChatScrollGeometrySnapshot(
-                    anchorID: bottomAnchorID,
-                    contentHeight: geometry.contentSize.height,
-                    bottomBoundaryY: bottomBoundaryY,
-                    containerHeight: geometry.containerSize.height,
-                    signedDistanceFromBottom: signedDistanceFromBottom,
-                    bottomOffsetY: geometry.contentOffset.y + signedDistanceFromBottom,
-                    isAtBottom: abs(signedDistanceFromBottom) <= 2,
-                    isNearBottom: signedDistanceFromBottom <= 56
-                )
-            } action: { previousSnapshot, snapshot in
-                bottomDistanceMeasurement.signedDistanceFromBottom = snapshot.signedDistanceFromBottom
-                onBottomStateChanged(
-                    snapshot.anchorID,
-                    snapshot.isAtBottom,
-                    snapshot.isNearBottom
-                )
-                guard shouldPinToBottom,
-                      contentReadyAnchorID == bottomAnchorID,
-                      !isSystemScrollToTopAnimation else { return }
-                if hasAutomaticReasoningCollapseClaim {
-                    ChatBottomTrace.log(
-                        "GEOMETRY_CORRECTION_DEFERRED reason=automaticReasoningCollapseOwner"
-                            + " distance=\(String(format: "%.2f", snapshot.signedDistanceFromBottom)) "
-                            + chatBottomTracePosition
-                    )
-                    return
-                }
-
-                let positionWasUserOwned = position.isPositionedByUser
-                let contentHeightDelta = snapshot.contentHeight
-                    - previousSnapshot.contentHeight
-                let geometryDisposition =
-                    onAutomaticReasoningCollapseGeometry(
-                        AutomaticReasoningCollapseGeometryChange(
-                            anchorID: snapshot.anchorID,
-                            previousContentHeight:
-                                previousSnapshot.contentHeight,
-                            contentHeight: snapshot.contentHeight,
-                            previousContainerHeight:
-                                previousSnapshot.containerHeight,
-                            containerHeight: snapshot.containerHeight,
-                            signedDistanceFromBottom:
-                                snapshot.signedDistanceFromBottom,
-                            previousWasAtBottom:
-                                previousSnapshot.isAtBottom,
-                            positionWasUserOwned: positionWasUserOwned
-                        )
-                    ) { ownerID in
-                        // Root calls this closure only after every admission
-                        // guard and target calculation succeeds. Establish the
-                        // local claim and release persistent `.bottom` before
-                        // root installs the owner and writes UIKit once.
-                        locallyClaimedAutomaticReasoningCollapseOwnerID = ownerID
-                        position.isPositionedByUser = true
-                        ChatBottomTrace.log(
-                            "REASONING_COLLAPSE_LOCAL_CLAIM"
-                                + " generation=\(ownerID.generation)"
-                                + " oldContentH=\(String(format: "%.1f", previousSnapshot.contentHeight))"
-                                + " contentH=\(String(format: "%.1f", snapshot.contentHeight))"
-                                + " delta=\(String(format: "%.1f", contentHeightDelta)) "
-                                + chatBottomTracePosition
-                        )
-                    }
-                switch geometryDisposition {
-                case let .owned(ownerID):
-                    locallyClaimedAutomaticReasoningCollapseOwnerID = ownerID
-                    cancelKeyboardViewportMotion()
-                    ChatBottomTrace.log(
-                        "GEOMETRY_CORRECTION_CLAIMED reason=automaticReasoningCollapse"
-                            + " generation=\(ownerID.generation)"
-                            + " distance=\(String(format: "%.2f", snapshot.signedDistanceFromBottom)) "
-                            + chatBottomTracePosition
-                    )
-                    return
-                case .pendingCollapseSample:
-                    locallyClaimedAutomaticReasoningCollapseOwnerID = nil
-                    ChatBottomTrace.log(
-                        "GEOMETRY_CORRECTION_DEFERRED reason=reasoningCollapsePendingSample "
-                            + chatBottomTracePosition
-                    )
-                    return
-                case .consumedUnowned:
-                    locallyClaimedAutomaticReasoningCollapseOwnerID = nil
-                    // A recognized collapse decision must not submit a second
-                    // semantic-bottom command in the same geometry pass.
-                    ChatBottomTrace.log(
-                        "GEOMETRY_CORRECTION_DEFERRED reason=reasoningCollapseAuthorizationConsumed "
-                            + chatBottomTracePosition
-                    )
-                    return
-                case .unowned:
-                    locallyClaimedAutomaticReasoningCollapseOwnerID = nil
-                }
-
-                guard !positionWasUserOwned || Date() < keyboardViewportAnimationDeadline else {
-                    ChatBottomTrace.log(
-                        "GEOMETRY_CORRECTION_DEFERRED reason=userOwnedPosition "
-                            + chatBottomTracePosition
-                    )
-                    return
-                }
-                let isKeyboardViewportChange = previousSnapshot.anchorID == snapshot.anchorID
-                    && previousSnapshot.containerHeight > 100
-                    && abs(snapshot.containerHeight - previousSnapshot.containerHeight) > 80
-                if isKeyboardViewportChange {
-                    animateBottomForKeyboardViewportChange(
-                        bottomOffsetY: snapshot.bottomOffsetY,
-                        previousOffsetY: previousSnapshot.bottomOffsetY
-                            - previousSnapshot.signedDistanceFromBottom
-                    )
-                    return
-                }
-                guard !snapshot.isAtBottom else { return }
-                if Date() < keyboardViewportAnimationDeadline {
-                    // Content size and keyboard insets can commit separately.
-                    // The active keyboard motion owns both geometry changes;
-                    // retarget it instead of leaving a native clamp visible
-                    // until the completion's semantic-bottom handoff.
-                    animateBottomForKeyboardViewportChange(
-                        bottomOffsetY: snapshot.bottomOffsetY,
-                        isRetargeting: true
-                    )
-                    return
-                }
-                // LazyVStack/TextKit can settle over several layout passes.
-                // React to the measured geometry instead of guessing a delay.
-                pinToBottom(source: "geometryCorrection")
+            .onReceive(nativeDriver.viewportLayoutEvents) { change in
+                receiveSynchronousViewportLayout(change)
             }
+            .onReceive(nativeDriver.geometryEvents) { geometry in
+                receiveNativeGeometry(geometry)
+            }
+            .onAppear {
+                if let geometry = nativeDriver.latestGeometry {
+                    receiveNativeGeometry(geometry)
+                }
+            }
+    }
+
+    private func receiveSynchronousViewportLayout(_ change: NativeChatViewportLayoutChange) {
+        guard change.current.size.height > 100, change.current.size.width > 0,
+              change.scrollView.window != nil,
+              change.scrollView === nativeDriver.scrollView,
+              change.scrollView === scrollViewBox.scrollView,
+              let publication = change.publicationID.base as? NativeChatPublicationID,
+              publication.anchorID == bottomAnchorID,
+              change.sessionID == AnyHashable(conversationID),
+              !isSystemScrollToTopAnimation, !hasAutomaticReasoningCollapseClaim,
+              !nativeDriver.hasActiveScrollCommand,
+              !change.scrollView.isDragging, !change.scrollView.isDecelerating else { return }
+        let active = Date() < keyboardViewportAnimationDeadline
+            && bottomDistanceMeasurement.keyboardMotionScrollView === change.scrollView
+        // The deadline can pass while the main actor has not delivered the
+        // completion yet. A new keyboard resize still belongs to this exact
+        // owner; refusing it would let the old completion pin first and start
+        // the reversal from a stale settled offset. Real drag/cancellation and
+        // completion clear the concrete owner and cannot enter this handoff.
+        let hasPendingKeyboardHandoff = keyboardBottomFollowIntent
+            && bottomDistanceMeasurement.keyboardMotionScrollView === change.scrollView
+            && keyboardViewportCompletionTask != nil
+        // The native viewport extends through safe areas. Keyboard avoidance
+        // changes its readable height through insets, not necessarily bounds.
+        let resized = change.previous.viewportHeight > 100
+            && abs(change.current.viewportHeight - change.previous.viewportHeight) > 80
+        let preservesSendViewport = pendingSendRequestID != nil
+            && ((resized && keyboardIsPresented
+                    && change.current.viewportHeight > change.previous.viewportHeight
+                    && abs(change.current.size.width - change.previous.size.width) <= 0.5)
+                || (active && bottomDistanceMeasurement.preservedSendRequestID == pendingSendRequestID
+                    && bottomDistanceMeasurement.synchronousViewportPublication == change.publicationID))
+        guard preservesSendViewport || (
+            nativeDriver.latestGeometry?.publicationID == change.publicationID
+                && nativeDriver.latestGeometry?.sessionID == change.sessionID
+                && shouldPinToBottom && contentReadyAnchorID == bottomAnchorID
+                && (!positionIsUserOwned || active || hasPendingKeyboardHandoff)
+        ) else { return }
+        guard resized || (active && abs(change.current.bottomOffsetY - change.previous.bottomOffsetY) > 0.5) else { return }
+        // Sending has its own later row placement. During keyboard dismissal,
+        // retain the current reading offset; animate only a necessary clamp
+        // into the expanded viewport's legal range. New rows must not turn
+        // this into an automatic trip to their estimated bottom.
+        let targetOffset = preservesSendViewport
+            ? min(change.current.bottomOffsetY, max(-change.current.insets.top, change.previous.offset.y))
+            : change.current.bottomOffsetY
+        // No Root business callback or SwiftUI state write is allowed here.
+        // Install the original UIKit animation before this layout is displayed,
+        // so its interim content-offset clamp never becomes a separate frame.
+        let handled = animateBottomForKeyboardViewportChange(
+            bottomOffsetY: targetOffset,
+            previousOffsetY: change.presentedOffsetBeforeLayout ?? change.previous.offset.y,
+            isRetargeting: !resized && active,
+            synchronousLayout: true,
+            synchronousPublicationID: change.publicationID,
+            preservingSendRequestID: preservesSendViewport ? pendingSendRequestID : nil
+        )
+        if handled, resized {
+            bottomDistanceMeasurement.synchronousViewportScrollView = change.scrollView
+            bottomDistanceMeasurement.synchronousViewportPublication = change.publicationID
+            bottomDistanceMeasurement.synchronousViewportHeight = change.current.viewportHeight
+        }
+    }
+
+    private func receiveNativeGeometry(_ geometry: NativeChatScrollGeometry) {
+        guard let publication = geometry.publicationID.base as? NativeChatPublicationID,
+              publication.anchorID == bottomAnchorID else { return }
+        let bottomBoundaryY = geometry.contentSize.height + geometry.contentInsets.bottom
+        let signedDistance = bottomBoundaryY - geometry.visibleRect.maxY
+        let snapshot = ChatNativeScrollGeometrySnapshot(
+            anchorID: bottomAnchorID,
+            contentHeight: geometry.contentSize.height,
+            bottomBoundaryY: bottomBoundaryY,
+            viewportHeight: max(0, geometry.containerSize.height
+                - geometry.contentInsets.top - geometry.contentInsets.bottom),
+            signedDistanceFromBottom: signedDistance,
+            bottomOffsetY: geometry.contentOffset.y + signedDistance,
+            isAtBottom: abs(signedDistance) <= 2,
+            isNearBottom: signedDistance <= 56
+        )
+        let samePublication = bottomDistanceMeasurement.nativePublicationID == geometry.publicationID
+        let previous = samePublication ? bottomDistanceMeasurement.nativePreviousSnapshot : nil
+        guard previous != snapshot else { return }
+        // Record before delivery: native offset writes can synchronously publish geometry.
+        bottomDistanceMeasurement.nativePublicationID = geometry.publicationID
+        bottomDistanceMeasurement.nativePreviousSnapshot = snapshot
+        finishInitialBottomPositioningIfReady()
+        handleGeometryChange(from: previous ?? snapshot, to: snapshot)
+    }
+
+    private func handleGeometryChange(
+        from previousSnapshot: ChatNativeScrollGeometrySnapshot,
+        to snapshot: ChatNativeScrollGeometrySnapshot
+    ) {
+        bottomDistanceMeasurement.signedDistanceFromBottom = snapshot.signedDistanceFromBottom
+        onBottomStateChanged(
+            snapshot.anchorID,
+            snapshot.isAtBottom,
+            snapshot.isNearBottom
+        )
+        guard shouldPinToBottom,
+              contentReadyAnchorID == bottomAnchorID,
+              !isSystemScrollToTopAnimation else { return }
+        if hasAutomaticReasoningCollapseClaim {
+            ChatBottomTrace.log(
+                "GEOMETRY_CORRECTION_DEFERRED reason=automaticReasoningCollapseOwner"
+                    + " distance=\(String(format: "%.2f", snapshot.signedDistanceFromBottom)) "
+                    + chatBottomTracePosition
+            )
+            return
+        }
+
+        let positionWasUserOwned = positionIsUserOwned
+        let contentHeightDelta = snapshot.contentHeight
+            - previousSnapshot.contentHeight
+        let geometryDisposition =
+            onAutomaticReasoningCollapseGeometry(
+                AutomaticReasoningCollapseGeometryChange(
+                    anchorID: snapshot.anchorID,
+                    previousContentHeight:
+                        previousSnapshot.contentHeight,
+                    contentHeight: snapshot.contentHeight,
+                    previousContainerHeight:
+                        previousSnapshot.viewportHeight,
+                    containerHeight: snapshot.viewportHeight,
+                    signedDistanceFromBottom:
+                        snapshot.signedDistanceFromBottom,
+                    previousWasAtBottom:
+                        previousSnapshot.isAtBottom,
+                    positionWasUserOwned: positionWasUserOwned
+                )
+            ) { ownerID in
+                // Root calls this closure only after every admission
+                // guard and target calculation succeeds. Establish the
+                // local claim and release persistent `.bottom` before
+                // root installs the owner and writes UIKit once.
+                locallyClaimedAutomaticReasoningCollapseOwnerID = ownerID
+                releaseSemanticPosition(userOwned: true)
+                ChatBottomTrace.log(
+                    "REASONING_COLLAPSE_LOCAL_CLAIM"
+                        + " generation=\(ownerID.generation)"
+                        + " oldContentH=\(String(format: "%.1f", previousSnapshot.contentHeight))"
+                        + " contentH=\(String(format: "%.1f", snapshot.contentHeight))"
+                        + " delta=\(String(format: "%.1f", contentHeightDelta)) "
+                        + chatBottomTracePosition
+                )
+            }
+        switch geometryDisposition {
+        case let .owned(ownerID):
+            locallyClaimedAutomaticReasoningCollapseOwnerID = ownerID
+            cancelKeyboardViewportMotion()
+            ChatBottomTrace.log(
+                "GEOMETRY_CORRECTION_CLAIMED reason=automaticReasoningCollapse"
+                    + " generation=\(ownerID.generation)"
+                    + " distance=\(String(format: "%.2f", snapshot.signedDistanceFromBottom)) "
+                    + chatBottomTracePosition
+            )
+            return
+        case .pendingCollapseSample:
+            locallyClaimedAutomaticReasoningCollapseOwnerID = nil
+            ChatBottomTrace.log(
+                "GEOMETRY_CORRECTION_DEFERRED reason=reasoningCollapsePendingSample "
+                    + chatBottomTracePosition
+            )
+            return
+        case .consumedUnowned:
+            locallyClaimedAutomaticReasoningCollapseOwnerID = nil
+            // A recognized collapse decision must not submit a second
+            // semantic-bottom command in the same geometry pass.
+            ChatBottomTrace.log(
+                "GEOMETRY_CORRECTION_DEFERRED reason=reasoningCollapseAuthorizationConsumed "
+                    + chatBottomTracePosition
+            )
+            return
+        case .unowned:
+            locallyClaimedAutomaticReasoningCollapseOwnerID = nil
+        }
+
+        guard !positionWasUserOwned || Date() < keyboardViewportAnimationDeadline else {
+            ChatBottomTrace.log(
+                "GEOMETRY_CORRECTION_DEFERRED reason=userOwnedPosition "
+                    + chatBottomTracePosition
+            )
+            return
+        }
+        let isKeyboardViewportChange = previousSnapshot.anchorID == snapshot.anchorID
+            && previousSnapshot.viewportHeight > 100
+            && abs(snapshot.viewportHeight - previousSnapshot.viewportHeight) > 80
+        if isKeyboardViewportChange {
+            if bottomDistanceMeasurement.synchronousViewportScrollView === nativeDriver.scrollView,
+               bottomDistanceMeasurement.synchronousViewportPublication == bottomDistanceMeasurement.nativePublicationID,
+               bottomDistanceMeasurement.synchronousViewportHeight == snapshot.viewportHeight {
+                // A self-sizing pass can be coalesced with this resize while
+                // the synchronous callback is reentry-guarded. Keep its new
+                // target without restoring the old start or duration again.
+                if Date() < keyboardViewportAnimationDeadline, !snapshot.isAtBottom {
+                    animateBottomForKeyboardViewportChange(
+                        bottomOffsetY: snapshot.bottomOffsetY, isRetargeting: true
+                    )
+                }
+                return // Business callbacks above ran; UIKit already owns this resize.
+            }
+            animateBottomForKeyboardViewportChange(
+                bottomOffsetY: snapshot.bottomOffsetY,
+                previousOffsetY: previousSnapshot.bottomOffsetY
+                    - previousSnapshot.signedDistanceFromBottom
+            )
+            return
+        }
+        guard !snapshot.isAtBottom else { return }
+        if Date() < keyboardViewportAnimationDeadline {
+            // Content size and keyboard insets can commit separately.
+            // The active keyboard motion owns both geometry changes;
+            // retarget it instead of leaving a native clamp visible
+            // until the completion's semantic-bottom handoff.
+            animateBottomForKeyboardViewportChange(
+                bottomOffsetY: snapshot.bottomOffsetY,
+                isRetargeting: true
+            )
+            return
+        }
+        // Hosted text can settle over several layout passes.
+        // React to the measured geometry instead of guessing a delay.
+        pinToBottom(source: "geometryCorrection")
     }
 
     private func addScrollPhaseObserver<ObservedContent: View>(
         to content: ObservedContent
     ) -> some View {
-        content
-            .onScrollPhaseChange { oldPhase, newPhase, context in
-                let geometry = context.geometry
-                let bottomBoundaryY = geometry.contentSize.height + geometry.contentInsets.bottom
-                let signedDistanceFromBottom = bottomBoundaryY - geometry.visibleRect.maxY
-                let isAtBottom = abs(signedDistanceFromBottom) <= 2
-                let isNearBottom = signedDistanceFromBottom <= 56
+        content.onReceive(nativeDriver.phaseEvents) { event in
+            guard let geometry = event.geometry,
+                  let publication = geometry.publicationID.base as? NativeChatPublicationID,
+                  publication.anchorID == bottomAnchorID else { return }
+            handleScrollPhaseChange(
+                from: event.oldPhase, to: event.newPhase,
+                contentHeight: geometry.contentSize.height,
+                contentInsetBottom: geometry.contentInsets.bottom,
+                visibleMaxY: geometry.visibleRect.maxY,
+                containerHeight: geometry.containerSize.height
+            )
+        }
+    }
+
+    private func handleScrollPhaseChange(
+        from oldPhase: NativeChatScrollPhase, to newPhase: NativeChatScrollPhase,
+        contentHeight: CGFloat, contentInsetBottom: CGFloat,
+        visibleMaxY: CGFloat, containerHeight: CGFloat
+    ) {
+        let bottomBoundaryY = contentHeight + contentInsetBottom
+        let signedDistanceFromBottom = bottomBoundaryY - visibleMaxY
+        let isAtBottom = abs(signedDistanceFromBottom) <= 2
+        let isNearBottom = signedDistanceFromBottom <= 56
+        ChatBottomTrace.log(
+            "PHASE old=\(String(describing: oldPhase)) new=\(String(describing: newPhase))"
+                + " distance=\(String(format: "%.2f", signedDistanceFromBottom))"
+                + " boundaryY=\(String(format: "%.1f", bottomBoundaryY))"
+                + " visibleMaxY=\(String(format: "%.1f", visibleMaxY))"
+                + " containerH=\(String(format: "%.1f", containerHeight))"
+                + " exact=\(isAtBottom) near=\(isNearBottom) "
+                + chatBottomTracePosition
+        )
+        if newPhase == .tracking || newPhase == .interacting {
+            if let sequence = edgeNavigationSequence,
+               onEdgeNavigationUserTouch(bottomAnchorID, sequence) {
+                // Tracking starts before the SwiftUI drag threshold:
+                // simply holding the transcript already cancels the jump.
+                releaseInterruptedEdgeNavigationPosition()
+            }
+            beginStreamingFollowTouchPauseIfNeeded()
+        }
+        switch newPhase {
+        case .tracking, .interacting, .decelerating:
+            // A new user-owned motion after the recovery command must
+            // win over the delayed safety correction.
+            locallyClaimedAutomaticReasoningCollapseOwnerID = nil
+            if newPhase != .tracking {
+                cancelKeyboardViewportMotion()
+            }
+            onScrollPhaseActivityChanged(
+                bottomAnchorID,
+                true,
+                isAtBottom,
+                isNearBottom
+            )
+            onScrollMotionChanged(bottomAnchorID, true, isAtBottom, isNearBottom)
+        case .idle:
+            onScrollMotionChanged(bottomAnchorID, false, isAtBottom, isNearBottom)
+            ownsStreamingFollowTouchPause = false
+            onScrollPhaseActivityChanged(
+                bottomAnchorID,
+                false,
+                isAtBottom,
+                isNearBottom
+            )
+            if isSystemScrollToTopAnimation {
+                isSystemScrollToTopAnimation = false
                 ChatBottomTrace.log(
-                    "PHASE old=\(String(describing: oldPhase)) new=\(String(describing: newPhase))"
-                        + " distance=\(String(format: "%.2f", signedDistanceFromBottom))"
-                        + " boundaryY=\(String(format: "%.1f", bottomBoundaryY))"
-                        + " visibleMaxY=\(String(format: "%.1f", geometry.visibleRect.maxY))"
-                        + " containerH=\(String(format: "%.1f", geometry.containerSize.height))"
-                        + " exact=\(isAtBottom) near=\(isNearBottom) "
+                    "SYSTEM_TOP_END distance=\(String(format: "%.2f", signedDistanceFromBottom)) "
                         + chatBottomTracePosition
                 )
-                if newPhase == .tracking || newPhase == .interacting {
-                    if let sequence = edgeNavigationSequence,
-                       onEdgeNavigationUserTouch(bottomAnchorID, sequence) {
-                        // Tracking starts before the SwiftUI drag threshold:
-                        // simply holding the transcript already cancels the jump.
-                        releaseInterruptedEdgeNavigationPosition()
-                    }
-                    beginStreamingFollowTouchPauseIfNeeded()
-                }
-                switch newPhase {
-                case .tracking, .interacting, .decelerating:
-                    // A new user-owned motion after the recovery command must
-                    // win over the delayed safety correction.
-                    locallyClaimedAutomaticReasoningCollapseOwnerID = nil
-                    cancelKeyboardViewportMotion()
-                    onScrollPhaseActivityChanged(
-                        bottomAnchorID,
-                        true,
-                        isAtBottom,
-                        isNearBottom
-                    )
-                    onScrollMotionChanged(bottomAnchorID, true, isAtBottom, isNearBottom)
-                case .idle:
-                    onScrollMotionChanged(bottomAnchorID, false, isAtBottom, isNearBottom)
-                    ownsStreamingFollowTouchPause = false
-                    onScrollPhaseActivityChanged(
-                        bottomAnchorID,
-                        false,
-                        isAtBottom,
-                        isNearBottom
-                    )
-                    if isSystemScrollToTopAnimation {
-                        isSystemScrollToTopAnimation = false
-                        ChatBottomTrace.log(
-                            "SYSTEM_TOP_END distance=\(String(format: "%.2f", signedDistanceFromBottom)) "
-                                + chatBottomTracePosition
-                        )
-                    }
-                case .animating:
-                    // A status-bar tap is reported as a system animation rather
-                    // than tracking/interacting. Only infer that gesture while
-                    // no collapse claim exists: the owner's own UIKit offset
-                    // write can also report idle -> animating. Vertical drags
-                    // remain explicit preemptors through the phases above.
-                    let startsFromPinnedBottom = isAtBottom
-                        || abs(bottomDistanceMeasurement.signedDistanceFromBottom) <= 2
-                        || position.edge == .bottom
-                    let beginsSystemScrollToTop = oldPhase == .idle
-                        && shouldPinToBottom
-                        && contentReadyAnchorID == bottomAnchorID
-                        && !hasAutomaticReasoningCollapseClaim
-                        && startsFromPinnedBottom
-                        && Date() >= keyboardViewportAnimationDeadline
-                    if beginsSystemScrollToTop {
-                        locallyClaimedAutomaticReasoningCollapseOwnerID = nil
-                        isSystemScrollToTopAnimation = true
-                        // Apple defines this write as releasing any stored edge
-                        // or point while preserving a user-positioned scroll.
-                        position.isPositionedByUser = true
-                        ChatBottomTrace.log(
-                            "SYSTEM_TOP_RELEASE distance=\(String(format: "%.2f", signedDistanceFromBottom)) "
-                                + chatBottomTracePosition
-                        )
-                        onSystemScrollToTopStarted(bottomAnchorID)
-                    }
-                    onScrollPhaseActivityChanged(
-                        bottomAnchorID,
-                        true,
-                        isAtBottom,
-                        isNearBottom
-                    )
-                }
             }
+        case .animating:
+            // A status-bar tap is reported as a system animation rather
+            // than tracking/interacting. Only infer that gesture while
+            // no collapse claim exists: the owner's own UIKit offset
+            // write can also report idle -> animating. Vertical drags
+            // remain explicit preemptors through the phases above.
+            let startsFromPinnedBottom = isAtBottom
+                || abs(bottomDistanceMeasurement.signedDistanceFromBottom) <= 2
+                || positionIsBottomPinned
+            let beginsSystemScrollToTop = oldPhase == .idle
+                && shouldPinToBottom
+                && contentReadyAnchorID == bottomAnchorID
+                && !hasAutomaticReasoningCollapseClaim
+                && startsFromPinnedBottom
+                && Date() >= keyboardViewportAnimationDeadline
+            if beginsSystemScrollToTop {
+                locallyClaimedAutomaticReasoningCollapseOwnerID = nil
+                isSystemScrollToTopAnimation = true
+                // Apple defines this write as releasing any stored edge
+                // or point while preserving a user-positioned scroll.
+                releaseSemanticPosition(userOwned: true)
+                ChatBottomTrace.log(
+                    "SYSTEM_TOP_RELEASE distance=\(String(format: "%.2f", signedDistanceFromBottom)) "
+                        + chatBottomTracePosition
+                )
+                onSystemScrollToTopStarted(bottomAnchorID)
+            }
+            onScrollPhaseActivityChanged(
+                bottomAnchorID,
+                true,
+                isAtBottom,
+                isNearBottom
+            )
+        }
     }
 
     private func releaseInterruptedEdgeNavigationPosition() {
@@ -14399,7 +13513,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            position.isPositionedByUser = true
+            releaseSemanticPosition(userOwned: true)
         }
         ChatBottomTrace.log("EDGE_INTERRUPTION_NATIVE_RELEASE " + chatBottomTracePosition)
     }
@@ -14414,7 +13528,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
             // Clear the retained `.bottom` edge without changing the visible
             // offset. Otherwise touch-up can reactivate that old edge and pull
             // the transcript across content that arrived during the hold.
-            position.isPositionedByUser = true
+            releaseSemanticPosition(userOwned: true)
         }
         ChatBottomTrace.log(
             "SCROLL_POSITION_RELEASE source=streamTouchPause "
@@ -14431,7 +13545,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            position = ScrollPosition()
+            releaseSemanticPosition(userOwned: false)
         }
         releasedMessageTargetRequestID = requestID
         ChatBottomTrace.log(
@@ -14457,7 +13571,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         withTransaction(transaction) {
             // Preserve the currently visible offset while clearing any stored
             // edge/point semantics before the proxy mutates a message window.
-            position.isPositionedByUser = true
+            releaseSemanticPosition(userOwned: true)
         }
         releasedEdgeNavigationID = releaseID
         ChatBottomTrace.log(
@@ -14481,7 +13595,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            position.isPositionedByUser = true
+            releaseSemanticPosition(userOwned: true)
         }
         releasedSendPositionID = releaseID
         ChatBottomTrace.log(
@@ -14574,12 +13688,10 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         }
         guard isOrdinaryConversationReturn,
               initialBottomAnchorID == bottomAnchorID,
-              !position.isPositionedByUser,
-              position.edge == nil,
-              position.point == nil,
+              (positionIsBottomPinned || positionHasNoStoredTarget),
               abs(bottomDistanceMeasurement.signedDistanceFromBottom) <= 2
         else { return false }
-        // InitialOffset has already placed this revision exactly at bottom.
+        // Native bootstrap has already placed this revision exactly at bottom.
         // Avoid replacing that natural layout with a second edge declaration.
         // All baseline geometry correction and tail recovery remain eligible.
         ChatBottomTrace.log("INITIAL_BOTTOM_REUSE " + chatBottomTracePosition)
@@ -14595,7 +13707,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            position.scrollTo(edge: .bottom)
+            pinSemanticBottom()
         }
         ChatBottomTrace.log(
             "SCROLL_COMMAND source=native.\(source)"
@@ -14604,16 +13716,108 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         )
     }
 
+    private func resumeKeyboardViewportMotionIfNeeded() -> Bool {
+        guard keyboardBottomFollowIntent else { return false }
+        // Both the follow-state and request callbacks can observe this handoff.
+        // A motion already started by either callback remains the sole writer.
+        guard Date() >= keyboardViewportAnimationDeadline else { return true }
+        guard let scrollView = scrollViewBox.scrollView else { return false }
+        guard !scrollView.isTracking,
+              !scrollView.isDragging,
+              !scrollView.isDecelerating else { return true }
+        let bottomOffsetY = max(
+            -scrollView.adjustedContentInset.top,
+            scrollView.contentSize.height - scrollView.bounds.height
+                + scrollView.adjustedContentInset.bottom
+        )
+        let visibleOffsetY = scrollView.layer.presentation()?.bounds.origin.y
+            ?? scrollView.contentOffset.y
+        guard abs(bottomOffsetY - visibleOffsetY) > 0.5
+                || abs(bottomOffsetY - scrollView.contentOffset.y) > 0.5 else {
+            return false
+        }
+        // A queued opening may be admitted after its viewport already shrank.
+        // Resume the existing keyboard animation instead of consuming that
+        // distance in a disabled semantic-bottom reset.
+        ChatBottomTrace.log("KEYBOARD_VIEWPORT_RESUME " + chatBottomTracePosition)
+        animateBottomForKeyboardViewportChange(bottomOffsetY: bottomOffsetY)
+        return true
+    }
+
+    @discardableResult
     private func animateBottomForKeyboardViewportChange(
         bottomOffsetY: CGFloat,
         previousOffsetY: CGFloat? = nil,
-        isRetargeting: Bool = false
-    ) {
+        isRetargeting: Bool = false,
+        synchronousLayout: Bool = false,
+        synchronousPublicationID: AnyHashable? = nil,
+        preservingSendRequestID: UUID? = nil
+    ) -> Bool {
         guard let scrollView = scrollViewBox.scrollView,
-              !scrollView.isTracking,
+              scrollView === nativeDriver.scrollView,
+              let publication = (synchronousPublicationID ?? nativeDriver.latestGeometry?.publicationID)?.base
+                as? NativeChatPublicationID,
+              publication.anchorID == bottomAnchorID,
               !scrollView.isDragging,
-              !scrollView.isDecelerating else { return }
+              !scrollView.isDecelerating else { return false }
+        // Bottom-follow admission owns this motion. Tracking alone can be the
+        // dismissal tap; an actual drag or deceleration still preempts it.
         let wasAnimating = Date() < keyboardViewportAnimationDeadline
+            && bottomDistanceMeasurement.keyboardMotionScrollView === scrollView
+        // Once UIKit owns the motion, use its current geometry for both ends.
+        // SwiftUI can publish an intermediate offset/inset pair during a
+        // reversal; recombining that pair would move past the actual bottom.
+        let targetOffsetY = isRetargeting && wasAnimating && preservingSendRequestID == nil
+            ? max(-scrollView.adjustedContentInset.top,
+                  scrollView.contentSize.height - scrollView.bounds.height
+                    + scrollView.adjustedContentInset.bottom)
+            : bottomOffsetY
+        if synchronousLayout, !wasAnimating,
+           let duration = keyboardMotionSource.inheritedViewportDuration(
+               in: scrollView, conversationID: conversationID, targetY: targetOffsetY
+           ) {
+            bottomDistanceMeasurement.keyboardMotionScrollView = scrollView
+            bottomDistanceMeasurement.preservedSendRequestID = preservingSendRequestID
+            bottomDistanceMeasurement.keyboardMotionTargetY = targetOffsetY
+            nativeDriver.externalViewportMotion = true
+            releaseSemanticPosition(userOwned: true)
+            keyboardViewportAnimationDeadline = Date().addingTimeInterval(duration + 0.06)
+            scheduleKeyboardViewportCompletion(after: duration)
+            ChatBottomTrace.log("KEYBOARD_VIEWPORT_ADOPT duration=\(duration) " + chatBottomTracePosition)
+            return true
+        }
+        let viewportDuration = keyboardMotionSource.viewportAnimationDuration(
+            synchronousLayout: synchronousLayout, fallback: keyboardAnimationDuration
+        )
+        if viewportDuration == 0 {
+            keyboardViewportCompletionTask?.cancel()
+            keyboardViewportCompletionTask = nil
+            keyboardViewportAnimationDeadline = .distantPast
+            bottomDistanceMeasurement.keyboardMotionScrollView = scrollView
+            bottomDistanceMeasurement.preservedSendRequestID = nil
+            nativeDriver.externalViewportMotion = true
+            releaseSemanticPosition(userOwned: true)
+            removeContentOffsetAnimations(from: scrollView)
+            UIView.performWithoutAnimation {
+                scrollView.setContentOffset(
+                    CGPoint(x: scrollView.contentOffset.x, y: targetOffsetY), animated: false
+                )
+            }
+            // Rearm the existing semantic owner while external motion is still
+            // set, so this does not submit a second scroll command in layout.
+            // A send keeps its own later concrete-row placement authority.
+            if preservingSendRequestID == nil { pinSemanticBottom() }
+            bottomDistanceMeasurement.keyboardMotionScrollView = nil
+            nativeDriver.externalViewportMotion = false
+            ChatBottomTrace.log(
+                "SCROLL_COMMAND source=native.keyboardViewportImmediate"
+                    + " synchronousLayout=\(synchronousLayout)"
+                    + " inheritedDuration=\(UIView.inheritedAnimationDuration)"
+                    + " targetY=\(String(format: "%.2f", targetOffsetY)) "
+                    + chatBottomTracePosition
+            )
+            return true
+        }
         let presentedOffsetY = scrollView.layer.presentation()?.bounds.origin.y
         // A semantic edge or content-size clamp can already have changed the
         // model offset. Start from the visible position, not that interim
@@ -14621,42 +13825,100 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         let startOffsetY = wasAnimating
             ? (presentedOffsetY ?? scrollView.contentOffset.y)
             : (previousOffsetY ?? presentedOffsetY ?? scrollView.contentOffset.y)
-        guard abs(startOffsetY - bottomOffsetY) > 0.5
-                || abs(scrollView.contentOffset.y - bottomOffsetY) > 0.5 else {
-            return
+        guard abs(startOffsetY - targetOffsetY) > 0.5
+                || abs(scrollView.contentOffset.y - targetOffsetY) > 0.5 else {
+            // Estimated send rows can initially keep the old offset legal.
+            // Their measured height and the shrinking composer arrive later
+            // in this same keyboard transition. Keep that transition's owner
+            // so a later legal-range clamp is retargeted before it is shown.
+            if let preservingSendRequestID, !wasAnimating {
+                bottomDistanceMeasurement.keyboardMotionScrollView = scrollView
+                bottomDistanceMeasurement.preservedSendRequestID = preservingSendRequestID
+                // This reserves a possible retarget, but nothing is moving
+                // yet. Do not hold the send's concrete landing behind it.
+                releaseSemanticPosition(userOwned: true)
+                keyboardViewportAnimationDeadline = Date().addingTimeInterval(viewportDuration + 0.06)
+                scheduleKeyboardViewportCompletion(after: viewportDuration)
+                ChatBottomTrace.log("KEYBOARD_VIEWPORT_HOLD_SEND " + chatBottomTracePosition)
+            }
+            return true
         }
         let duration: TimeInterval
         if isRetargeting, wasAnimating {
             duration = max(0.01, keyboardViewportAnimationDeadline.timeIntervalSinceNow - 0.06)
         } else {
-            duration = max(0.01, keyboardAnimationDuration)
+            duration = max(0.01, viewportDuration)
             keyboardViewportAnimationDeadline = Date().addingTimeInterval(duration + 0.06)
         }
         // Release semantic edge layout while UIKit owns this transition.
-        position.isPositionedByUser = true
+        bottomDistanceMeasurement.keyboardMotionScrollView = scrollView
+        bottomDistanceMeasurement.preservedSendRequestID = preservingSendRequestID
+        nativeDriver.externalViewportMotion = true
+        releaseSemanticPosition(userOwned: true)
         let start = CGPoint(x: scrollView.contentOffset.x, y: startOffsetY)
-        let target = CGPoint(x: start.x, y: bottomOffsetY)
+        let target = CGPoint(x: start.x, y: targetOffsetY)
         let options = UIView.AnimationOptions(
             rawValue: UInt(max(0, keyboardAnimationCurveRawValue)) << 16
         ).union([.beginFromCurrentState, .allowUserInteraction, .overrideInheritedDuration])
         ChatBottomTrace.log(
             "SCROLL_COMMAND source=native.keyboardViewportAnimation"
+                + " synchronousLayout=\(synchronousLayout) animationsEnabled=\(UIView.areAnimationsEnabled)"
+                + " inheritedDuration=\(UIView.inheritedAnimationDuration)"
+                + " preservingSend=\(preservingSendRequestID.map { ChatBottomTrace.shortID($0) } ?? "nil")"
                 + " retarget=\(isRetargeting)"
                 + " startY=\(String(format: "%.2f", startOffsetY))"
-                + " targetY=\(String(format: "%.2f", bottomOffsetY))"
+                + " targetY=\(String(format: "%.2f", targetOffsetY))"
                 + " nativeOffsetY=\(String(format: "%.2f", scrollView.contentOffset.y))"
                 + " nativeBottomY=\(String(format: "%.2f", max(-scrollView.adjustedContentInset.top, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)))"
                 + " duration=\(String(format: "%.3f", duration)) "
                 + chatBottomTracePosition
         )
-        removeContentOffsetAnimations(from: scrollView)
-        UIView.performWithoutAnimation {
-            scrollView.setContentOffset(start, animated: false)
+        // Keep an active UIKit animation available to beginFromCurrentState.
+        // Removing it first loses the motion that an interruption must inherit.
+        let hasOffsetAnimation = (scrollView.layer.animationKeys() ?? []).contains { key in
+            (scrollView.layer.animation(forKey: key) as? CAPropertyAnimation)?.keyPath == "bounds.origin"
         }
+        if wasAnimating, preservingSendRequestID != nil, hasOffsetAnimation,
+           let previousTargetY = bottomDistanceMeasurement.keyboardMotionTargetY,
+           abs(previousTargetY - targetOffsetY) > 0.5,
+           abs(scrollView.contentOffset.y - targetOffsetY) <= 0.5 {
+            // Self-sizing can already clamp the model to the new destination.
+            // Animating that same value is a no-op: the old additive animation
+            // then rides on the new base and exposes the entire clamp at once.
+            // Restore its original model base before beginFromCurrentState
+            // retargets the live animation from its presentation position.
+            UIView.performWithoutAnimation {
+                scrollView.setContentOffset(
+                    CGPoint(x: scrollView.contentOffset.x, y: previousTargetY), animated: false
+                )
+            }
+            ChatBottomTrace.log("KEYBOARD_SEND_RESTORE_ANIMATION_BASE " + chatBottomTracePosition)
+        }
+        // A send can own this transition before it needs any movement. If a
+        // later layout already clamped the model, its first real animation
+        // still has to start at the position currently visible on screen.
+        if !wasAnimating || (preservingSendRequestID != nil && !hasOffsetAnimation) {
+            removeContentOffsetAnimations(from: scrollView)
+            UIView.performWithoutAnimation {
+                scrollView.setContentOffset(start, animated: false)
+            }
+        }
+        bottomDistanceMeasurement.keyboardMotionTargetY = targetOffsetY
         UIView.animate(withDuration: duration, delay: 0, options: options) {
             scrollView.setContentOffset(target, animated: false)
         }
+        if !isRetargeting, keyboardAnimationCurveRawValue == 7 {
+            // A SwiftUI-owned keyboard resize can give UIKit a different
+            // default spring despite the same notification curve/duration.
+            // Read the actual composer's animation after UIKit installs ours.
+            // Content-growth retargets keep their existing remaining duration.
+            let replacements = keyboardMotionSource.synchronizeSpring(
+                in: scrollView, conversationID: conversationID, duration: duration
+            )
+            ChatBottomTrace.log("KEYBOARD_SPRING_SYNCHRONIZED count=\(replacements)")
+        }
         scheduleKeyboardViewportCompletion(after: duration)
+        return true
     }
 
     private func removeContentOffsetAnimations(from scrollView: UIScrollView) {
@@ -14671,10 +13933,17 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
     }
 
     private func cancelKeyboardViewportMotion() {
+        bottomDistanceMeasurement.keyboardMotionTargetY = nil
+        bottomDistanceMeasurement.preservedSendRequestID = nil
+        bottomDistanceMeasurement.synchronousViewportScrollView = nil
+        bottomDistanceMeasurement.synchronousViewportPublication = nil
+        bottomDistanceMeasurement.synchronousViewportHeight = nil
         keyboardViewportCompletionTask?.cancel()
         keyboardViewportCompletionTask = nil
+        let ownedScrollView = bottomDistanceMeasurement.keyboardMotionScrollView
+        bottomDistanceMeasurement.keyboardMotionScrollView = nil
         if Date() < keyboardViewportAnimationDeadline,
-           let scrollView = scrollViewBox.scrollView {
+           let scrollView = ownedScrollView {
             let presentedOffset = scrollView.layer.presentation()?.bounds.origin
                 ?? scrollView.contentOffset
             removeContentOffsetAnimations(from: scrollView)
@@ -14683,15 +13952,38 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
             }
         }
         keyboardViewportAnimationDeadline = .distantPast
+        if let ownedScrollView, nativeDriver.scrollView === ownedScrollView {
+            nativeDriver.externalViewportMotion = false
+        }
     }
 
     private func scheduleKeyboardViewportCompletion(after duration: TimeInterval) {
         keyboardViewportCompletionTask?.cancel()
-        keyboardViewportCompletionTask = Task { @MainActor in
+        guard let ownedScrollView = bottomDistanceMeasurement.keyboardMotionScrollView else {
+            keyboardViewportCompletionTask = nil
+            return
+        }
+        keyboardViewportCompletionTask = Task { @MainActor [weak ownedScrollView] in
             try? await Task.sleep(for: .seconds(duration + 0.08))
             guard !Task.isCancelled else { return }
+            keyboardViewportCompletionTask = nil
             keyboardViewportAnimationDeadline = .distantPast
-            guard shouldPinToBottom,
+            guard let ownedScrollView,
+                  bottomDistanceMeasurement.keyboardMotionScrollView === ownedScrollView else { return }
+            bottomDistanceMeasurement.keyboardMotionScrollView = nil
+            bottomDistanceMeasurement.keyboardMotionTargetY = nil
+            let wasPreservingSend = bottomDistanceMeasurement.preservedSendRequestID != nil
+            bottomDistanceMeasurement.preservedSendRequestID = nil
+            guard nativeDriver.scrollView === ownedScrollView else { return }
+            nativeDriver.externalViewportMotion = false
+            // This owner only preserves the dismissal viewport. The send's
+            // concrete-row completion alone may rearm automatic following.
+            guard !wasPreservingSend else { return }
+            guard scrollViewBox.scrollView === ownedScrollView,
+                  let publication = nativeDriver.latestGeometry?.publicationID.base
+                    as? NativeChatPublicationID,
+                  publication.anchorID == bottomAnchorID,
+                  shouldPinToBottom,
                   contentReadyAnchorID == bottomAnchorID,
                   !hasAutomaticReasoningCollapseClaim else {
                 ChatBottomTrace.log(
@@ -14721,7 +14013,7 @@ private struct IOS18ChatNativeBottomPositionModifier: ViewModifier {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            position = ScrollPosition(edge: .bottom)
+            pinSemanticBottom()
         }
         ChatBottomTrace.log(
             "SCROLL_COMMAND source=nativeReset.\(source)"
@@ -15195,10 +14487,13 @@ private struct UserBubbleSendAnimationModifier: ViewModifier {
             return
         }
 
-        withAnimation(animation(for: style)) {
+        // Match Float Up and Lively: retain the request until the entrance
+        // finishes, so the waiting indicator can follow this existing signal.
+        withAnimation(animation(for: style), completionCriteria: .removed) {
             isPresented = true
+        } completion: {
+            onStarted(request.id)
         }
-        onStarted(request.id)
     }
 
     private func revealWithoutAnimation() {
@@ -15327,7 +14622,7 @@ private struct UserBubbleFloatUpSendAnimationModifier: ViewModifier {
             }
             .onDisappear {
                 guard let requestID = latchedRequestID else { return }
-                // LazyVStack may temporarily remove the newly inserted row
+                // Cell reuse may temporarily remove the newly inserted row
                 // before the delayed launch task presents it. Consuming the
                 // request while `isPresented` is still false leaves preserved
                 // local state permanently translucent when the row returns.
@@ -15542,12 +14837,37 @@ private struct UserBubbleLivelySendAnimationModifier: ViewModifier {
     }
 }
 
+// Users always reserve reaction space, including a user-only conversation tail.
+// Other rows reserve it only between messages; the final assistant already has
+// composer clearance. Reaction changes never alter a user row's measured size.
+enum ConversationMessageLayout {
+    static let reactionFooterHeight: CGFloat = 32
+    static let reactionTopInset: CGFloat = 6
+    static let stackSpacing: CGFloat = 12
+}
+
+private struct StableMessageReactionFooter<Reactions: View>: ViewModifier {
+    let reactions: Reactions
+    var reservesSpace = true
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.bottom, reservesSpace ? ConversationMessageLayout.reactionFooterHeight : 0)
+            .overlay(alignment: .bottom) {
+                reactions
+                    .padding(.top, ConversationMessageLayout.reactionTopInset)
+                    .frame(height: reservesSpace ? ConversationMessageLayout.reactionFooterHeight : 0, alignment: .top)
+            }
+    }
+}
+
 private struct MessageRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
     @State private var assistantEditorProfile: AssistantProfile? = nil
     @State private var assistantAttachmentsExpanded = false
     let message: ChatMessage
+    let isConversationTail: Bool
     let citationSources: [MessageCitationSource]
     let isGroupMessage: Bool
     let versionFlashContext: VersionFlashTextContext?
@@ -15576,6 +14896,22 @@ private struct MessageRow: View {
         model.preferences.showModelName
             || model.preferences.showModelTimestamp
             || model.preferences.showProviderInChatMessage
+    }
+
+    private var assistantWaitingIndicator: some View {
+        let waitsForSendArrival =
+            model.pendingUserMessageSendPositionRequest?.conversationID == message.conversationID
+            || model.pendingUserBubbleSendAnimation?.conversationID == message.conversationID
+        // Keep the real indicator's size from the first layout. Existing send
+        // positioning and entrance completion only reveal it; they never insert
+        // another row or change its height. A reply that arrives sooner retains
+        // the ordinary text/reasoning/tool presentation path.
+        return ProgressView()
+            .controlSize(.small)
+            .tint(Color(uiColor: .secondaryLabel))
+            .opacity(waitsForSendArrival ? 0 : 1)
+            .animation(nil, value: waitsForSendArrival)
+            .accessibilityHidden(waitsForSendArrival)
     }
 
     private var userMessageTextMaxWidth: CGFloat {
@@ -15726,9 +15062,7 @@ private struct MessageRow: View {
                             )
                         }
                         if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color(uiColor: .secondaryLabel))
+                            assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
                             ForEach(Array(assistantTextSegments.enumerated()), id: \.offset) { segmentIndex, text in
                                 MessageMarkdownView(
@@ -15826,9 +15160,7 @@ private struct MessageRow: View {
                             )
                         }
                         if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color(uiColor: .secondaryLabel))
+                            assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
                             ForEach(Array(assistantTextSegments.enumerated()), id: \.offset) { segmentIndex, text in
                                 MessageMarkdownView(
@@ -15897,7 +15229,7 @@ private struct MessageRow: View {
             }
             .frame(maxWidth: .infinity)
 
-            if hasVisibleReaction {
+            if message.role != .user, hasVisibleReaction {
                 HStack(spacing: 0) {
                     if message.role == .user { Spacer(minLength: 0) }
                     MessageReactionChips(message: message)
@@ -15933,6 +15265,10 @@ private struct MessageRow: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .modifier(StableMessageReactionFooter(
+            reactions: userReactionFooter,
+            reservesSpace: message.role == .user || !isConversationTail
+        ))
         .background {
             if message.role == .assistant,
                !message.isStreaming,
@@ -16008,6 +15344,18 @@ private struct MessageRow: View {
         }
     }
 
+    @ViewBuilder
+    private var userReactionFooter: some View {
+        if message.role == .user, hasVisibleReaction {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                MessageReactionChips(message: message)
+                    .fixedSize(horizontal: true, vertical: true)
+            }
+            .padding(.trailing, reactionTrailingInset)
+        }
+    }
+
     private var hasVisibleReaction: Bool {
         message.reactions.userReaction != nil
             || (model.preferences.aiMessageReactionsEnabled && message.reactions.assistantReaction != nil)
@@ -16051,8 +15399,6 @@ private struct MessageRow: View {
         messageFontSize: CGFloat,
         isStreaming: Bool
     ) -> some View {
-        let previewTextColor = chatTextColor(for: .user) ?? Color(uiColor: .label)
-        let previewShape = RoundedRectangle(cornerRadius: 19, style: .continuous)
         let markdown = MessageMarkdownView(
             text: text,
             fontSize: messageFontSize,
@@ -16087,65 +15433,7 @@ private struct MessageRow: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(userBubbleSurface)
-            .contentShape(.interaction, previewShape)
-            .contentShape(.contextMenuPreview, previewShape)
-            .contextMenu {
-                UserMessageNativeContextMenuItems(
-                    message: message,
-                    onSelectReaction: { reaction in
-                        onUserReaction(message, reaction)
-                    },
-                    onRegenerate: {
-                        onRegenerate(message)
-                    },
-                    onEdit: {
-                        onEdit(message)
-                    },
-                    onMore: {
-                        onMore(message)
-                    }
-                )
-            } preview: {
-                userMessageContextMenuPreview(
-                    text: text,
-                    messageFontSize: messageFontSize,
-                    foregroundColor: previewTextColor
-                )
-            }
-            .menuOrder(.fixed)
-    }
-
-    private func userMessageContextMenuPreview(
-        text: String,
-        messageFontSize: CGFloat,
-        foregroundColor: Color
-    ) -> some View {
-        // Real-device samples split 5/5 on hard line breaks: previews for
-        // messages containing a newline exposed the system's white preview
-        // host, while naturally wrapped single-paragraph messages did not.
-        // Keep this A/B limited to preview layout; the message and copied text
-        // remain byte-for-byte unchanged.
-        let singleLinePreviewText = text
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-        return Text(verbatim: singleLinePreviewText)
-            .font(
-                AppFontStore.swiftUIFont(
-                    postScriptName: model.preferences.appFontPostScriptName,
-                    size: messageFontSize
-                )
-            )
-            .lineSpacing(4)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .foregroundStyle(foregroundColor)
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: userMessageTextMaxWidth, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(userBubbleSurface)
-            .environment(\.colorScheme, colorScheme)
+            .modifier(userNativeContextMenu)
     }
 
     private var userBubbleSurface: some View {
@@ -16511,6 +15799,7 @@ private struct MessageReactionChips: View {
 private struct MessageInlineActionsBar: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.messageInlineActionAdmission) private var actionAdmission
     let message: ChatMessage
     let onReaction: (ChatMessage, CGPoint) -> Void
     let onMore: (ChatMessage) -> Void
@@ -16719,7 +16008,8 @@ private struct MessageInlineActionsBar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            guard DrawerInlineActionTapGate.allowsAction else { return }
+            guard DrawerInlineActionTapGate.allowsAction,
+                  actionAdmission.allowsAction() else { return }
             model.performCardHaptic()
             action()
         } label: {
@@ -16743,7 +16033,8 @@ private struct MessageInlineActionsBar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            guard DrawerInlineActionTapGate.allowsAction else { return }
+            guard DrawerInlineActionTapGate.allowsAction,
+                  actionAdmission.allowsAction() else { return }
             model.performCardHaptic()
             action()
         } label: {
@@ -17381,10 +16672,98 @@ private struct ContextClearedDivider: View {
 private enum ChatDisclosureMotion {
     static let animation = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.18)
     static var transition: AnyTransition { .opacity }
+
+    @MainActor
+    static func animate(
+        using nativeMotion: NativeChatRowDisclosureMotion?,
+        completion: (() -> Void)? = nil,
+        changes: () -> Void
+    ) {
+        if let nativeMotion {
+            nativeMotion.animate(animation, completion: completion, changes: changes)
+        } else if let completion {
+            withAnimation(animation, completionCriteria: .removed, changes, completion: completion)
+        } else {
+            withAnimation(animation, changes)
+        }
+    }
+}
+
+/// Measure the complete selectable content, but reveal its height from the top.
+/// The answer below and the detail's clip use this same animated height.
+private struct ReasoningRevealLayout: Layout {
+    var progress: CGFloat
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else { return CGSize(width: proposal.width ?? 0, height: 0) }
+        let size = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? size.width, height: size.height * min(1, max(0, progress)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                             proposal: ProposedViewSize(width: bounds.width, height: nil))
+    }
+}
+
+private struct ReasoningDetails<Content: View>: View {
+    @State private var mounted: Bool
+    @State private var progress: CGFloat
+    @State private var transitionID = UUID()
+    let isExpanded: Bool
+    let content: Content
+
+    init(isExpanded: Bool, @ViewBuilder content: () -> Content) {
+        self.isExpanded = isExpanded
+        self.content = content()
+        _mounted = State(initialValue: isExpanded)
+        _progress = State(initialValue: isExpanded ? 1 : 0)
+    }
+
+    var body: some View {
+        ReasoningRevealLayout(progress: progress) {
+            if mounted { content.transition(.identity) }
+        }
+        .clipped()
+        .allowsHitTesting(isExpanded)
+        .accessibilityHidden(!isExpanded)
+        .onChange(of: isExpanded) { _, expanded in
+            let request = UUID()
+            transitionID = request
+            let changes = {
+                if expanded { mounted = true }
+                progress = expanded ? 1 : 0
+            }
+            let completion = {
+                guard transitionID == request, !isExpanded else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { mounted = false }
+            }
+            let animation = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.3)
+            // This also runs for automatic stream transitions. Reading
+            // ownership belongs to the card's button, not a layout change.
+            withAnimation(animation, completionCriteria: .removed, changes, completion: completion)
+        }
+        .onDisappear {
+            transitionID = UUID()
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                mounted = isExpanded
+                progress = isExpanded ? 1 : 0
+            }
+        }
+    }
 }
 
 private struct ReasoningCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.nativeChatRowDisclosureMotion) private var nativeMotion
     @State private var isLocallyCollapsed: Bool
     let message: ChatMessage
     let segment: ReasoningSegment
@@ -17445,14 +16824,13 @@ private struct ReasoningCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: usesPlainStyle ? 12 : 9) {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
                 guard DrawerInlineActionTapGate.allowsAction else { return }
+                nativeMotion?.beginManualMeasuredDisclosure()
                 if model.preferences.fullyCollapseThinking || isThinking {
                     let nextCollapsed = !isLocallyCollapsed
-                    withAnimation(ChatDisclosureMotion.animation) {
-                        isLocallyCollapsed = nextCollapsed
-                    }
+                    isLocallyCollapsed = nextCollapsed
                     if isThinking {
                         onStreamingCollapseChanged(
                             message.id,
@@ -17461,9 +16839,7 @@ private struct ReasoningCard: View {
                         )
                     }
                 } else {
-                    withAnimation(ChatDisclosureMotion.animation) {
-                        model.toggleReasoningExpanded(messageID: message.id, segmentID: segment.id)
-                    }
+                    model.toggleReasoningExpanded(messageID: message.id, segmentID: segment.id)
                 }
             } label: {
                 if usesPlainStyle {
@@ -17510,8 +16886,9 @@ private struct ReasoningCard: View {
                 }
             }
             .buttonStyle(.plain)
+            .animation(ChatDisclosureMotion.animation, value: isExpanded)
 
-            if isExpanded && !segment.text.isEmpty {
+            ReasoningDetails(isExpanded: isExpanded && !segment.text.isEmpty) {
                 MessageMarkdownView(
                     text: segment.text,
                     fontSize: 14,
@@ -17526,12 +16903,13 @@ private struct ReasoningCard: View {
                     codeBlockAppearance: model.preferences.codeBlockAppearance,
                     allowsTextSelection: allowsTextSelection,
                     prefersUnifiedNativeSelection: true,
+                    preparesDisclosureContent: true,
                     foregroundColor: thinkingTextColor ?? (usesPlainStyle ? Color.primary : Color.secondary),
                     selectionTintColor: Color(uiColor: model.themeTextSelectionUIColor),
                     fontName: model.preferences.appFontPostScriptName
                 )
                 .foregroundStyle(thinkingTextColor ?? (usesPlainStyle ? Color.primary : Color.secondary))
-                .transition(ChatDisclosureMotion.transition)
+                .padding(.top, usesPlainStyle ? 12 : 9)
             }
         }
         .padding(
@@ -17552,7 +16930,6 @@ private struct ReasoningCard: View {
                 )
             }
         }
-        .animation(ChatDisclosureMotion.animation, value: isExpanded)
     }
 
     private var thinkingBubbleColor: Color {
@@ -17907,6 +17284,7 @@ private struct WebSearchToolEventGroupSummary {
 }
 
 private struct WebSearchToolEventGroupRow: View {
+    @Environment(\.nativeChatRowDisclosureMotion) private var nativeDisclosureMotion
     let events: [ToolEvent]
     @State private var isExpanded = false
 
@@ -17917,7 +17295,7 @@ private struct WebSearchToolEventGroupRow: View {
             ? .red : .secondary
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withAnimation(ChatDisclosureMotion.animation) {
+                ChatDisclosureMotion.animate(using: nativeDisclosureMotion) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -17969,6 +17347,7 @@ private struct WebSearchToolEventGroupRow: View {
 }
 
 private struct ToolEventRow: View {
+    @Environment(\.nativeChatRowDisclosureMotion) private var nativeDisclosureMotion
     let event: ToolEvent
     var usesGroupedWebSearchLabel = false
     var parsedResult: ToolEventParsedResult? = nil
@@ -18119,7 +17498,7 @@ private struct ToolEventRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 guard hasDetails else { return }
-                withAnimation(ChatDisclosureMotion.animation) {
+                ChatDisclosureMotion.animate(using: nativeDisclosureMotion) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -18440,8 +17819,12 @@ private struct SidebarBackgroundView: View, @preconcurrency Equatable {
                     .frame(width: size.width, height: size.height)
                 }
             }
-            .frame(width: size.width, height: size.height)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
         }
+        // Own the full trailing extension here. A frame around this view can
+        // center the narrower GeometryReader and leave half the extension
+        // uncovered beside the main panel's rounded corner.
+        .frame(width: referenceWidth, alignment: .leading)
         .clipped()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -18497,7 +17880,6 @@ private struct ConversationDrawer: View {
                 referenceWidth: width + backgroundTrailingExtension
             )
                 .equatable()
-                .frame(width: width + backgroundTrailingExtension)
         }
     }
 }
@@ -18609,6 +17991,57 @@ private struct IOS18DrawerConversationListPositionOwner<Content: View>: View {
     }
 }
 
+private struct DrawerBottomActionsPalette {
+    let background: Color
+    let foreground: Color
+
+    init(theme: ThemePaletteID, customARGB: Int, colorScheme: ColorScheme) {
+        let selectedARGB: Int
+        switch theme {
+        case .defaultPalette:
+            selectedARGB = 0xff000000
+        case .custom:
+            selectedARGB = customARGB
+        default:
+            selectedARGB = colorScheme == .dark
+                ? theme.darkAccentARGB
+                : theme.lightAccentARGB
+        }
+        let opaqueARGB = 0xff000000 | (selectedARGB & 0x00ffffff)
+        background = Color(argb: opaqueARGB) ?? .black
+
+        func linear(_ channel: Int) -> Double {
+            let value = Double(channel) / 255
+            return value <= 0.04045
+                ? value / 12.92
+                : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear((opaqueARGB >> 16) & 0xff)
+            + 0.7152 * linear((opaqueARGB >> 8) & 0xff)
+            + 0.0722 * linear(opaqueARGB & 0xff)
+        foreground = luminance > 0.179 ? .black : .white
+    }
+}
+
+private struct DrawerBottomActionsSurface: View {
+    let background: Color
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            Capsule()
+                .fill(background)
+                .glassEffect(
+                    .regular.tint(background.opacity(0.72)),
+                    in: Capsule()
+                )
+        } else {
+            Capsule()
+                .fill(background)
+                .overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 0.8))
+        }
+    }
+}
+
 private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     private enum DrawerSearchScope: Equatable {
         case title
@@ -18636,12 +18069,14 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     }
 
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
     @State private var searchScope: DrawerSearchScope = .title
     @State private var isSearchModeActive = false
     @State private var contentSearchResults: [ConversationContentSearchResult] = []
     @State private var contentSearchResultQuery = ""
     @State private var isContentSearchRunning = false
+    @State private var dateContext = DrawerDateContext()
     @FocusState private var isSearchFocused: Bool
     @State private var assistantsExpanded = false
     @State private var groupChatMode = false
@@ -18719,7 +18154,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     }
 
     private func conversationDateGroups(for conversations: [Conversation]) -> [ConversationDateGroup] {
-        let calendar = Calendar.current
+        let calendar = dateContext.calendar
         let grouped = Dictionary(grouping: conversations) {
             calendar.startOfDay(for: $0.updatedAt)
         }
@@ -18737,9 +18172,13 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     }
 
     var body: some View {
-        let selectedConversationID = model.selectedConversationID
         let visibleContentSearchResults = self.visibleContentSearchResults
         let isWaitingForContentSearch = self.isWaitingForContentSearch
+        let bottomActionsPalette = DrawerBottomActionsPalette(
+            theme: model.preferences.themePaletteID,
+            customARGB: model.preferences.customThemeColorARGB,
+            colorScheme: colorScheme
+        )
 
         VStack(spacing: 0) {
             HStack {
@@ -18968,10 +18407,9 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                                 .padding(.horizontal, 12)
                                 .padding(.bottom, 2)
                             ForEach(visibleContentSearchResults) { result in
-                                contentSearchResultRow(
-                                    result,
-                                    isSelected: selectedConversationID == result.conversation.id
-                                )
+                                DrawerConversationSelection(conversationID: result.conversation.id) { isSelected in
+                                    contentSearchResultRow(result, isSelected: isSelected)
+                                }
                             }
                         }
                     } else if filteredConversations.isEmpty {
@@ -18994,10 +18432,9 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                                 .padding(.top, 10)
                                 .padding(.bottom, 2)
                             ForEach(group.conversations) { conversation in
-                                conversationRow(
-                                    conversation,
-                                    isSelected: selectedConversationID == conversation.id
-                                )
+                                DrawerConversationSelection(conversationID: conversation.id) { isSelected in
+                                    conversationRow(conversation, isSelected: isSelected)
+                                }
                             }
                         }
                     } else {
@@ -19007,10 +18444,9 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                             .padding(.horizontal, 12)
                             .padding(.bottom, 2)
                         ForEach(filteredConversations) { conversation in
-                            conversationRow(
-                                conversation,
-                                isSelected: selectedConversationID == conversation.id
-                            )
+                            DrawerConversationSelection(conversationID: conversation.id) { isSelected in
+                                conversationRow(conversation, isSelected: isSelected)
+                            }
                         }
                     }
                         }
@@ -19089,10 +18525,10 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                     }
                     .padding(.horizontal, 5)
                     .frame(height: 52)
+                    .foregroundStyle(bottomActionsPalette.foreground)
                     .background {
-                        GlassSurface(
-                            shape: Capsule(),
-                            backgroundOpacity: 0.10
+                        DrawerBottomActionsSurface(
+                            background: bottomActionsPalette.background
                         )
                     }
                 }
@@ -19111,6 +18547,12 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         // stale search result screen.
         .background {
             DrawerSearchCloseObserver(onClose: endDrawerSearch)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            refreshDateContext()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            refreshDateContext()
         }
         .task(id: contentSearchRequest) {
             await refreshContentSearch(for: contentSearchRequest)
@@ -19411,11 +18853,17 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         renameTitle = conversation.title
     }
 
+    private func refreshDateContext() {
+        let current = DrawerDateContext()
+        if current != dateContext { dateContext = current }
+    }
+
     private func dateLabel(for day: Date) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(day) { return L10n.lookup("今天") }
-        if calendar.isDateInYesterday(day) { return L10n.lookup("昨天") }
-        let format: Date.FormatStyle = calendar.component(.year, from: day) == calendar.component(.year, from: .now)
+        let calendar = dateContext.calendar
+        if calendar.isDate(day, inSameDayAs: dateContext.today) { return L10n.lookup("今天") }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: dateContext.today),
+           calendar.isDate(day, inSameDayAs: yesterday) { return L10n.lookup("昨天") }
+        let format: Date.FormatStyle = calendar.component(.year, from: day) == calendar.component(.year, from: dateContext.today)
             ? .dateTime.month().day()
             : .dateTime.year().month().day()
         return day.formatted(format)
@@ -19691,6 +19139,31 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     }
 }
 
+/// Selection changes belong to the mounted rows, not the list's filtering and
+/// date grouping. Keep row identity and actions inside the supplied content.
+/// The shared selection value may still update other visible row leaves.
+private struct DrawerConversationSelection<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    let conversationID: UUID
+    @ViewBuilder let content: (Bool) -> Content
+
+    var body: some View {
+        content(model.selectedConversationID == conversationID)
+    }
+}
+
+/// Only a day or calendar change invalidates date grouping when the app returns
+/// to the foreground. Selection and drawer motion do not own this input.
+private struct DrawerDateContext: Equatable {
+    let calendar: Calendar
+    let today: Date
+
+    init(now: Date = .now, calendar: Calendar = .current) {
+        self.calendar = calendar
+        today = calendar.startOfDay(for: now)
+    }
+}
+
 private struct ConversationDateGroup: Identifiable {
     let day: Date
     let conversations: [Conversation]
@@ -19838,7 +19311,7 @@ private struct FavoriteMessagesView: View {
                                 }
                                 guard didSelect else { return }
                                 withAnimation(.easeInOut(duration: 0.22)) {
-                                    model.setDrawerPresented(false)
+                                    model.setDrawerPresented(false, playHaptic: false)
                                 }
                                 dismiss()
                             } onRemove: {

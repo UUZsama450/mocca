@@ -62,9 +62,9 @@ Keychain service names, notification names, and legacy backup identifiers remain
 
 Keychain 服务名、通知名与旧备份标识继续保留，它们用于数据兼容，并非签名凭据。本次只使构建身份与后台任务标识可配置，不批量改写这些存储名称。
 
-The App Store 5057 submission and installed phone 5058 were not rebuilt or replaced by this preparation change. A future store archive needs its own source and identity verification.
+These portable defaults apply to the source snapshot, currently 1.0 (5128). Building it does not replace an installed app or alter an App Store release. A store archive needs its own source and identity verification.
 
-本次准备改动没有重建或替换送审的 5057、手机里的 5058；未来正式归档需要单独核对源码与应用身份。
+这些可移植默认值用于当前 1.0（5128）源码快照。构建源码不会替换已安装应用或改变 App Store 发布；正式归档需要单独核对源码与应用身份。
 
 Configuration file semantics: [Apple Xcode documentation](https://developer.apple.com/documentation/xcode/adding-a-build-configuration-file-to-your-project).
 

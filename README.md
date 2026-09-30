@@ -1,12 +1,12 @@
 # Mocca
 
-**A native AI chat app for iPhone, built with SwiftUI.**
+**A native AI chat app for iPhone, built with SwiftUI and UIKit.**
 
 English · [简体中文](README.zh-CN.md)
 
 Bring your own models, organize conversations with assistants, and keep your chat history on your device.
 
-> This repository is being prepared for publication. The development baseline is 1.0 (5058), separate from the 5057 App Store submission. Download links will be added when a release is available. See [source baseline](docs/SOURCE_BASELINE.md).
+> This private source repository tracks development build **1.0 (5128)**. It includes the UIKit chat transcript, drawer improvements, and reduced work when replies finish. See [snapshot changes and verification](docs/SNAPSHOT_5128.md) and [source baseline](docs/SOURCE_BASELINE.md). This source update does not create a downloadable app release.
 
 ## Features
 
@@ -41,7 +41,7 @@ See [build configuration](docs/BUILD_CONFIGURATION.md) for commands, signing ove
 
 ## Origins and acknowledgements
 
-Mocca comes from the [Kelivo](https://github.com/chevey339/kelivo) project and its product and data ecosystem. It develops that foundation into a native SwiftUI iPhone app under an independent name. Thank you to Kelivo and its contributors for the original work.
+Mocca comes from the [Kelivo](https://github.com/chevey339/kelivo) project and its product and data ecosystem. It develops that foundation into a native iPhone app under an independent name. Thank you to Kelivo and its contributors for the original work.
 
 Mocca is an unofficial, independent project. Some legacy names remain intentionally to preserve backup and data compatibility. See [NOTICE.md](NOTICE.md) for the source and modification history, and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party resources.
 

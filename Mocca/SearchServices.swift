@@ -495,10 +495,10 @@ enum SearchImageSelectionCodec {
         _ text: String,
         candidates: [SearchImageCandidate]
     ) -> Parsed {
-        let candidatesByID = Dictionary(
-            candidates.map { ($0.id, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
+        // Every complete marker requires this literal byte, irrespective of
+        // the regex's case folding. Keep malformed/control-looking text on
+        // the existing parser path, and skip ordinary final prose entirely.
+        guard text.utf8.contains(0x3C) else { return Parsed(displayText: text, requests: []) }
         let nsText = text as NSString
         let matches = fullRegex.matches(
             in: text,
@@ -507,6 +507,10 @@ enum SearchImageSelectionCodec {
         guard !matches.isEmpty else {
             return Parsed(displayText: text, requests: [])
         }
+        let candidatesByID = Dictionary(
+            candidates.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var seen = Set<String>()
         let requests = matches.compactMap { match -> SearchImageRequest? in
             guard match.numberOfRanges > 1,

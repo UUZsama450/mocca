@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		C50580000000000000000012 /* LobeIcons-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000011 /* LobeIcons-LICENSE.txt */; };
 		C50580000000000000000002 /* AppBuildConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000001 /* AppBuildConfiguration.swift */; };
+		BC5091000000000000000001 /* BackgroundImageCropEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC5091000000000000000002 /* BackgroundImageCropEditor.swift */; };
+		C50770000000000000000002 /* NativeChatTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50770000000000000000001 /* NativeChatTranscript.swift */; };
 		0F470D14F2CFC89633A2875E /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 292DE7838791E7B84FB42163 /* Foundation.framework */; };
 		A1C0DE120000000000000002 /* AIMessageReactionCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE120000000000000001 /* AIMessageReactionCodec.swift */; };
 		1A57A5D201B7C0DEA1140001 /* AssistantModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A57A5D201B7C0DEA1140002 /* AssistantModels.swift */; };
@@ -100,6 +102,8 @@
 		C50580000000000000000011 /* LobeIcons-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LobeIcons-LICENSE.txt"; sourceTree = "<group>"; };
 		C50580000000000000000001 /* AppBuildConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuildConfiguration.swift; sourceTree = "<group>"; };
 		C50580000000000000000003 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Configuration/Shared.xcconfig; sourceTree = "<group>"; };
+		BC5091000000000000000002 /* BackgroundImageCropEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundImageCropEditor.swift; sourceTree = "<group>"; };
+		C50770000000000000000001 /* NativeChatTranscript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeChatTranscript.swift; sourceTree = "<group>"; };
 		174FAD6002EC9DD090C5EBEC /* ProviderModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProviderModels.swift; sourceTree = "<group>"; };
 		A1C0DE120000000000000001 /* AIMessageReactionCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIMessageReactionCodec.swift; sourceTree = "<group>"; };
 		1A57A5D201B7C0DEA1140002 /* AssistantModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AssistantModels.swift; sourceTree = "<group>"; };
@@ -225,6 +229,7 @@
 			children = (
 				C50580000000000000000001 /* AppBuildConfiguration.swift */,
 				D65929F043A91AC7F097CC76 /* MoccaApp.swift */,
+				C50770000000000000000001 /* NativeChatTranscript.swift */,
 				39736C80662F903B8E18159D /* AppModel.swift */,
 				7F2C0B8B9E5F421EAC3D1041 /* ConversationStore.swift */,
 				1A57A5D201B7C0DEA1140002 /* AssistantModels.swift */,
@@ -236,6 +241,7 @@
 				C50110000000000000000011 /* AssistantFiles.swift */,
 				A1C0DE170000000000000001 /* RecentMemory.swift */,
 				1A57A5D201B7C0DEA1140004 /* AssistantViews.swift */,
+				BC5091000000000000000002 /* BackgroundImageCropEditor.swift */,
 				174FAD6002EC9DD090C5EBEC /* ProviderModels.swift */,
 				71C608177B7DC6F2FCCE64B0 /* SecureStore.swift */,
 				843BBBB24B7AD150C791BB3F /* AIChatService.swift */,
@@ -428,6 +434,7 @@
 			files = (
 				C50580000000000000000002 /* AppBuildConfiguration.swift in Sources */,
 				E90C63C21E5097AAB65B237B /* MoccaApp.swift in Sources */,
+				C50770000000000000000002 /* NativeChatTranscript.swift in Sources */,
 				E2A32D257C67EFBC3BFDB3AD /* AppModel.swift in Sources */,
 				3D4E85D38F41E0D2F3BF4A12 /* ConversationStore.swift in Sources */,
 				1A57A5D201B7C0DEA1140001 /* AssistantModels.swift in Sources */,
@@ -439,6 +446,7 @@
 				C50110000000000000000012 /* AssistantFiles.swift in Sources */,
 				A1C0DE170000000000000002 /* RecentMemory.swift in Sources */,
 				1A57A5D201B7C0DEA1140003 /* AssistantViews.swift in Sources */,
+				BC5091000000000000000001 /* BackgroundImageCropEditor.swift in Sources */,
 				AA103C225507E39B42C51783 /* ProviderModels.swift in Sources */,
 				209ED2D2737DB70759E5A3E4 /* SecureStore.swift in Sources */,
 				CA08EE7EDE549B9D3EF38AAB /* AIChatService.swift in Sources */,
@@ -519,7 +527,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5058;
+				CURRENT_PROJECT_VERSION = 5128;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -548,7 +556,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5058;
+				CURRENT_PROJECT_VERSION = 5128;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -642,7 +650,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5058;
+				CURRENT_PROJECT_VERSION = 5128;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -724,7 +732,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5058;
+				CURRENT_PROJECT_VERSION = 5128;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;

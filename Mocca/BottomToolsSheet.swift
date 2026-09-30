@@ -60,13 +60,6 @@ struct WorldBookToolItem: Identifiable, Hashable {
     var selected: Bool
 }
 
-struct AssistantToolItem: Identifiable, Hashable {
-    var profile: AssistantProfile
-
-    var id: UUID { profile.id }
-    var name: String { profile.name }
-}
-
 @MainActor
 private final class BottomToolsRefreshDisplayLinkTarget: NSObject {
     @objc func displayLinkDidFire(_ displayLink: CADisplayLink) {}
@@ -138,9 +131,6 @@ private final class BottomToolsTransitionRefreshLease {
 final class BottomToolsModel {
     @ObservationIgnored private let transitionRefresh = BottomToolsTransitionRefreshLease()
     var route: BottomToolsRoute = .root
-    var instructions: [InstructionToolItem] = []
-    var worldBooks: [WorldBookToolItem] = []
-    var assistants = [AssistantToolItem(profile: .makeDefault())]
     var selectedAssistantIDs = Set<UUID>()
     var isEditingGroupChat = false
     var lastAction: BottomToolAction?
@@ -190,21 +180,8 @@ final class BottomToolsModel {
         lastAction = action
     }
 
-    @discardableResult
-    func toggleInstruction(_ id: UUID) -> Bool {
-        guard let index = instructions.firstIndex(where: { $0.id == id }) else { return false }
+    func performSelectionHaptic() {
         haptic()
-        instructions[index].selected.toggle()
-        return true
-    }
-
-    @discardableResult
-    func toggleWorldBook(_ id: UUID) -> Bool {
-        guard let index = worldBooks.firstIndex(where: { $0.id == id }),
-              worldBooks[index].enabled || worldBooks[index].selected else { return false }
-        haptic()
-        worldBooks[index].selected.toggle()
-        return true
     }
 
     func toggleAssistant(_ id: UUID) {
@@ -238,6 +215,7 @@ struct BottomToolsSheet: View {
     @State private var isContextManagementConfirmationPresented = false
 
     private let rootDetent = PresentationDetent.height(355)
+    private let moreDetent = PresentationDetent.height(320)
     private let utilityDetent = PresentationDetent.height(320)
     private let detailDetent = PresentationDetent.fraction(0.82)
     private let attachmentHandoffDetent = PresentationDetent.height(1)
@@ -395,9 +373,10 @@ struct BottomToolsSheet: View {
             Color.clear
         case .more, .instruction, .contextManagement:
             // Keep the parent in the same structural branch for both children.
-            MoreToolsView(model: model) {
-                isMCPSelectionPresented = true
-            }
+            MoreToolsView(
+                model: model,
+                onMCP: { isMCPSelectionPresented = true }
+            )
         case .worldBook:
             WorldBookToolsView(
                 model: model,
@@ -437,7 +416,9 @@ struct BottomToolsSheet: View {
         switch route {
         case .root:
             rootDetent
-        case .more, .instruction, .worldBook, .contextManagement:
+        case .more:
+            moreDetent
+        case .instruction, .worldBook, .contextManagement:
             utilityDetent
         case .groupChat:
             detailDetent
@@ -640,12 +621,14 @@ private struct BottomToolsRootView: View {
     }
 
     private var worldBookStatus: String {
-        let count = model.worldBooks.filter(\.selected).count
-        return count == 0 ? L10n.lookup("未选择") : L10n.format("已启用 %@ 项", [String(describing: count)])
+        let books = appModel.bottomToolWorldBooks
+        let count = books.filter { $0.enabled && $0.selected }.count
+        if count > 0 { return L10n.format("已启用 %@ 项", [String(describing: count)]) }
+        return books.contains { $0.selected } ? L10n.lookup("关闭") : L10n.lookup("未选择")
     }
 
     private var worldBookEnabled: Bool {
-        model.worldBooks.contains { $0.selected }
+        appModel.bottomToolWorldBooks.contains { $0.enabled && $0.selected }
     }
 
     private func searchRetentionLabel(_ value: Int) -> String {
@@ -690,7 +673,7 @@ private struct MoreToolsView: View {
                 navigationRow(
                     systemName: "square.3.layers.3d",
                     title: L10n.lookup("指令注入"),
-                    subtitle: selectionStatus(model.instructions.filter(\.selected).count),
+                    subtitle: selectionStatus(appModel.bottomToolInstructions.filter(\.selected).count),
                     route: .instruction
                 )
                 navigationRow(
@@ -810,6 +793,7 @@ private struct ToolsSheetHeader: View {
 }
 
 private struct InstructionToolsView: View {
+    @Environment(AppModel.self) private var appModel
     @Bindable var model: BottomToolsModel
     let selectedMarkColor: Color
     let onToggle: (UUID) -> Void
@@ -817,7 +801,7 @@ private struct InstructionToolsView: View {
     var body: some View {
         VStack(spacing: 0) {
             ToolsSheetHeader(title: L10n.lookup("指令注入"), back: model.back)
-            if model.instructions.isEmpty {
+            if appModel.bottomToolInstructions.isEmpty {
                 Text(L10n.lookup("暂无指令注入卡片"))
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -825,7 +809,7 @@ private struct InstructionToolsView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(model.instructions) { item in
+                        ForEach(appModel.bottomToolInstructions) { item in
                             selectionRow(
                                 systemName: "square.3.layers.3d",
                                 title: item.title,
@@ -833,9 +817,8 @@ private struct InstructionToolsView: View {
                                 selected: item.selected,
                                 selectedMarkColor: selectedMarkColor
                             ) {
-                                if model.toggleInstruction(item.id) {
-                                    onToggle(item.id)
-                                }
+                                model.performSelectionHaptic()
+                                onToggle(item.id)
                             }
                         }
                     }
@@ -847,6 +830,7 @@ private struct InstructionToolsView: View {
 }
 
 private struct WorldBookToolsView: View {
+    @Environment(AppModel.self) private var appModel
     @Bindable var model: BottomToolsModel
     let selectedMarkColor: Color
     let onToggle: (UUID) -> Void
@@ -854,7 +838,7 @@ private struct WorldBookToolsView: View {
     var body: some View {
         VStack(spacing: 0) {
             ToolsSheetHeader(title: L10n.lookup("世界书"), back: model.back)
-            if model.worldBooks.isEmpty {
+            if appModel.bottomToolWorldBooks.isEmpty {
                 Text(L10n.lookup("暂无世界书"))
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -862,7 +846,7 @@ private struct WorldBookToolsView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(model.worldBooks) { item in
+                        ForEach(appModel.bottomToolWorldBooks) { item in
                             selectionRow(
                                 systemName: "book",
                                 title: item.name,
@@ -870,9 +854,8 @@ private struct WorldBookToolsView: View {
                                 selected: item.selected,
                                 selectedMarkColor: selectedMarkColor
                             ) {
-                                if model.toggleWorldBook(item.id) {
-                                    onToggle(item.id)
-                                }
+                                model.performSelectionHaptic()
+                                onToggle(item.id)
                             }
                             .disabled(!item.enabled && !item.selected)
                             .opacity(item.enabled || item.selected ? 1 : 0.45)
@@ -886,8 +869,15 @@ private struct WorldBookToolsView: View {
 }
 
 private struct GroupChatToolsView: View {
+    @Environment(AppModel.self) private var appModel
     @Bindable var model: BottomToolsModel
     let onAction: (BottomToolAction) -> Void
+
+    private var selectedAvailableAssistantIDs: [UUID] {
+        appModel.assistants.compactMap {
+            model.selectedAssistantIDs.contains($0.id) ? $0.id : nil
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -901,13 +891,13 @@ private struct GroupChatToolsView: View {
 
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(model.assistants) { assistant in
+                    ForEach(appModel.assistants) { assistant in
                         let selected = model.selectedAssistantIDs.contains(assistant.id)
                         Button {
                             model.toggleAssistant(assistant.id)
                         } label: {
                             HStack(spacing: 12) {
-                                AssistantAvatarView(profile: assistant.profile, size: 38)
+                                AssistantAvatarView(profile: assistant, size: 38)
                                 Text(assistant.name)
                                     .font(.system(size: 17, weight: .medium))
                                 Spacer()
@@ -930,32 +920,29 @@ private struct GroupChatToolsView: View {
             }
 
             Button {
-                let orderedIDs = model.assistants.compactMap {
-                    model.selectedAssistantIDs.contains($0.id) ? $0.id : nil
-                }
-                onAction(.saveGroupChat(orderedIDs, editing: model.isEditingGroupChat))
+                onAction(.saveGroupChat(selectedAvailableAssistantIDs, editing: model.isEditingGroupChat))
             } label: {
                 Text(buttonTitle)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(model.selectedAssistantIDs.count >= 2 ? .white : .secondary)
+                    .foregroundStyle(selectedAvailableAssistantIDs.count >= 2 ? .white : .secondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
                     .background(
-                        model.selectedAssistantIDs.count >= 2
+                        selectedAvailableAssistantIDs.count >= 2
                             ? Color.accentColor
                             : Color.primary.opacity(0.08),
                         in: Capsule()
                     )
             }
             .buttonStyle(.plain)
-            .disabled(model.selectedAssistantIDs.count < 2)
+            .disabled(selectedAvailableAssistantIDs.count < 2)
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
         }
     }
 
     private var buttonTitle: String {
-        guard model.selectedAssistantIDs.count >= 2 else { return L10n.lookup("请至少选择两个助手") }
+        guard selectedAvailableAssistantIDs.count >= 2 else { return L10n.lookup("请至少选择两个助手") }
         return model.isEditingGroupChat ? L10n.lookup("更新群聊") : L10n.lookup("创建群聊")
     }
 }
