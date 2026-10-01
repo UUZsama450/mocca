@@ -5,7 +5,7 @@ import SwiftUI
 import Combine
 import UIKit
 
-private struct MessageInlineActionAdmission: Sendable {
+struct MessageInlineActionAdmission: Sendable {
     var allowsAction: @MainActor @Sendable () -> Bool = { true }
 }
 
@@ -13,7 +13,7 @@ private struct MessageInlineActionAdmissionKey: EnvironmentKey {
     static let defaultValue = MessageInlineActionAdmission()
 }
 
-private extension EnvironmentValues {
+extension EnvironmentValues {
     var messageInlineActionAdmission: MessageInlineActionAdmission {
         get { self[MessageInlineActionAdmissionKey.self] }
         set { self[MessageInlineActionAdmissionKey.self] = newValue }
@@ -3755,7 +3755,7 @@ private struct ChatView: View {
     @State private var messageTargetNavigationTask: Task<Void, Never>?
     @State private var messageTargetCoordinatorRequestID: UUID?
     @State private var nativeReleasedMessageTargetRequestID: UUID?
-    @State private var landedMessageTargetID: UUID?
+    @State private var landedMessageTargetRequest: MessageTargetNavigationRequest?
     @State private var concreteFavoriteTargetMessageID: UUID?
     @State private var chatScrollViewBox = WeakChatScrollViewBox()
     @State private var composerKeyboardMotionSource = ComposerKeyboardMotionSource()
@@ -3765,7 +3765,6 @@ private struct ChatView: View {
     @State private var messageFrames: [UUID: CGRect] = [:]
     @State private var messageFramesAnchorID: ConversationBottomAnchorID?
     @State private var messageFramesLayoutRequestID: UUID?
-    @State private var concreteEntryTailAnchorID: ConversationBottomAnchorID?
     @State private var messageFrameGeneration: UInt64 = 0
     @State private var automaticReasoningExpandedCheckpoint:
         AutomaticReasoningExpandedCheckpoint?
@@ -4067,29 +4066,6 @@ private struct ChatView: View {
         }
     }
 
-    private func measuredEntryTailAnchorID(
-        _ anchorID: ConversationBottomAnchorID,
-        frame: CGRect
-    ) -> ConversationBottomAnchorID? {
-        guard frame.minX.isFinite, frame.minY.isFinite,
-              frame.maxY.isFinite, frame.width.isFinite,
-              frame.height.isFinite,
-              frame.width > 0, frame.height > 0 else { return nil }
-        return anchorID
-    }
-
-    private func acknowledgeMeasuredEntryTail(
-        _ anchorID: ConversationBottomAnchorID?
-    ) {
-        guard let anchorID,
-              anchorID == currentConversationBottomAnchorID,
-              isBoundedConversationEntry,
-              nativeConversationContentReadyAnchorID != anchorID,
-              concreteEntryTailAnchorID != anchorID else { return }
-        concreteEntryTailAnchorID = anchorID
-        VersionFlashTrace.record("ENTRY_TAIL_LAYOUT_ACK req=\(anchorID.positionRequest.request)")
-    }
-
     private func conversationMessageHost(
         _ host: ConversationMessageHost,
         isGroupConversation: Bool,
@@ -4259,10 +4235,6 @@ private struct ChatView: View {
                       bottomAnchorID == currentConversationBottomAnchorID,
                       publicationID.layoutRequestID == activeCodeLayoutRequestID else { return }
                 nativeTranscriptGeometry.geometry = geometry
-                if let tailID = bottomAnchorID.messageIDs.last,
-                   let frame = geometry.frames[tailID] {
-                    acknowledgeMeasuredEntryTail(measuredEntryTailAnchorID(bottomAnchorID, frame: frame))
-                }
             },
             onCodeLayout: { frames in
                 guard bottomAnchorID == currentConversationBottomAnchorID,
@@ -4575,7 +4547,11 @@ private struct ChatView: View {
                     // A transcript tap makes the visible geometry the
                     // new reading position for the next adjacent jump.
                     navigationAnchorMessageID = nil
-                    dismissKeyboard()
+                    // A selected message can be the first responder too.
+                    // Dismiss only our input so UIKit keeps owning its
+                    // selection highlight, handles, and edit-menu toggles.
+                    ComposerTextSelectionInteractionGate.focusedComposerInput?
+                        .resignFirstResponder()
                 }
             )
             .simultaneousGesture(
@@ -4848,9 +4824,6 @@ private struct ChatView: View {
             if nativeConversationContentReadyAnchorID != currentAnchorID {
                 nativeConversationContentReadyAnchorID = nil
             }
-            if concreteEntryTailAnchorID != currentAnchorID {
-                concreteEntryTailAnchorID = nil
-            }
             if messageFramesAnchorID != currentAnchorID {
                 messageFramesAnchorID = nil
                 messageFrames = [:]
@@ -4932,7 +4905,7 @@ private struct ChatView: View {
                     reason: "conversationPositionChanged"
                 )
                 invalidateVersionReplacement(reason: "conversationChange")
-                landedMessageTargetID = nil
+                landedMessageTargetRequest = nil
                 pendingKeyboardViewportPin = nil
                 cancelKeyboardNativeSettleWatcher()
                 isNativeScrollPhaseActive = false
@@ -5089,6 +5062,7 @@ private struct ChatView: View {
         }
         .onChange(of: visibleMessages.last?.id) { _, _ in
             completeFreshConversationBottomHandoffIfNeeded()
+            finishRegenerationTargetNavigationIfNeeded()
         }
         .onChange(of: automaticReasoningCollapseObservation) {
             previousObservation,
@@ -5170,13 +5144,6 @@ private struct ChatView: View {
                         using: scrollProxy
                     )
                 }
-            }
-            .onChange(of: concreteEntryTailAnchorID) { _, anchorID in
-                guard let anchorID,
-                      anchorID == bottomAnchorID,
-                      let snapshot = latestConversationBottomAnchorFrame,
-                      snapshot.anchorID == anchorID else { return }
-                handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
             }
         }
         return drawerObservedSurface
@@ -5562,7 +5529,7 @@ private struct ChatView: View {
             messageTargetNavigationTask = nil
             messageTargetCoordinatorRequestID = nil
             nativeReleasedMessageTargetRequestID = nil
-            landedMessageTargetID = nil
+            landedMessageTargetRequest = nil
             concreteFavoriteTargetMessageID = nil
             isComposerKeyboardPresented = false
             cancelMessageReplacementLanding()
@@ -5689,7 +5656,7 @@ private struct ChatView: View {
             || automaticReasoningCollapseRearmRequest != nil
             || automaticReasoningCollapseOwner != nil
             || regenerationViewportTransitionCoordinator.hasActiveWork
-            || landedMessageTargetID != nil
+            || landedMessageTargetRequest != nil
             || concreteFavoriteTargetMessageID != nil
             || messageTargetNavigationTask != nil
             || messageTargetCoordinatorRequestID != nil
@@ -5994,7 +5961,7 @@ private struct ChatView: View {
         // Revoke bottom-follow immediately while the favorites sheet and drawer
         // finish releasing their interaction ownership.
         cancelCodeDisclosure(reason: "messageTargetNavigation")
-        landedMessageTargetID = nil
+        landedMessageTargetRequest = nil
         if isCoveredFavoriteTargetRequest(targetRequest) {
             concreteFavoriteTargetMessageID = targetRequest.messageID
             ChatBottomTrace.log(
@@ -6146,7 +6113,7 @@ private struct ChatView: View {
         }
         nativeReleasedMessageTargetRequestID = nil
         concreteFavoriteTargetMessageID = nil
-        landedMessageTargetID = nil
+        landedMessageTargetRequest = nil
         model.consumeMessageTargetNavigationRequest(targetRequest.id)
         regenerationViewportTransitionCoordinator.reveal(
             requestID: targetRequest.id,
@@ -6254,7 +6221,7 @@ private struct ChatView: View {
         regenerationViewportTransitionCoordinator.cancelAll(
             reason: "userInteraction"
         )
-        landedMessageTargetID = nil
+        landedMessageTargetRequest = nil
         concreteFavoriteTargetMessageID = nil
         messageTargetNavigationTask?.cancel()
         messageTargetNavigationTask = nil
@@ -6746,16 +6713,6 @@ private struct ChatView: View {
             || model.conversationBottomReturnTargetID == model.selectedConversationID
     }
 
-    private var isBoundedConversationEntry: Bool {
-        guard positioningConversationID == model.selectedConversationID
-                || model.conversationBottomReturnTargetID == model.selectedConversationID
-        else { return false }
-        // The drawer search keyboard belongs to the outgoing surface. It must
-        // not prevent the selected conversation's first real layout.
-        return !model.selectedConversationIsStreaming
-            && model.usesConcreteConversationEntryWindow
-    }
-
     private var isOrdinaryConversationReturn: Bool {
         guard positioningConversationID == model.selectedConversationID
                 || model.conversationBottomReturnTargetID == model.selectedConversationID
@@ -6815,7 +6772,33 @@ private struct ChatView: View {
     }
 
     private var isMessageTargetNavigationOwned: Bool {
-        isMessageTargetNavigationActive || landedMessageTargetID != nil
+        isMessageTargetNavigationActive || landedMessageTargetRequest != nil
+    }
+
+    private func finishRegenerationTargetNavigationIfNeeded() {
+        guard let request = landedMessageTargetRequest,
+              request.regenerationSourceMessageID != nil,
+              request.conversationID == model.selectedConversationID,
+              request.conversationPositionRequest
+                == model.conversationBottomReturnRequest,
+              !model.hasLaterMessages,
+              let tail = model.messages.last,
+              tail.isStreaming,
+              tail.id == model.activeStreamingMessageID(for: request.conversationID)
+        else { return }
+        // Regeneration first lands on its user row. Once its new reply is the
+        // actual conversation tail, that completed target must yield to the
+        // existing streaming follower. A user drag already clears this request;
+        // a historical regeneration cannot pin an unrelated later reply.
+        landedMessageTargetRequest = nil
+        navigationAnchorMessageID = nil
+        autoFollowEngaged = model.preferences.autoScrollEnabled
+        ChatBottomTrace.log(
+            "REGENERATION_TARGET_RELEASED"
+                + " request=\(ChatBottomTrace.shortID(request.id))"
+                + " tail=\(ChatBottomTrace.shortID(tail.id)) "
+                + chatBottomTraceState
+        )
     }
 
     private var ownsCurrentDoubleEdgeNavigation: Bool {
@@ -8419,8 +8402,20 @@ private struct ChatView: View {
     ) -> Bool {
         guard currentConversationBottomAnchorID == anchorID,
               let tailMessageID = anchorID.messageIDs.last else { return false }
-        if isBoundedConversationEntry,
-           concreteEntryTailAnchorID == anchorID {
+        // Native geometry includes only current, measured, mounted message
+        // hosts. Read that same publication directly during static entry;
+        // no separate latched acknowledgement or SwiftUI state relay is needed.
+        if isPositioningCurrentConversation,
+           !model.selectedConversationIsStreaming,
+           let geometry = nativeTranscriptDriver.latestGeometry,
+           geometry.sessionID == AnyHashable(anchorID.positionRequest.conversationID),
+           geometry.publicationID == AnyHashable(NativeChatPublicationID(
+               anchorID: anchorID, layoutRequestID: activeCodeLayoutRequestID
+           )),
+           let frame = geometry.frames[tailMessageID],
+           frame.minX.isFinite, frame.minY.isFinite, frame.maxY.isFinite,
+           frame.width.isFinite, frame.height.isFinite,
+           frame.width > 0, frame.height > 0 {
             return true
         }
         return validConcreteMessageFrame(
@@ -8520,7 +8515,8 @@ private struct ChatView: View {
 
     private func awaitNativeNavigationPublication(
         _ anchorID: ConversationBottomAnchorID,
-        request: MessageNavigationRequest
+        request: MessageNavigationRequest,
+        requiredTarget: (messageID: UUID, minY: CGFloat)? = nil
     ) async -> Bool {
         let publication = NativeChatPublicationID(
             anchorID: anchorID,
@@ -8534,7 +8530,9 @@ private struct ChatView: View {
                 && !hasConcreteNativeUserScrollOwnership
                 && !model.isDrawerPresented
         }
-        return await awaitNativeTranscriptPublication(publication, isCurrent: isCurrent)
+        return await awaitNativeTranscriptPublication(
+            publication, requiredTarget: requiredTarget, isCurrent: isCurrent
+        )
     }
 
     /// Await the actual native publication before handing it a command. The
@@ -8542,6 +8540,7 @@ private struct ChatView: View {
     /// queued main-loop turns alone cannot prove a hosted revision arrived.
     private func awaitNativeTranscriptPublication(
         _ publication: NativeChatPublicationID,
+        requiredTarget: (messageID: UUID, minY: CGFloat)? = nil,
         isCurrent: @escaping @MainActor () -> Bool
     ) async -> Bool {
         func matches(_ geometry: NativeChatScrollGeometry?) -> Bool {
@@ -8552,6 +8551,18 @@ private struct ChatView: View {
                   let scrollView = chatScrollViewBox.scrollView,
                   scrollView === nativeTranscriptDriver.scrollView,
                   scrollView.window != nil else { return false }
+            if let requiredTarget {
+                // A new publication can precede the surviving hosted row's
+                // final frame. Favorite entry must retain its verified landing
+                // (including a clamped landing) before refreshing text coverage.
+                guard let frame = geometry.frames[requiredTarget.messageID],
+                      frame.minY.isFinite, frame.height.isFinite,
+                      frame.height > 0,
+                      abs(frame.minY - requiredTarget.minY) <= 2,
+                      abs(geometry.contentOffset.y - scrollView.contentOffset.y) <= 2,
+                      abs(geometry.contentSize.height - scrollView.contentSize.height) <= 2
+                else { return false }
+            }
             return true
         }
         guard !Task.isCancelled, isCurrent() else { return false }
@@ -9107,6 +9118,9 @@ private struct ChatView: View {
             let regenerationSourceMessageID =
                 targetRequest.regenerationSourceMessageID
             if isCoveredFavoriteTargetRequest(targetRequest) {
+                guard messageFramesAnchorID == hostAnchorID,
+                      let landingFrame = messageFrames[messageID],
+                      landingFrame.minY.isFinite else { return }
                 var loadedEarlierWindow = false
                 if model.hasEarlierMessages {
                     // The isolated target window deliberately has no estimated
@@ -9133,12 +9147,23 @@ private struct ChatView: View {
                             return
                         }
                         guard await awaitNativeNavigationPublication(
-                            currentConversationBottomAnchorID, request: request
+                            currentConversationBottomAnchorID, request: request,
+                            requiredTarget: (messageID, landingFrame.minY)
                         ) else { return }
                     }
                 }
+                guard !Task.isCancelled,
+                      navigationRequest == request,
+                      model.pendingMessageTargetNavigationRequest == targetRequest,
+                      let scrollView = chatScrollViewBox.scrollView,
+                      scrollView === nativeTranscriptDriver.scrollView,
+                      scrollView.window != nil else { return }
+                // Prepending history moves an unchanged text host after the
+                // offset notification. Refresh its final viewport coverage
+                // once while the favorite cover still owns the transition.
+                MessageTextViewportDrawing.refreshAfterLayout(in: scrollView)
                 concreteFavoriteTargetMessageID = nil
-                landedMessageTargetID = nil
+                landedMessageTargetRequest = nil
                 model.consumeMessageTargetNavigationRequest(targetRequest.id)
                 ChatBottomTrace.log(
                     "FAVORITE_TARGET_OWNERSHIP_RELEASED"
@@ -9149,7 +9174,7 @@ private struct ChatView: View {
                         + chatBottomTraceState
                 )
             } else {
-                landedMessageTargetID = messageID
+                landedMessageTargetRequest = targetRequest
                 model.consumeMessageTargetNavigationRequest(targetRequest.id)
             }
             if let regenerationSourceMessageID {
@@ -15065,33 +15090,10 @@ private struct MessageRow: View {
                             assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
                             ForEach(Array(assistantTextSegments.enumerated()), id: \.offset) { segmentIndex, text in
-                                MessageMarkdownView(
+                                assistantMessageMarkdown(
                                     text: text,
-                                    fontSize: messageFontSize,
-                                    lineSpacing: CGFloat(model.preferences.assistantMessageLineSpacing),
-                                    listItemSpacing: CGFloat(model.preferences.assistantMarkdownListItemSpacing),
-                                    blockSpacingScale: CGFloat(model.preferences.assistantMarkdownBlockSpacingScale),
-                                    isStreaming: message.isStreaming,
-                                    rendersMarkdown: model.preferences.enableAssistantMarkdown,
-                                    htmlRunnerEnabled: model.preferences.htmlRunnerEnabled,
-                                    htmlRunnerAllowCurrentChat: model.preferences.htmlRunnerAllowCurrentChat,
-                                    htmlRunnerConversationID: message.conversationID,
-                                    autoCollapseCodeBlock: model.preferences.autoCollapseCodeBlock,
-                                    collapsedCodeLineLimit: model.preferences.autoCollapseCodeBlockLines,
-                                    codeBlockAppearance: model.preferences.codeBlockAppearance,
-                                    allowsTextSelection: allowsTextSelection,
-                                    prefersUnifiedNativeSelection: true,
-                                    foregroundColor: chatTextColor(for: .assistant) ?? Color(uiColor: .label),
-                                    largeHeadingColor: Color(argb: model.preferences.assistantLargeHeadingColorARGB),
-                                    smallHeadingColor: Color(argb: model.preferences.assistantSmallHeadingColorARGB),
-                                    selectionTintColor: Color(uiColor: model.themeTextSelectionUIColor),
-                                    fontName: model.preferences.appFontPostScriptName,
-                                    versionFlashContext: versionFlashContext,
-                                    versionFlashSegmentIndex: segmentIndex,
-                                    citationSources: citationSources,
-                                    contentMutationContext: contentMutationBridge.context(
-                                        region: .messageText(segmentIndex)
-                                    )
+                                    messageFontSize: messageFontSize,
+                                    segmentIndex: segmentIndex
                                 )
                                 .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
                                 .padding(.vertical, 2)
@@ -15163,33 +15165,10 @@ private struct MessageRow: View {
                             assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
                             ForEach(Array(assistantTextSegments.enumerated()), id: \.offset) { segmentIndex, text in
-                                MessageMarkdownView(
+                                assistantMessageMarkdown(
                                     text: text,
-                                    fontSize: messageFontSize,
-                                    lineSpacing: CGFloat(model.preferences.assistantMessageLineSpacing),
-                                    listItemSpacing: CGFloat(model.preferences.assistantMarkdownListItemSpacing),
-                                    blockSpacingScale: CGFloat(model.preferences.assistantMarkdownBlockSpacingScale),
-                                    isStreaming: message.isStreaming,
-                                    rendersMarkdown: model.preferences.enableAssistantMarkdown,
-                                    htmlRunnerEnabled: model.preferences.htmlRunnerEnabled,
-                                    htmlRunnerAllowCurrentChat: model.preferences.htmlRunnerAllowCurrentChat,
-                                    htmlRunnerConversationID: message.conversationID,
-                                    autoCollapseCodeBlock: model.preferences.autoCollapseCodeBlock,
-                                    collapsedCodeLineLimit: model.preferences.autoCollapseCodeBlockLines,
-                                    codeBlockAppearance: model.preferences.codeBlockAppearance,
-                                    allowsTextSelection: allowsTextSelection,
-                                    prefersUnifiedNativeSelection: true,
-                                    foregroundColor: chatTextColor(for: .assistant) ?? Color(uiColor: .label),
-                                    largeHeadingColor: Color(argb: model.preferences.assistantLargeHeadingColorARGB),
-                                    smallHeadingColor: Color(argb: model.preferences.assistantSmallHeadingColorARGB),
-                                    selectionTintColor: Color(uiColor: model.themeTextSelectionUIColor),
-                                    fontName: model.preferences.appFontPostScriptName,
-                                    versionFlashContext: versionFlashContext,
-                                    versionFlashSegmentIndex: segmentIndex,
-                                    citationSources: citationSources,
-                                    contentMutationContext: contentMutationBridge.context(
-                                        region: .messageText(segmentIndex)
-                                    )
+                                    messageFontSize: messageFontSize,
+                                    segmentIndex: segmentIndex
                                 )
                                 .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
                                 .padding(.horizontal, 14)
@@ -15284,6 +15263,41 @@ private struct MessageRow: View {
                 model.upsertAssistant(saved)
             }
         }
+    }
+
+    private func assistantMessageMarkdown(
+        text: String,
+        messageFontSize: CGFloat,
+        segmentIndex: Int
+    ) -> MessageMarkdownView {
+        MessageMarkdownView(
+            text: text,
+            fontSize: messageFontSize,
+            lineSpacing: CGFloat(model.preferences.assistantMessageLineSpacing),
+            listItemSpacing: CGFloat(model.preferences.assistantMarkdownListItemSpacing),
+            blockSpacingScale: CGFloat(model.preferences.assistantMarkdownBlockSpacingScale),
+            isStreaming: message.isStreaming,
+            rendersMarkdown: model.preferences.enableAssistantMarkdown,
+            htmlRunnerEnabled: model.preferences.htmlRunnerEnabled,
+            htmlRunnerAllowCurrentChat: model.preferences.htmlRunnerAllowCurrentChat,
+            htmlRunnerConversationID: message.conversationID,
+            autoCollapseCodeBlock: model.preferences.autoCollapseCodeBlock,
+            collapsedCodeLineLimit: model.preferences.autoCollapseCodeBlockLines,
+            codeBlockAppearance: model.preferences.codeBlockAppearance,
+            allowsTextSelection: allowsTextSelection,
+            prefersUnifiedNativeSelection: true,
+            foregroundColor: chatTextColor(for: .assistant) ?? Color(uiColor: .label),
+            largeHeadingColor: Color(argb: model.preferences.assistantLargeHeadingColorARGB),
+            smallHeadingColor: Color(argb: model.preferences.assistantSmallHeadingColorARGB),
+            selectionTintColor: Color(uiColor: model.themeTextSelectionUIColor),
+            fontName: model.preferences.appFontPostScriptName,
+            versionFlashContext: versionFlashContext,
+            versionFlashSegmentIndex: segmentIndex,
+            citationSources: citationSources,
+            contentMutationContext: contentMutationBridge.context(
+                region: .messageText(segmentIndex)
+            )
+        )
     }
 
     private func assistantSettingsButton(for assistant: AssistantProfile) -> some View {
@@ -15925,7 +15939,7 @@ private struct MessageInlineActionsBar: View {
         case .speech:
             actionButton(
                 systemName: isSpeaking ? "stop.circle" : action.systemImage,
-                label: isSpeaking ? L10n.lookup("停止朗读") : action.title,
+                label: L10n.lookup(isSpeaking ? "停止朗读" : action.title),
                 color: isSpeaking ? Color.green : nil,
                 disabled: textForActions.isEmpty
             ) {
@@ -16051,9 +16065,129 @@ private struct MessageInlineActionsBar: View {
     }
 }
 
+/// Captured only when details are opened. The message's recorded identifiers
+/// remain authoritative even after the conversation changes model or provider.
+private struct MessageDetailsSnapshot {
+    let createdAt: Date
+    let providerID: String?
+    let providerName: String?
+    let modelID: String?
+    let modelName: String?
+
+    init(message: ChatMessage, providers: [ProviderConfiguration]) {
+        func recordedValue(_ value: String?) -> String? {
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty else { return nil }
+            return value
+        }
+
+        createdAt = message.createdAt
+        providerID = recordedValue(message.providerID)
+        let recordedModelID = recordedValue(message.modelID)
+        modelID = recordedModelID
+        let recordedProviderUUID = providerID.flatMap(UUID.init(uuidString:))
+        let provider = providers.first { $0.id == recordedProviderUUID }
+        providerName = recordedValue(provider?.name)
+        modelName = recordedValue(provider?.models.first { $0.id == recordedModelID }?.displayName)
+    }
+}
+
+private struct MessageDetailsContent: View {
+    @Environment(\.locale) private var locale
+    let details: MessageDetailsSnapshot
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                detailRow(
+                    L10n.lookup("消息时间"),
+                    systemImage: "clock",
+                    value: details.createdAt.formatted(
+                        .dateTime.year().month().day().hour().minute().second().locale(locale)
+                    ),
+                    identifier: "messageDetails.time"
+                )
+                rowDivider
+                detailRow(
+                    L10n.lookup("provider.field.label"),
+                    systemImage: "network",
+                    value: details.providerName ?? L10n.lookup(
+                        details.providerID == nil ? "未记录" : "未找到原供应商"
+                    ),
+                    identifier: "messageDetails.provider"
+                )
+                rowDivider
+                detailRow(
+                    L10n.lookup("模型"),
+                    systemImage: "cube",
+                    value: details.modelName ?? details.modelID ?? L10n.lookup("未记录"),
+                    secondary: details.modelName != nil && details.modelName != details.modelID
+                        ? details.modelID : nil,
+                    identifier: "messageDetails.model"
+                )
+            }
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 20)
+        }
+    }
+
+    private var rowDivider: some View {
+        Divider().padding(.leading, 52).padding(.trailing, 16)
+    }
+
+    private func detailRow(
+        _ title: String,
+        systemImage: String,
+        value: String,
+        secondary: String? = nil,
+        identifier: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .padding(.top, 8)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(verbatim: value)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(identifier)
+                if let secondary {
+                    Text(verbatim: secondary)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier(identifier + ".id")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+    }
+}
+
+private enum MessageActionsSheetRow: Identifiable {
+    case details
+    case action(AssistantMessageMoreActionItem)
+
+    var id: String {
+        switch self {
+        case .details: "message-details"
+        case .action(let action): action.id
+        }
+    }
+}
+
 private struct MessageActionsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let message: ChatMessage
     let onDelete: (ChatMessage, Bool) -> Void
 
@@ -16063,6 +16197,8 @@ private struct MessageActionsSheet: View {
     @State private var isDeleteConfirmationPresented = false
     @State private var isDeleteAllVersionsConfirmationPresented = false
     @State private var isRegenerateConfirmationPresented = false
+    @State private var details: MessageDetailsSnapshot?
+    @State private var isShowingDetails = false
 
     private var isBookmarked: Bool {
         model.messages.first(where: { $0.id == message.id })?.reactions.bookmarkedAt != nil
@@ -16106,12 +16242,26 @@ private struct MessageActionsSheet: View {
         return max(model.versions(for: message.id).count, 1)
     }
 
+    private var menuRows: [MessageActionsSheetRow] {
+        let actions = visibleMoreActions
+        var rows = actions.map(MessageActionsSheetRow.action)
+        // Keep existing custom action order and persisted preferences intact.
+        // Details sit just above deletion; they also remain available when
+        // the user has hidden every configurable action.
+        let insertionIndex = actions.firstIndex(of: .standard(.delete))
+            ?? actions.firstIndex(of: .deleteAllVersions)
+            ?? actions.count
+        rows.insert(.details, at: insertionIndex)
+        return rows
+    }
+
     private var deleteActionTitle: String {
         responseVersionCount > 1 ? L10n.lookup("删除当前版本") : L10n.lookup("删除")
     }
 
     private var preferredSheetHeight: CGFloat {
-        let rowCount = visibleMoreActions.count
+        if isShowingDetails { return 380 }
+        let rowCount = menuRows.count
         let rowContentHeight = CGFloat(rowCount) * 50
             + CGFloat(max(rowCount - 1, 0)) * 4
         let measuredContentHeight = rowCount == 0
@@ -16129,32 +16279,24 @@ private struct MessageActionsSheet: View {
                 .padding(.top, 10)
                 .padding(.bottom, 12)
 
-            Text(L10n.lookup("消息操作"))
-                .font(.system(size: 17, weight: .semibold))
-                .padding(.bottom, 10)
-
-            ScrollView {
-                VStack(spacing: 4) {
-                    if visibleMoreActions.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.system(size: 26))
-                            Text(L10n.lookup("没有已启用的菜单操作"))
-                                .font(.system(size: 15, weight: .medium))
-                            Text(L10n.lookup("可以在“消息操作按钮”设置中重新开启"))
-                                .font(.caption)
+            GeometryReader { proxy in
+                ZStack(alignment: .top) {
+                    navigationPage(at: 0, size: proxy.size) {
+                        VStack(spacing: 0) {
+                            pageHeader(isDetails: false)
+                            menuContent
                         }
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 34)
-                    } else {
-                        ForEach(visibleMoreActions) { action in
-                            moreActionRow(action)
+                    }
+                    navigationPage(at: 1, size: proxy.size) {
+                        VStack(spacing: 0) {
+                            pageHeader(isDetails: true)
+                            if let details {
+                                MessageDetailsContent(details: details)
+                            }
                         }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 18)
+                .clipped()
             }
         }
         .presentationDetents([.height(preferredSheetHeight), .large])
@@ -16215,18 +16357,79 @@ private struct MessageActionsSheet: View {
         }
     }
 
+    private func navigationPage<Content: View>(
+        at depth: Int, size: CGSize, @ViewBuilder content: () -> Content
+    ) -> some View {
+        let currentDepth = isShowingDetails ? 1 : 0
+        let position = depth == currentDepth ? 0 : (depth < currentDepth ? -1 : 1)
+        return content()
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .offset(x: reduceMotion ? 0 : CGFloat(position) * size.width)
+            .opacity(position == 0 ? 1 : (position < 0 || reduceMotion ? 0 : 0.35))
+            .allowsHitTesting(position == 0)
+            .accessibilityHidden(position != 0)
+    }
+
+    private func pageHeader(isDetails: Bool) -> some View {
+        Text(L10n.lookup(isDetails ? "消息详情" : "消息操作"))
+            .font(.system(size: 17, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .leading) {
+                if isDetails {
+                    Button {
+                        model.performCardHaptic()
+                        // Keep the captured page alive while it slides out.
+                        withAnimation(.easeInOut(duration: 0.28)) {
+                            isShowingDetails = false
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 12)
+                    .accessibilityLabel(L10n.lookup("返回消息操作"))
+                }
+            }
+            .padding(.bottom, 10)
+    }
+
+    private var menuContent: some View {
+        ScrollView {
+            VStack(spacing: 4) {
+                ForEach(menuRows) { row in
+                    switch row {
+                    case .details:
+                        actionRow(L10n.lookup("消息详情"), systemName: "info.circle") {
+                            details = MessageDetailsSnapshot(message: message, providers: model.providers)
+                            withAnimation(.easeInOut(duration: 0.30)) {
+                                isShowingDetails = true
+                            }
+                        }
+                    case .action(let action):
+                        moreActionRow(action)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 18)
+        }
+    }
+
     @ViewBuilder
     private func moreActionRow(_ item: AssistantMessageMoreActionItem) -> some View {
         switch item {
         case .deleteAllVersions:
-            actionRow(item.title, systemName: item.systemImage, role: .destructive) {
+            actionRow(L10n.lookup(item.title), systemName: item.systemImage, role: .destructive) {
                 isDeleteAllVersionsConfirmationPresented = true
             }
         case .standard(let action):
         switch action {
         case .bookmark:
             actionRow(
-                isBookmarked ? L10n.lookup("取消收藏") : action.title,
+                L10n.lookup(isBookmarked ? "取消收藏" : action.title),
                 systemName: isBookmarked ? "bookmark.slash" : action.systemImage
             ) {
                 model.toggleMessageBookmark(message.id)
@@ -18508,7 +18711,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                                 .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(L10n.lookup("收藏"))
+                        .accessibilityLabel(L10n.lookup("bookmarks.title"))
 
                         Button {
                             guard !isDrawerTapSuppressed else { return }
@@ -19099,13 +19302,12 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // The drawer stays mounted while the main conversation switches.
-        // Recreate only the two rows whose selection bit changed so a lazy
-        // row cannot retain the previous selection indicator/background node.
+        // Selection is observed by DrawerConversationSelection. Update the
+        // mounted row in place instead of replacing its lazy layout node
+        // while the drawer is moving or an assistant list is collapsing.
         .id(
             ConversationDrawerRowIdentity(
                 conversationID: conversation.id,
-                isSelected: isSelected,
                 title: conversation.title
             )
         )
@@ -19229,7 +19431,6 @@ private struct DrawerUnreadReplyIndicator: View {
 
 private struct ConversationDrawerRowIdentity: Hashable {
     let conversationID: UUID
-    let isSelected: Bool
     // A renamed conversation must get a fresh lazy-row render node. Without
     // the title in this identity, the persisted value can change while the
     // drawer keeps displaying its cached label until the app is relaunched.
@@ -19328,7 +19529,7 @@ private struct FavoriteMessagesView: View {
                 }
             }
             .background(Color(uiColor: model.themeSurfaceUIColor).ignoresSafeArea())
-            .navigationTitle(L10n.lookup("收藏"))
+            .navigationTitle(L10n.lookup("bookmarks.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

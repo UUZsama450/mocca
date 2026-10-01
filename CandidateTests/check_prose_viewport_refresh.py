@@ -63,6 +63,7 @@ swift += '''@MainActor private final class GlyphSelectableTextView: UIView {
     var textContainerInset = Insets()
     var coveredViewportRect = CGRect.null
     var drawerViewportRefreshKey: DrawerViewportRefreshKey?
+    var preparesDisclosureContent = false
     weak var observedOuterScrollView: UIScrollView?
     var redraws: [CGRect] = []
     func setNeedsDisplay(_ rect: CGRect) { redraws.append(rect) }
@@ -143,6 +144,23 @@ swift += '''}
               && following.decorationLayoutManager.messageTextTraceTextBounds == following.bounds
               && following.redraws.count == redrawsBeforeTrace,
               "enabled diagnostics still update rectangles without changing viewport drawing")
+        let phoneWindow = UIWindow(CGRect(x: 0, y: 0, width: 402, height: 874))
+        let phoneScroll = UIScrollView(phoneWindow.bounds)
+        phoneWindow.addSubview(phoneScroll)
+        let phoneText = GlyphSelectableTextView(CGRect(x: 23, y: -1170.7, width: 356, height: 2841.3))
+        phoneScroll.addSubview(phoneText)
+        MessageTextViewportDrawing.refreshAfterLayout(in: phoneScroll)
+        check(abs(phoneText.coveredViewportRect.minY - 450.7) < 0.1,
+              "phone prepend notification prepares the lower range")
+        phoneText.frame.origin.y = 89.3
+        check(phoneText.coveredViewportRect.minY > 450,
+              "moving the host alone leaves its upper text outside drawing coverage")
+        MessageTextViewportDrawing.refreshAfterLayout(in: phoneScroll)
+        check(phoneText.coveredViewportRect.minY == 0 && phoneText.redraws.count == 2,
+              "final favorite landing refresh includes the upper text")
+        MessageTextViewportDrawing.refreshAfterLayout(in: phoneScroll)
+        check(phoneText.redraws.count == 2 && phoneText.bounds.height == 2841.3,
+              "repeated acknowledgment preserves height and reuses coverage")
         print("PASS \\(count) prose viewport checks (UIKit hierarchy double)")
     }
 }

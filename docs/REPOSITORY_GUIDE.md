@@ -4,9 +4,9 @@
 
 ## Source snapshot / 源码快照
 
-This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0 (5128)**. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
+This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0 (5135)**. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
 
-本仓库从开发版 1.0（5058）的源码快照开始，现已更新至 **1.0（5128）**，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
+本仓库从开发版 1.0（5058）的源码快照开始，现已更新至 **1.0（5135）**，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
 
 This is a portable source snapshot for the private [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Configurable signing identity, disabled-by-default sponsorship and the reviewed asset set distinguish it from the device build. This update does not create a downloadable app or change App Store releases.
 
@@ -30,9 +30,9 @@ Historical notes retain their original build context. Their presence does not me
 
 ## Verification boundary / 验证范围
 
-The 5128 source update is compiled and checked separately from the original development build. Commands, results and limits are recorded in [5128 changes and verification](SNAPSHOT_5128.md). The first 5058 preparation's results remain historical evidence in [source baseline](SOURCE_BASELINE.md). Device interaction, real purchases and release signing require their own verification.
+The 5135 source update is compiled and checked separately from the original development build. Commands, results and limits are recorded in [5128 changes and verification](SNAPSHOT_5135.md). The first 5058 preparation's results remain historical evidence in [source baseline](SOURCE_BASELINE.md). Device interaction, real purchases and release signing require their own verification.
 
-5128 源码更新独立进行编译与检查，命令、结果和限制记录在[本次变更与验证](SNAPSHOT_5128.md)中。5058 首次整理的结果作为历史证据保留在[源码基线](SOURCE_BASELINE.md)。真机交互、实际购买和发布签名需要分别验证。
+5135 源码更新独立进行编译与检查，命令、结果和限制记录在[本次变更与验证](SNAPSHOT_5135.md)中。5058 首次整理的结果作为历史证据保留在[源码基线](SOURCE_BASELINE.md)。真机交互、实际购买和发布签名需要分别验证。
 
 Generated apps, build caches, device logs, private chats, backups, signing credentials and machine-local overrides are outside the source snapshot. See [.gitignore](../.gitignore) for exclusion rules. Ignore rules support this boundary; they do not replace reviewing the tracked tree and Git history before publication.
 
@@ -43,3 +43,5 @@ Generated apps, build caches, device logs, private chats, backups, signing crede
 Local Git commits preserve local versions; they do not update GitHub automatically. Selected source updates are reviewed, committed and explicitly synchronized to `main`, preserving the existing publication history. Repository visibility stays private. Public source or binary distribution is a separate action.
 
 本地 Git 提交用于保存本地版本，不会自动更新 GitHub。选定的源码更新经过检查、提交，再明确同步到 `main`，保留已有发布历史。仓库继续保持私有；公开源码或分发安装包是另外的操作。
+
+See [development workflow / 开发维护流程](DEVELOPMENT_WORKFLOW.md) for branch, validation, merge and synchronization steps.

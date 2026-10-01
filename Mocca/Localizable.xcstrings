@@ -1,6 +1,231 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "provider.field.label": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "供应商"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider"
+          }
+        }
+      }
+    },
+    "serviceProvider.field.label": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务商"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider"
+          }
+        }
+      }
+    },
+    "bookmarks.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bookmarks"
+          }
+        }
+      }
+    },
+    "favoriteModels.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favorites"
+          }
+        }
+      }
+    },
+    "favoriteModels.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有收藏"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No favorites yet"
+          }
+        }
+      }
+    },
+    "服务商中断了回复": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider interrupted the reply"
+          }
+        }
+      }
+    },
+    "未分类聊天暂时无法整理，原聊天已保留。请稍后重新打开 App。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unassigned chats could not be organized right now. Your original chats were kept. Reopen the app later."
+          }
+        }
+      }
+    },
+    "头像保存失败": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to save avatar"
+          }
+        }
+      }
+    },
+    "压缩失败：模型没有返回摘要": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context compression failed: the model returned no summary"
+          }
+        }
+      }
+    },
+    "压缩失败：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context compression failed: %@"
+          }
+        }
+      }
+    },
+    "图片保存失败": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to save image"
+          }
+        }
+      }
+    },
+    "无法读取文件“%@”": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to read the file “%@”"
+          }
+        }
+      }
+    },
+    "翻译失败：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Translation failed: %@"
+          }
+        }
+      }
+    },
+    "%@的消息": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message from %@"
+          }
+        }
+      }
+    },
+    "消息详情": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Message Details" } }
+      }
+    },
+    "消息时间": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Message time" } }
+      }
+    },
+    "未记录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Not recorded" } }
+      }
+    },
+    "未找到原供应商": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Original provider not found" } }
+      }
+    },
+    "返回消息操作": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Back to message actions" } }
+      }
+    },
+    "GitHub 仓库": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "GitHub Repository"
+          }
+        }
+      }
+    },
     "此模型未启用工具调用，无法使用应用搜索服务。请检查模型能力设置，或选择支持内置搜索的模型。": {
       "extractionState": "manual",
       "localizations": {
@@ -480,7 +705,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "JPEG images quality"
+            "value": "JPEG image quality"
           }
         }
       }
@@ -1393,7 +1618,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "World Book"
+            "value": "Lorebook"
           }
         }
       }
@@ -3021,7 +3246,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Something else"
+            "value": "Other"
           }
         }
       }
@@ -4011,7 +4236,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Compress Model"
+            "value": "Context compression model"
           }
         }
       }
@@ -5491,7 +5716,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Complete Overwrite"
+            "value": "Replace All"
           }
         }
       }
@@ -5898,7 +6123,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tool"
+            "value": "Tools"
           }
         }
       }
@@ -6492,7 +6717,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Started"
+            "value": "Start"
           }
         }
       }
@@ -7086,7 +7311,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reset font settings"
+            "value": "Restore defaults"
           }
         }
       }
@@ -8175,7 +8400,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Favorite"
+            "value": "Bookmark"
           }
         }
       }
@@ -9215,7 +9440,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No world books yet"
+            "value": "No lorebooks yet"
           }
         }
       }
@@ -9336,7 +9561,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Add"
+            "value": "More"
           }
         }
       }
@@ -9765,7 +9990,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Unnamed World Book"
+            "value": "Untitled lorebook"
           }
         }
       }
@@ -12889,7 +13114,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Monospace"
+            "value": "System default"
           }
         }
       }
@@ -12933,7 +13158,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ended"
+            "value": "End"
           }
         }
       }
@@ -13351,7 +13576,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Group Chat"
+            "value": "Group Chat Settings"
           }
         }
       }
@@ -16145,7 +16370,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Configure"
+            "value": "Configuration"
           }
         }
       }
@@ -17883,7 +18108,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Active on %@ days"
+            "value": "Active days: %@"
           }
         }
       }
@@ -21141,6 +21366,83 @@
           "stringUnit": {
             "state": "translated",
             "value": "Image response stopped"
+          }
+        }
+      }
+    },
+    "正在检查备份…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking backup…"
+          }
+        }
+      }
+    },
+    "正在备份当前数据…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backing up current data…"
+          }
+        }
+      }
+    },
+    "正在导入备份…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importing backup…"
+          }
+        }
+      }
+    },
+    "正在读取 ZIP 并检查备份内容。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading the ZIP file and checking its contents."
+          }
+        }
+      }
+    },
+    "覆盖导入前，先为当前数据保留一份安全备份。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saving a safety backup of your current data before replacing it."
+          }
+        }
+      }
+    },
+    "正在恢复备份中的数据，完成后会显示导入结果。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restoring the backup. The result will appear when the import finishes."
+          }
+        }
+      }
+    },
+    "大备份可能需要较长时间，请保持 App 打开并耐心等待。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Large backups may take a while. Please keep the app open and wait."
           }
         }
       }

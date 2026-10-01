@@ -108,7 +108,7 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "使用统计", context: "关于与支持", keywords: "统计 Token 消息", systemImage: "chart.bar", destination: .usage),
         .init(title: "使用文档", context: "关于与支持", keywords: "帮助 文档", systemImage: "doc.text", destination: .documentation),
         .init(title: "隐私政策", context: "关于与支持", keywords: "隐私 数据 权限 第三方", systemImage: "hand.raised", destination: .privacy),
-        .init(title: "关于与许可", context: "关于与支持", keywords: "关于 Mocca 开源 AGPL 许可", systemImage: "doc.badge.gearshape", destination: .legal),
+        .init(title: "关于与许可", context: "关于与支持", keywords: "关于 Mocca GitHub 仓库 源码 repository source 开源 AGPL 许可", systemImage: "doc.badge.gearshape", destination: .legal),
         .init(title: "赞助", context: "关于与支持", keywords: "支持 捐赠", systemImage: "gift", destination: .sponsor)
     ]
 }
@@ -361,7 +361,7 @@ struct SettingsView: View {
                         }
                         .settingsOverviewRowStyle()
                     }
-                    if settingsMatch("关于与许可", keywords: "关于 Mocca 开源 AGPL 许可") {
+                    if settingsMatch("关于与许可", keywords: "关于 Mocca GitHub 仓库 源码 repository source 开源 AGPL 许可") {
                         NavigationLink {
                             MoccaLegalNoticesPage()
                         } label: {
@@ -664,7 +664,7 @@ struct SettingsView: View {
             || settingsMatch("使用统计", keywords: "统计 Token 消息")
             || settingsMatch("使用文档", keywords: "帮助 文档")
             || settingsMatch("隐私政策", keywords: "隐私 数据 权限 第三方")
-            || settingsMatch("关于与许可", keywords: "关于 Mocca 开源 AGPL 许可")
+            || settingsMatch("关于与许可", keywords: "关于 Mocca GitHub 仓库 源码 repository source 开源 AGPL 许可")
             || (AppBuildConfiguration.sponsorshipEnabled && settingsMatch("赞助", keywords: "支持 捐赠"))
     }
 
@@ -1693,6 +1693,51 @@ private struct SettingsRowLabel: View {
     }
 }
 
+private struct PreferenceToggle: View {
+    @Environment(AppModel.self) private var model
+
+    let title: String
+    let systemImage: String
+    let keyPath: WritableKeyPath<UserPreferences, Bool>
+
+    var body: some View {
+        Toggle(
+            isOn: Binding(
+                get: { model.preferences[keyPath: keyPath] },
+                set: { value in
+                    model.performSwitchHaptic()
+                    model.updatePreferences { $0[keyPath: keyPath] = value }
+                }
+            )
+        ) {
+            SettingsRowLabel(title: title, systemImage: systemImage)
+        }
+    }
+}
+
+private struct PreferenceDetailButton: View {
+    let title: String
+    let systemImage: String
+    let detail: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                SettingsRowLabel(title: title, systemImage: systemImage)
+                Spacer(minLength: 12)
+                Text(detail)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct PreferenceNavigationRowLabel: View {
     let title: String
     let subtitle: String
@@ -2018,6 +2063,9 @@ private struct MoccaLegalNoticesPage: View {
             Section(L10n.lookup("了解 Mocca")) {
                 Link(destination: URL(string: "https://uuzsama450.github.io/mocca-website/")!) {
                     Label(L10n.lookup("Mocca 网站"), systemImage: "arrow.up.right.square")
+                }
+                Link(destination: URL(string: "https://github.com/UUZsama450/mocca")!) {
+                    Label(L10n.lookup("GitHub 仓库"), systemImage: "chevron.left.forwardslash.chevron.right")
                 }
                 Link(destination: URL(string: "https://uuzsama450.github.io/mocca-website/support.html")!) {
                     Label(L10n.lookup("帮助与支持"), systemImage: "questionmark.circle")
@@ -2867,6 +2915,7 @@ private struct ChatHeatmapWeek: Identifiable {
 }
 
 private struct ChatActivityHeatmap: View {
+    @Environment(\.locale) private var locale
     let weeks: [ChatHeatmapWeek]
     let accentColor: Color
 
@@ -2912,7 +2961,7 @@ private struct ChatActivityHeatmap: View {
     private var activitySummary: some View {
         HStack(spacing: 10) {
             if let selectedDay {
-                Text(selectedDay.date.formatted(date: .abbreviated, time: .omitted))
+                Text(selectedDay.date.formatted(.dateTime.year().month(.abbreviated).day().locale(locale)))
                     .fontWeight(.medium)
                 Spacer(minLength: 8)
                 Text(L10n.format("%@ 条消息", [String(describing: selectedDay.count.formatted())]))
@@ -3013,7 +3062,7 @@ private struct ChatActivityHeatmap: View {
         .buttonStyle(.plain)
         .disabled(day.isFuture)
         .accessibilityHidden(day.isFuture)
-        .accessibilityLabel(day.date.formatted(date: .abbreviated, time: .omitted))
+        .accessibilityLabel(day.date.formatted(.dateTime.year().month(.abbreviated).day().locale(locale)))
         .accessibilityValue(L10n.format("%@ 条消息", [String(describing: day.count)]))
     }
 
@@ -3026,12 +3075,12 @@ private struct ChatActivityHeatmap: View {
         })
         if index == 0 {
             return (firstOfMonth?.date ?? week.startDate)
-                .formatted(.dateTime.month(.abbreviated))
+                .formatted(.dateTime.month(.abbreviated).locale(locale))
         }
         guard let firstOfMonth else {
             return ""
         }
-        return firstOfMonth.date.formatted(.dateTime.month(.abbreviated))
+        return firstOfMonth.date.formatted(.dateTime.month(.abbreviated).locale(locale))
     }
 
     private func weekdayLabel(at index: Int) -> String {
@@ -3504,7 +3553,7 @@ struct PreferencesPage: View {
                     }
                 }
 
-                preferenceButton(
+                PreferenceDetailButton(
                     title: L10n.lookup("聊天字体大小"),
                     systemImage: "textformat.size",
                     detail: "\(Int((model.preferences.chatFontScale * 100).rounded()))%"
@@ -3542,7 +3591,7 @@ struct PreferencesPage: View {
             }
 
             Section {
-                preferenceButton(
+                PreferenceDetailButton(
                     title: L10n.lookup("输入框占位文字"),
                     systemImage: "text.cursor",
                     detail: model.preferences.chatInputPlaceholder.isEmpty
@@ -3568,7 +3617,7 @@ struct PreferencesPage: View {
                 }
 
                 if showsChatInputBackgroundOpacity {
-                    preferenceButton(
+                    PreferenceDetailButton(
                         title: L10n.lookup("输入框背景透明度"),
                         systemImage: "circle.lefthalf.filled",
                         detail: L10n.format("亮 %@%% / 暗 %@%%", [String(describing: Int((model.preferences.chatInputBackgroundOpacityLight * 100).rounded())), String(describing: Int((model.preferences.chatInputBackgroundOpacityDark * 100).rounded()))])
@@ -3583,7 +3632,7 @@ struct PreferencesPage: View {
             }
 
             Section {
-                preferenceButton(
+                PreferenceDetailButton(
                     title: L10n.lookup("图片压缩质量"),
                     systemImage: "photo.on.rectangle",
                     detail: model.preferences.userImageCompressionQuality >= 100
@@ -3794,27 +3843,6 @@ struct PreferencesPage: View {
                 )
             }
         }
-    }
-
-    private func preferenceButton(
-        title: String,
-        systemImage: String,
-        detail: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                SettingsRowLabel(title: title, systemImage: systemImage)
-                Spacer(minLength: 12)
-                Text(detail)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -4483,9 +4511,9 @@ private struct ChatItemDisplayPreferencesPage: View {
             }
 
             Section(L10n.lookup("用户消息")) {
-                preferenceToggle(L10n.lookup("显示用户头像"), systemImage: "person.crop.circle", keyPath: \.showUserAvatar)
-                preferenceToggle(L10n.lookup("显示用户名称"), systemImage: "person.text.rectangle", keyPath: \.showUserName)
-                preferenceToggle(L10n.lookup("显示用户时间"), systemImage: "clock", keyPath: \.showUserTimestamp)
+                PreferenceToggle(title: L10n.lookup("显示用户头像"), systemImage: "person.crop.circle", keyPath: \.showUserAvatar)
+                PreferenceToggle(title: L10n.lookup("显示用户名称"), systemImage: "person.text.rectangle", keyPath: \.showUserName)
+                PreferenceToggle(title: L10n.lookup("显示用户时间"), systemImage: "clock", keyPath: \.showUserTimestamp)
                 LabeledContent {
                     Text(L10n.lookup("长按气泡"))
                         .foregroundStyle(.secondary)
@@ -4518,35 +4546,17 @@ private struct ChatItemDisplayPreferencesPage: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                preferenceToggle(L10n.lookup("AI 消息反应"), systemImage: "heart", keyPath: \.aiMessageReactionsEnabled)
-                preferenceToggle(L10n.lookup("显示模型图标"), systemImage: "sparkles", keyPath: \.showModelIcon)
-                preferenceToggle(L10n.lookup("显示模型名称"), systemImage: "message", keyPath: \.showModelName)
-                preferenceToggle(L10n.lookup("显示模型时间"), systemImage: "clock", keyPath: \.showModelTimestamp)
-                preferenceToggle(L10n.lookup("在消息中显示供应商"), systemImage: "globe", keyPath: \.showProviderInChatMessage)
-                preferenceToggle(L10n.lookup("显示 Token 用量"), systemImage: "number", keyPath: \.showTokenUsage)
+                PreferenceToggle(title: L10n.lookup("AI 消息反应"), systemImage: "heart", keyPath: \.aiMessageReactionsEnabled)
+                PreferenceToggle(title: L10n.lookup("显示模型图标"), systemImage: "sparkles", keyPath: \.showModelIcon)
+                PreferenceToggle(title: L10n.lookup("显示模型名称"), systemImage: "message", keyPath: \.showModelName)
+                PreferenceToggle(title: L10n.lookup("显示模型时间"), systemImage: "clock", keyPath: \.showModelTimestamp)
+                PreferenceToggle(title: L10n.lookup("在消息中显示供应商"), systemImage: "globe", keyPath: \.showProviderInChatMessage)
+                PreferenceToggle(title: L10n.lookup("显示 Token 用量"), systemImage: "number", keyPath: \.showTokenUsage)
             }
         }
         .settingsGroupedPageStyle()
         .navigationTitle(L10n.lookup("消息显示"))
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func preferenceToggle(
-        _ title: String,
-        systemImage: String,
-        keyPath: WritableKeyPath<UserPreferences, Bool>
-    ) -> some View {
-        Toggle(
-            isOn: Binding(
-                get: { model.preferences[keyPath: keyPath] },
-                set: { value in
-                    model.performSwitchHaptic()
-                    model.updatePreferences { $0[keyPath: keyPath] = value }
-                }
-            )
-        ) {
-            SettingsRowLabel(title: title, systemImage: systemImage)
-        }
     }
 }
 
@@ -4699,7 +4709,7 @@ private struct RenderingPreferencesPage: View {
     var body: some View {
         Form {
             Section(L10n.lookup("阅读排版")) {
-                preferenceButton(
+                PreferenceDetailButton(
                     title: L10n.lookup("助手消息行间距"),
                     systemImage: "arrow.up.and.down.text.horizontal",
                     detail: String(format: "%.1f pt", model.preferences.assistantMessageLineSpacing)
@@ -4707,7 +4717,7 @@ private struct RenderingPreferencesPage: View {
                     activeSpacingSheet = .assistantLineSpacing
                 }
 
-                preferenceButton(
+                PreferenceDetailButton(
                     title: L10n.lookup("Markdown 列表间距"),
                     systemImage: "list.bullet",
                     detail: String(format: "%.1f pt", model.preferences.assistantMarkdownListItemSpacing)
@@ -4715,7 +4725,7 @@ private struct RenderingPreferencesPage: View {
                     activeSpacingSheet = .assistantMarkdownListItemSpacing
                 }
 
-                preferenceButton(
+                PreferenceDetailButton(
                     title: L10n.lookup("Markdown 块间距"),
                     systemImage: "text.alignleft",
                     detail: "\(Int((model.preferences.assistantMarkdownBlockSpacingScale * 100).rounded()))%"
@@ -4725,9 +4735,9 @@ private struct RenderingPreferencesPage: View {
             }
 
             Section("Markdown") {
-                preferenceToggle(L10n.lookup("用户消息 Markdown"), systemImage: "text.alignleft", keyPath: \.enableUserMarkdown)
-                preferenceToggle(L10n.lookup("思考内容 Markdown"), systemImage: "brain.head.profile", keyPath: \.enableReasoningMarkdown)
-                preferenceToggle(L10n.lookup("助手消息 Markdown"), systemImage: "message", keyPath: \.enableAssistantMarkdown)
+                PreferenceToggle(title: L10n.lookup("用户消息 Markdown"), systemImage: "text.alignleft", keyPath: \.enableUserMarkdown)
+                PreferenceToggle(title: L10n.lookup("思考内容 Markdown"), systemImage: "brain.head.profile", keyPath: \.enableReasoningMarkdown)
+                PreferenceToggle(title: L10n.lookup("助手消息 Markdown"), systemImage: "message", keyPath: \.enableAssistantMarkdown)
             }
 
             Section {
@@ -4748,11 +4758,11 @@ private struct RenderingPreferencesPage: View {
                     SettingsRowLabel(title: L10n.lookup("代码框颜色"), systemImage: "circle.lefthalf.filled")
                 }
 
-                preferenceToggle(L10n.lookup("运行 HTML 小网页"), systemImage: "play.rectangle", keyPath: \.htmlRunnerEnabled)
+                PreferenceToggle(title: L10n.lookup("运行 HTML 小网页"), systemImage: "play.rectangle", keyPath: \.htmlRunnerEnabled)
                 if model.preferences.htmlRunnerEnabled {
-                    preferenceToggle(L10n.lookup("允许读取当前聊天"), systemImage: "message", keyPath: \.htmlRunnerAllowCurrentChat)
+                    PreferenceToggle(title: L10n.lookup("允许读取当前聊天"), systemImage: "message", keyPath: \.htmlRunnerAllowCurrentChat)
                 }
-                preferenceToggle(L10n.lookup("自动折叠代码块"), systemImage: "chevron.up.chevron.down", keyPath: \.autoCollapseCodeBlock)
+                PreferenceToggle(title: L10n.lookup("自动折叠代码块"), systemImage: "chevron.up.chevron.down", keyPath: \.autoCollapseCodeBlock)
                 if model.preferences.autoCollapseCodeBlock {
                     Stepper(
                         value: Binding(
@@ -4852,45 +4862,6 @@ private struct RenderingPreferencesPage: View {
             }
         }
     }
-
-    private func preferenceToggle(
-        _ title: String,
-        systemImage: String,
-        keyPath: WritableKeyPath<UserPreferences, Bool>
-    ) -> some View {
-        Toggle(
-            isOn: Binding(
-                get: { model.preferences[keyPath: keyPath] },
-                set: { value in
-                    model.performSwitchHaptic()
-                    model.updatePreferences { $0[keyPath: keyPath] = value }
-                }
-            )
-        ) {
-            SettingsRowLabel(title: title, systemImage: systemImage)
-        }
-    }
-
-    private func preferenceButton(
-        title: String,
-        systemImage: String,
-        detail: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                SettingsRowLabel(title: title, systemImage: systemImage)
-                Spacer(minLength: 12)
-                Text(detail)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .buttonStyle(.plain)
-    }
 }
 
 private struct RenderingPreferencesGuideView: View {
@@ -4921,11 +4892,11 @@ private struct BehaviorStartupPreferencesPage: View {
     var body: some View {
         Form {
             Section {
-                preferenceToggle(L10n.lookup("默认完全折叠思考链"), systemImage: "brain.head.profile", keyPath: \.fullyCollapseThinking)
-                preferenceToggle(L10n.lookup("自动折叠思考过程"), systemImage: "chevron.down", keyPath: \.autoCollapseThinking)
+                PreferenceToggle(title: L10n.lookup("默认完全折叠思考链"), systemImage: "brain.head.profile", keyPath: \.fullyCollapseThinking)
+                PreferenceToggle(title: L10n.lookup("自动折叠思考过程"), systemImage: "chevron.down", keyPath: \.autoCollapseThinking)
                     .disabled(model.preferences.fullyCollapseThinking)
-                preferenceToggle(L10n.lookup("重新生成时删除后续消息"), systemImage: "trash", keyPath: \.regenerateDeleteTrailingMessages)
-                preferenceToggle(L10n.lookup("显示重新生成确认弹窗"), systemImage: "exclamationmark.bubble", keyPath: \.showRegenerateConfirmDialog)
+                PreferenceToggle(title: L10n.lookup("重新生成时删除后续消息"), systemImage: "trash", keyPath: \.regenerateDeleteTrailingMessages)
+                PreferenceToggle(title: L10n.lookup("显示重新生成确认弹窗"), systemImage: "exclamationmark.bubble", keyPath: \.showRegenerateConfirmDialog)
             } header: {
                 Text(L10n.lookup("思考与重新生成"))
             } footer: {
@@ -4947,9 +4918,9 @@ private struct BehaviorStartupPreferencesPage: View {
                     SettingsRowLabel(title: L10n.lookup("消息导航按钮"), systemImage: "chevron.up.chevron.down")
                 }
 
-                preferenceToggle(L10n.lookup("会话列表显示日期"), systemImage: "calendar", keyPath: \.showChatListDate)
-                preferenceToggle(L10n.lookup("点击助手后保持侧栏打开"), systemImage: "sidebar.left", keyPath: \.keepSidebarOpenOnAssistantTap)
-                preferenceToggle(L10n.lookup("点击话题后保持侧栏打开"), systemImage: "list.bullet.rectangle", keyPath: \.keepSidebarOpenOnTopicTap)
+                PreferenceToggle(title: L10n.lookup("会话列表显示日期"), systemImage: "calendar", keyPath: \.showChatListDate)
+                PreferenceToggle(title: L10n.lookup("点击助手后保持侧栏打开"), systemImage: "sidebar.left", keyPath: \.keepSidebarOpenOnAssistantTap)
+                PreferenceToggle(title: L10n.lookup("点击话题后保持侧栏打开"), systemImage: "list.bullet.rectangle", keyPath: \.keepSidebarOpenOnTopicTap)
             } header: {
                 Text(L10n.lookup("导航与侧栏"))
             } footer: {
@@ -4957,11 +4928,11 @@ private struct BehaviorStartupPreferencesPage: View {
             }
 
             Section {
-                preferenceToggle(L10n.lookup("启动时新建聊天"), systemImage: "plus.bubble", keyPath: \.newChatOnLaunch)
-                preferenceToggle(L10n.lookup("切换助手时新建聊天"), systemImage: "shuffle", keyPath: \.newChatOnAssistantSwitch)
-                preferenceToggle(L10n.lookup("删除聊天后新建聊天"), systemImage: "trash.circle", keyPath: \.newChatAfterDelete)
-                preferenceToggle(L10n.lookup("移动端回车发送"), systemImage: "return", keyPath: \.enterToSendOnMobile)
-                preferenceToggle(L10n.lookup("自动生成标题"), systemImage: "text.badge.star", keyPath: \.autoGenerateTitle)
+                PreferenceToggle(title: L10n.lookup("启动时新建聊天"), systemImage: "plus.bubble", keyPath: \.newChatOnLaunch)
+                PreferenceToggle(title: L10n.lookup("切换助手时新建聊天"), systemImage: "shuffle", keyPath: \.newChatOnAssistantSwitch)
+                PreferenceToggle(title: L10n.lookup("删除聊天后新建聊天"), systemImage: "trash.circle", keyPath: \.newChatAfterDelete)
+                PreferenceToggle(title: L10n.lookup("移动端回车发送"), systemImage: "return", keyPath: \.enterToSendOnMobile)
+                PreferenceToggle(title: L10n.lookup("自动生成标题"), systemImage: "text.badge.star", keyPath: \.autoGenerateTitle)
             } header: {
                 Text(L10n.lookup("聊天行为"))
             } footer: {
@@ -4972,24 +4943,6 @@ private struct BehaviorStartupPreferencesPage: View {
         .navigationTitle(L10n.lookup("行为与启动"))
         .navigationBarTitleDisplayMode(.inline)
     }
-
-    private func preferenceToggle(
-        _ title: String,
-        systemImage: String,
-        keyPath: WritableKeyPath<UserPreferences, Bool>
-    ) -> some View {
-        Toggle(
-            isOn: Binding(
-                get: { model.preferences[keyPath: keyPath] },
-                set: { value in
-                    model.performSwitchHaptic()
-                    model.updatePreferences { $0[keyPath: keyPath] = value }
-                }
-            )
-        ) {
-            SettingsRowLabel(title: title, systemImage: systemImage)
-        }
-    }
 }
 
 private struct HapticsPreferencesPage: View {
@@ -4998,13 +4951,13 @@ private struct HapticsPreferencesPage: View {
     var body: some View {
         Form {
             Section {
-                preferenceToggle(L10n.lookup("全局震动"), systemImage: "iphone.radiowaves.left.and.right", keyPath: \.hapticsGlobalEnabled)
+                PreferenceToggle(title: L10n.lookup("全局震动"), systemImage: "iphone.radiowaves.left.and.right", keyPath: \.hapticsGlobalEnabled)
                 Group {
-                    preferenceToggle(L10n.lookup("开关震动"), systemImage: "switch.2", keyPath: \.hapticsIosSwitch)
-                    preferenceToggle(L10n.lookup("侧栏开关震动"), systemImage: "sidebar.left", keyPath: \.hapticsOnDrawer)
-                    preferenceToggle(L10n.lookup("列表项点击震动"), systemImage: "list.bullet", keyPath: \.hapticsOnListItemTap)
-                    preferenceToggle(L10n.lookup("卡片点击震动"), systemImage: "rectangle.stack", keyPath: \.hapticsOnCardTap)
-                    preferenceToggle(L10n.lookup("生成时震动"), systemImage: "sparkles", keyPath: \.hapticsOnGenerate)
+                    PreferenceToggle(title: L10n.lookup("开关震动"), systemImage: "switch.2", keyPath: \.hapticsIosSwitch)
+                    PreferenceToggle(title: L10n.lookup("侧栏开关震动"), systemImage: "sidebar.left", keyPath: \.hapticsOnDrawer)
+                    PreferenceToggle(title: L10n.lookup("列表项点击震动"), systemImage: "list.bullet", keyPath: \.hapticsOnListItemTap)
+                    PreferenceToggle(title: L10n.lookup("卡片点击震动"), systemImage: "rectangle.stack", keyPath: \.hapticsOnCardTap)
+                    PreferenceToggle(title: L10n.lookup("生成时震动"), systemImage: "sparkles", keyPath: \.hapticsOnGenerate)
                 }
                 .disabled(!model.preferences.hapticsGlobalEnabled)
             } footer: {
@@ -5014,24 +4967,6 @@ private struct HapticsPreferencesPage: View {
         .settingsGroupedPageStyle()
         .navigationTitle(L10n.lookup("震动反馈"))
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func preferenceToggle(
-        _ title: String,
-        systemImage: String,
-        keyPath: WritableKeyPath<UserPreferences, Bool>
-    ) -> some View {
-        Toggle(
-            isOn: Binding(
-                get: { model.preferences[keyPath: keyPath] },
-                set: { value in
-                    model.performSwitchHaptic()
-                    model.updatePreferences { $0[keyPath: keyPath] = value }
-                }
-            )
-        ) {
-            SettingsRowLabel(title: title, systemImage: systemImage)
-        }
     }
 }
 
@@ -5824,6 +5759,29 @@ private struct BackupShareItem: Identifiable {
     let url: URL
 }
 
+@MainActor
+private enum BackupImportActivity {
+    case checking
+    case safetyBackup
+    case restoring
+
+    var title: String {
+        switch self {
+        case .checking: L10n.lookup("正在检查备份…")
+        case .safetyBackup: L10n.lookup("正在备份当前数据…")
+        case .restoring: L10n.lookup("正在导入备份…")
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .checking: L10n.lookup("正在读取 ZIP 并检查备份内容。")
+        case .safetyBackup: L10n.lookup("覆盖导入前，先为当前数据保留一份安全备份。")
+        case .restoring: L10n.lookup("正在恢复备份中的数据，完成后会显示导入结果。")
+        }
+    }
+}
+
 private struct BackupPage: View {
     @Environment(AppModel.self) private var model
     @State private var options = BackupOptionsPersistence.load()
@@ -5832,13 +5790,14 @@ private struct BackupPage: View {
     @State private var shareItem: BackupShareItem?
     @State private var statusMessage: String?
     @State private var errorMessage: String?
-    @State private var isImporting = false
-    @State private var isInspecting = false
+    @State private var importActivity: BackupImportActivity?
     @State private var pendingImportURL: URL?
     @State private var backupInspection: BackupInspection?
     @State private var isInspectionAlertPresented = false
     @State private var isImportModeDialogPresented = false
     @State private var isFileImporterPresented = false
+
+    private var isImportBusy: Bool { importActivity != nil }
 
     var body: some View {
         List {
@@ -5872,11 +5831,11 @@ private struct BackupPage: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if isImporting || isInspecting { ProgressView() }
+                        if isImportBusy { ProgressView() }
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(isExporting || isImporting || isInspecting)
+                .disabled(isExporting || isImportBusy)
 
                 Button {
                     exportBackup()
@@ -5900,7 +5859,7 @@ private struct BackupPage: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(isExporting || isImporting || isInspecting)
+                .disabled(isExporting || isImportBusy)
 
                 Button {
                     selectBackup()
@@ -5918,13 +5877,13 @@ private struct BackupPage: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if isImporting || isInspecting {
+                        if isImportBusy {
                             ProgressView()
                         }
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(isExporting || isImporting || isInspecting)
+                .disabled(isExporting || isImportBusy)
 
                 if let lastBackupURL {
                     Button {
@@ -5967,8 +5926,36 @@ private struct BackupPage: View {
             }
         }
         .settingsGroupedPageStyle()
+        .disabled(isImportBusy)
+        .accessibilityHidden(isImportBusy)
+        .overlay {
+            if let importActivity {
+                ZStack {
+                    Color.black.opacity(0.15)
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text(importActivity.title)
+                            .font(.headline)
+                        Text(importActivity.detail)
+                        Text(L10n.lookup("大备份可能需要较长时间，请保持 App 打开并耐心等待。"))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding(24)
+                    .frame(maxWidth: 340)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+                    .padding(24)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
         .navigationTitle(L10n.lookup("备份与还原"))
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isImportBusy)
+        .interactiveDismissDisabled(isImportBusy)
         .sheet(item: $shareItem) { item in
             ActivityShareSheet(items: [item.url])
         }
@@ -6059,9 +6046,7 @@ private struct BackupPage: View {
     }
 
     private func importActivityTitle(defaultTitle: String) -> String {
-        if isInspecting { return L10n.lookup("正在检查备份...") }
-        if isImporting { return L10n.lookup("正在导入...") }
-        return defaultTitle
+        importActivity?.title ?? defaultTitle
     }
 
     private func selectBackup() {
@@ -6073,7 +6058,7 @@ private struct BackupPage: View {
     }
 
     private func inspectBackup(from url: URL) {
-        isInspecting = true
+        importActivity = .checking
         statusMessage = nil
         errorMessage = nil
         Task {
@@ -6084,7 +6069,7 @@ private struct BackupPage: View {
                 await MainActor.run {
                     pendingImportURL = url
                     backupInspection = inspection
-                    isInspecting = false
+                    importActivity = nil
                     isInspectionAlertPresented = true
                 }
             } catch {
@@ -6092,7 +6077,7 @@ private struct BackupPage: View {
                     pendingImportURL = nil
                     backupInspection = nil
                     errorMessage = error.localizedDescription
-                    isInspecting = false
+                    importActivity = nil
                 }
             }
         }
@@ -6121,7 +6106,7 @@ private struct BackupPage: View {
     }
 
     private func importBackup(from url: URL, mode: BackupRestoreMode) {
-        isImporting = true
+        importActivity = mode == .overwrite ? .safetyBackup : .restoring
         statusMessage = nil
         errorMessage = nil
         Task {
@@ -6138,6 +6123,7 @@ private struct BackupPage: View {
                     await MainActor.run {
                         lastBackupURL = preserved.url
                         statusMessage = L10n.lookup("导入前安全备份已保留，可通过“分享/保存最近备份”保存到设备之外")
+                        importActivity = .restoring
                     }
                 } else {
                     safetyBackup = nil
@@ -6155,12 +6141,12 @@ private struct BackupPage: View {
                     }
                     pendingImportURL = nil
                     backupInspection = nil
-                    isImporting = false
+                    importActivity = nil
                 }
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
-                    isImporting = false
+                    importActivity = nil
                 }
             }
         }

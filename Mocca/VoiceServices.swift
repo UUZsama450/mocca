@@ -932,8 +932,6 @@ final class VoicePlaybackController: NSObject, ObservableObject,
     private var progressTimer: Timer?
     private var networkTask: Task<Void, Never>?
     private var sessionToken = UUID()
-    private var originalText = ""
-    private var originalMessageID: UUID?
     private var originalPreferences = UserPreferences()
 
     override private init() {
@@ -963,8 +961,6 @@ final class VoicePlaybackController: NSObject, ObservableObject,
         let token = UUID()
         sessionToken = token
         activeMessageID = messageID
-        originalMessageID = messageID
-        originalText = text
         originalPreferences = preferences
         errorMessage = nil
 
@@ -1040,15 +1036,6 @@ final class VoicePlaybackController: NSObject, ObservableObject,
         let currentIndex = rates.firstIndex(where: { abs($0 - playbackRate) < 0.01 }) ?? 1
         playbackRate = rates[(currentIndex + 1) % rates.count]
         audioPlayer?.rate = playbackRate
-    }
-
-    func replay() {
-        guard !originalText.isEmpty else { return }
-        play(
-            text: originalText,
-            messageID: originalMessageID,
-            preferences: originalPreferences
-        )
     }
 
     func stop() {

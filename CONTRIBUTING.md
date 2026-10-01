@@ -32,3 +32,7 @@
 ## 许可证
 
 提交贡献即表示你有权提供该贡献，并同意该贡献按本仓库的 GNU Affero General Public License v3.0 条款发布。第三方内容必须保留其自身适用的许可和署名。
+
+## Development workflow
+
+Start from the latest `main`, make a focused branch, validate the change, and submit a pull request. See [the bilingual development workflow](docs/DEVELOPMENT_WORKFLOW.md) for current standalone checks and version records.

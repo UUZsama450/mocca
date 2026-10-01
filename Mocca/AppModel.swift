@@ -1507,7 +1507,7 @@ final class AppModel {
             guard AssistantPersistence.saveAssistants(assistants) else {
                 assistants = previousAssistants
                 conversations = previousConversations
-                presentError("未分类聊天暂时无法整理，原聊天已保留。请稍后重新打开 App。")
+                presentError(L10n.lookup("未分类聊天暂时无法整理，原聊天已保留。请稍后重新打开 App。"))
                 return
             }
             guard saveImmediately() else {
@@ -4201,7 +4201,7 @@ final class AppModel {
 
     func setUserProfileAvatar(_ image: UIImage) {
         guard let data = UserProfile.jpegData(from: image) else {
-            presentError("头像保存失败")
+            presentError(L10n.lookup("头像保存失败"))
             return
         }
         userProfile.avatarJPEGData = data
@@ -4465,7 +4465,7 @@ final class AppModel {
                     return
                 }
                 if cleaned.isEmpty {
-                    self.presentError("压缩失败：模型没有返回摘要")
+                    self.presentError(L10n.lookup("压缩失败：模型没有返回摘要"))
                 } else {
                     let previousConversation = self.conversations[index]
                     self.conversations[index].summary = cleaned
@@ -4493,7 +4493,7 @@ final class AppModel {
                 }
             } catch {
                 if self.contextCompressionRun?.id == runID {
-                    self.presentError("压缩失败：\(error.localizedDescription)")
+                    self.presentError(L10n.format("压缩失败：%@", [error.localizedDescription]))
                 }
             }
         }
@@ -7133,17 +7133,6 @@ final class AppModel {
         isModelSelectorPresented = false
     }
 
-    func updateModel(providerID: UUID, configuration: ModelConfiguration) {
-        guard let providerIndex = providers.firstIndex(where: { $0.id == providerID }),
-              let modelIndex = providers[providerIndex].models.firstIndex(where: { $0.id == configuration.id }) else {
-            return
-        }
-        providers[providerIndex].models[modelIndex] = configuration
-        ProviderPersistence.saveProviders(providers)
-        repairDedicatedModelSelections()
-        repairOCRSelection()
-    }
-
     func isFavoriteModel(providerID: UUID, modelID: String) -> Bool {
         favoriteModelKeys.contains(ModelSelection(providerID: providerID, modelID: modelID).storageKey)
     }
@@ -7298,10 +7287,6 @@ final class AppModel {
         }
     }
 
-    private func discardAllComposerPackets() {
-        discardComposerPackets(for: Set(composerPacketsByConversation.keys))
-    }
-
     func addPendingImage(_ image: UIImage, for conversationID: UUID) {
         guard conversations.contains(where: { $0.id == conversationID }) else {
             return
@@ -7310,7 +7295,7 @@ final class AppModel {
             image,
             quality: preferences.userImageCompressionQuality
         ) else {
-            presentError("图片保存失败")
+            presentError(L10n.lookup("图片保存失败"))
             return
         }
         var attachments = composerPendingAttachments(for: conversationID)
@@ -7369,7 +7354,7 @@ final class AppModel {
             from: url,
             existingAttachments: locallyStoredAttachmentCandidates()
         ) else {
-            presentError("无法读取文件“\(url.lastPathComponent)”")
+            presentError(L10n.format("无法读取文件“%@”", [url.lastPathComponent]))
             return
         }
 
@@ -7393,7 +7378,7 @@ final class AppModel {
         }
 
         guard let attachment else {
-            presentError("无法读取文件“\(inspection.fileName)”")
+            presentError(L10n.format("无法读取文件“%@”", [inspection.fileName]))
             return
         }
         var attachments = composerPendingAttachments(for: conversationID)
@@ -7912,7 +7897,7 @@ final class AppModel {
                     latestMessages[latestLocation.index].translation = nil
                     self.conversationMessageStore[latestLocation.conversationID] = latestMessages
                 }
-                self.presentError("翻译失败：\(error.localizedDescription)")
+                self.presentError(L10n.format("翻译失败：%@", [error.localizedDescription]))
             }
         }
     }

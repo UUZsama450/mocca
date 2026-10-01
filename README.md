@@ -6,7 +6,8 @@ English · [简体中文](README.zh-CN.md)
 
 Bring your own models, organize conversations with assistants, and keep your chat history on your device.
 
-> This private source repository tracks development build **1.0 (5128)**. It includes the UIKit chat transcript, drawer improvements, and reduced work when replies finish. See [snapshot changes and verification](docs/SNAPSHOT_5128.md) and [source baseline](docs/SOURCE_BASELINE.md). Download the **unsigned IPA preview** from [Releases](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5128). It requires your own signing; installation notes and checksums are attached to the release.
+> Current source: **1.0 (5135)**, based on the accepted device build. See [changes and verification](docs/SNAPSHOT_5135.md), [build configuration](docs/BUILD_CONFIGURATION.md), and [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
+> The existing [unsigned IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5128) is the older **5128** build and requires your own signing. This source update does not publish a 5135 installation package.
 
 ## Features
 
