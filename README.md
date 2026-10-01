@@ -7,7 +7,7 @@ English · [简体中文](README.zh-CN.md)
 Bring your own models, organize conversations with assistants, and keep your chat history on your device.
 
 > Current source: **1.0 (5135)**, based on the accepted device build. See [changes and verification](docs/SNAPSHOT_5135.md), [build configuration](docs/BUILD_CONFIGURATION.md), and [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
-> The existing [unsigned IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5128) is the older **5128** build and requires your own signing. This source update does not publish a 5135 installation package.
+> Download the [1.0 (5135) IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135). It requires your own signing; installation notes and checksums are attached to the release.
 
 ## Features
 

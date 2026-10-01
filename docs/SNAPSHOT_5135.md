@@ -37,6 +37,6 @@ The original device candidate also passed six diagnostic and nine ordinary simul
 
 原装机候选另已通过 6 次带诊断、9 次普通模拟器收藏进入，原问题的真机体验现已得到用户确认。以上源码检查不测量真机帧率，不表示全部历史工具已适配，也不验证已开启的实际交易；编译中仍有既有警告。
 
-The existing 5128 unsigned IPA release remains an older preview. This update changes source only and does not create a 5135 binary download or alter App Store distribution.
+The [5135 unsigned IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135) was subsequently packaged from this source. It requires recipient signing; installation notes, checksums and build metadata are attached. The older 5128 preview remains available in release history. App Store distribution is separate.
 
-现有 5128 未签名 IPA 仍是旧版预览。本次只更新源码，不创建 5135 安装包下载，也不改变 App Store 分发。
+后续已从本源码制作 [5135 未签名 IPA 预览包](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135)，需要自行签名，附安装说明、校验文件及构建信息。5128 预览包保留在发布历史中，App Store 分发单独进行。

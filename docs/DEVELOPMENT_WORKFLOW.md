@@ -26,6 +26,10 @@ The original device-development history is maintained separately. Select the acc
 
 ## Versions and records / 版本与记录
 
+After an App Store update is confirmed published, align the GitHub formal release version, source tag and download links with that release. Earlier GitHub previews remain explicitly labeled with their version and build number; channel-specific signing and portable configuration are checked separately.
+
+确认 App Store 新版本已发布后，将 GitHub 正式版的版本号、源码标签与下载链接一起对齐。提前提供的 GitHub 预览包明确标注版本及构建号；各渠道的签名和可移植配置分别核验。
+
 - Keep app and extension build numbers aligned. / 主应用与扩展的构建号保持一致。
 - Record the source commit and actual validation for each distributed build. A version tag identifies a specific source revision. / 分发构建记录源码提交及实际验证；版本标签标记明确的源码版本。
 - Keep README languages aligned and distinguish the current source from older release downloads. / 中英文 README 同步，明确区分当前源码与旧版下载包。
