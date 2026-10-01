@@ -6,7 +6,8 @@
 
 连接自己的模型，用助手整理对话，把聊天记录保存在自己的设备上。
 
-> 本私有源码仓库更新至开发版 **1.0（5128）**，包含 UIKit 聊天列表、侧栏改进和生成结束时的工作量优化。详见[本次变更与验证](docs/SNAPSHOT_5128.md)及[源码基线](docs/SOURCE_BASELINE.md)。可在 [Releases](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5128) 下载**需要自行签名的 IPA 预览版**，安装说明与校验文件见发布页附件。
+> 当前源码为 **1.0（5135）**，以已验收的真机版本为基线。见[变更与验证](docs/SNAPSHOT_5135.md)、[构建配置](docs/BUILD_CONFIGURATION.md)及[开发维护流程](docs/DEVELOPMENT_WORKFLOW.md)。
+> 现有[未签名 IPA 预览包](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5128)仍是较早的 **5128**，需要自行签名。本次源码更新不发布 5135 安装包。
 
 ## 主要功能
 

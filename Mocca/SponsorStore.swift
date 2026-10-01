@@ -389,11 +389,6 @@ enum SponsorEasterEggPersistence {
         notifyChange()
     }
 
-    static func wornTier(for target: SponsorAvatarWearer) -> SponsorTier? {
-        guard target != .none, wearer == target else { return nil }
-        return selectedTier
-    }
-
     static func wornWardrobeItem(
         for target: SponsorAvatarWearer
     ) -> SponsorWardrobeItem? {

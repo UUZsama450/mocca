@@ -414,16 +414,16 @@ enum DrawerHorizontalScrollGate {
 /// movement does not publish SwiftUI state through the transcript.
 @MainActor
 enum DrawerTextSelectionInteractionGate {
-    private static let textViews = NSHashTable<GlyphSelectableTextView>.weakObjects()
+    private static let textViews = NSHashTable<UITextView>.weakObjects()
     private static let dismissalControllers =
         NSMapTable<UIScrollView, TextSelectionDismissTapController>.weakToStrongObjects()
 
-    fileprivate static func register(_ textView: GlyphSelectableTextView) {
+    fileprivate static func register(_ textView: UITextView) {
         textViews.add(textView)
         installDismissalControllerIfNeeded(for: textView)
     }
 
-    fileprivate static func unregister(_ textView: GlyphSelectableTextView) {
+    fileprivate static func unregister(_ textView: UITextView) {
         textViews.remove(textView)
     }
 
@@ -454,7 +454,7 @@ enum DrawerTextSelectionInteractionGate {
     }
 
     private static func installDismissalControllerIfNeeded(
-        for textView: GlyphSelectableTextView
+        for textView: UITextView
     ) {
         guard let scrollView = enclosingScrollView(of: textView),
               dismissalControllers.object(forKey: scrollView) == nil else { return }
@@ -465,14 +465,17 @@ enum DrawerTextSelectionInteractionGate {
     }
 
     private static func enclosingScrollView(of textView: UIView) -> UIScrollView? {
+        // Code lives inside a horizontal scroller. Observe the outer transcript
+        // so a tap outside that scroller can end its selection too.
+        var outermostScrollView: UIScrollView?
         var ancestor = textView.superview
         while let current = ancestor {
             if let scrollView = current as? UIScrollView {
-                return scrollView
+                outermostScrollView = scrollView
             }
             ancestor = current.superview
         }
-        return nil
+        return outermostScrollView
     }
 }
 
@@ -2668,13 +2671,6 @@ private final class GlyphSelectableTextView: UITextView {
             : isPointNearGlyph(point)
     }
 
-    func clearSelection(resign: Bool = true) {
-        selectedRange = NSRange(location: 0, length: 0)
-        if resign {
-            resignFirstResponder()
-        }
-    }
-
     func isBlankReactionPoint(_ point: CGPoint) -> Bool {
         guard bounds.contains(point) else { return false }
         if selectedRange.length > 0, isPointNearSelection(point) {
@@ -2773,14 +2769,26 @@ private final class GlyphSelectableTextView: UITextView {
         return false
     }
 
-    fileprivate func isPointNearSelection(_ point: CGPoint) -> Bool {
+}
+
+// Both prose and code use native selections and the same outside-tap policy.
+// Only message views register with the gate; the composer keeps its own owner.
+fileprivate extension UITextView {
+    func clearSelection(resign: Bool = true) {
+        selectedRange = NSRange(location: 0, length: 0)
+        if resign {
+            resignFirstResponder()
+        }
+    }
+
+    func isPointNearSelection(_ point: CGPoint) -> Bool {
         guard let selectedTextRange else { return false }
         return selectionRects(for: selectedTextRange)
             .map { $0.rect.insetBy(dx: -24, dy: -24) }
             .contains { $0.contains(point) }
     }
 
-    fileprivate var ownsCurrentSelectionTouch: Bool {
+    var ownsCurrentSelectionTouch: Bool {
         guard window != nil, selectedRange.length > 0 else { return false }
 
         // The drawer recognizer lives above the UITextView in the UIKit view
@@ -4074,6 +4082,7 @@ private struct MarkdownCodeBlockPalette {
 
 private struct MarkdownCodeBlock: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.messageInlineActionAdmission) private var actionAdmission
     let blockID: Int
     let language: String
     let code: String
@@ -4183,6 +4192,7 @@ private struct MarkdownCodeBlock: View {
 
                 if isRunnableHTML {
                     Button {
+                        guard admitsControlAction else { return }
                         isHTMLPreviewPresented = true
                     } label: {
                         Image(systemName: "play.rectangle")
@@ -4195,6 +4205,7 @@ private struct MarkdownCodeBlock: View {
                 }
 
                 Button {
+                    guard admitsControlAction else { return }
                     UIPasteboard.general.string = displayCode
                     withAnimation(.snappy(duration: 0.18)) {
                         didCopy = true
@@ -4294,7 +4305,13 @@ private struct MarkdownCodeBlock: View {
     }
 
     @MainActor
+    private var admitsControlAction: Bool {
+        DrawerInlineActionTapGate.allowsAction && actionAdmission.allowsAction()
+    }
+
+    @MainActor
     private func toggleDisclosure(from edge: ChatContentMutationAnchorEdge) {
+        guard admitsControlAction else { return }
         let state = disclosureState
         let targetExpanded = !(state.pendingExpansion ?? isEffectivelyExpanded)
         if exceedsCollapsedLineCount, let contentMutationContext {
@@ -6226,6 +6243,14 @@ private enum MarkdownRenderParser {
 private final class CodeViewportTextView: UITextView {
     var mapsDocumentCoordinates = false
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            DrawerTextSelectionInteractionGate.register(self)
+        } else {
+            DrawerTextSelectionInteractionGate.unregister(self)
+        }
+    }
 
     override var bounds: CGRect {
         didSet { alignDocumentOrigin() }

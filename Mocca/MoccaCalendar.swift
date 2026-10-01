@@ -783,28 +783,6 @@ extension AppModel {
         persistCalendar()
     }
 
-    func replaceCalendarPayload(_ payload: MoccaCalendarPayload, preserveAssistantAccess: Bool) {
-        let currentAccess = calendarSettings.assistantAccessEnabled
-        calendarSettings = payload.settings
-        if preserveAssistantAccess {
-            calendarSettings.assistantAccessEnabled = currentAccess
-        }
-        calendarEvents = payload.events
-        sortCalendarEvents()
-        persistCalendar()
-    }
-
-    func mergeCalendarPayload(_ payload: MoccaCalendarPayload) {
-        var byID = Dictionary(uniqueKeysWithValues: calendarEvents.map { ($0.id, $0) })
-        for event in payload.events where byID[event.id] == nil {
-            byID[event.id] = event
-        }
-        calendarEvents = Array(byID.values)
-        sortCalendarEvents()
-        // Merge never enables assistant access as a side effect.
-        persistCalendar()
-    }
-
     func executeMoccaCalendarTool(name: String, args: [String: JSONValue], context: ToolInvocationContext) async -> String? {
         guard isToolInvocationCurrent(context) else {
             return MoccaCalendarAssistantBridge.jsonResult(["error": "request_expired"])

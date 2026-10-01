@@ -820,7 +820,7 @@ struct AssistantEditorView: View {
         guard let providerID = profile.imageGenerationProviderID,
               let modelID = profile.imageGenerationModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !modelID.isEmpty else { return L10n.lookup("选择模型") }
-        let providerName = model.providers.first(where: { $0.id == providerID })?.name ?? L10n.lookup("供应商")
+        let providerName = model.providers.first(where: { $0.id == providerID })?.name ?? L10n.lookup("provider.field.label")
         return "\(providerName) · \(modelID)"
     }
 
@@ -3904,8 +3904,8 @@ private struct AssistantImageGenerationPicker: View {
                     )
                 } else {
                     Form {
-                        Section(L10n.lookup("供应商")) {
-                            Picker(L10n.lookup("供应商"), selection: $providerID) {
+                        Section(L10n.lookup("provider.field.label")) {
+                            Picker(L10n.lookup("provider.field.label"), selection: $providerID) {
                                 ForEach(providers) { provider in
                                     Text(provider.name).tag(Optional(provider.id))
                                 }

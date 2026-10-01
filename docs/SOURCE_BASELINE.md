@@ -1,8 +1,16 @@
 # Source baseline
 
-## Current snapshot 5128
+## Current snapshot 5135
 
-The private repository now tracks development build **1.0 (5128)**. The update starts from the existing published 5058 tree and brings in the product changes through local source commit `c1adc019f68d2da5435d92c1c4fceb61dc8645f3`, whose 151 product inputs match the frozen 5128 build inputs. Earlier experimental commits and generated device records are not imported into this repository.
+The current source is **1.0 (5135)**. It derives from local development commit `156e9f05425aa5f52ee8150d448a7f14b13ad2f0`, promoted to the local development mainline after the original favorite-entry issue was reported fixed on the installed device. All 151 frozen build inputs were verified before preparation. The development project now records build 5135 directly instead of relying on the installation command's version override.
+
+The portable source continues the existing GitHub history. Application changes from 5128 through 5135 are applied while preserving the previously published configurable identity, sponsorship gate, reviewed assets and neutral examples. The exact differences from the accepted device inputs are recorded in [variant file hashes](SOURCE_VARIANT_5135.json); [changes and verification](SNAPSHOT_5135.md) explains their scope. Local paths, device receipts, signing material and experimental branch history are not imported.
+
+当前源码以已验收的 5135 真机版本为准，延续已有 GitHub 历史，并保留方便他人编译的配置。线上源码与签名装机输入存在明确列出的配置、素材及中性示例差异；应用修复从同一份冻结源码核对而来。后续维护见[开发流程](DEVELOPMENT_WORKFLOW.md)。
+
+## Historical snapshot 5128
+
+The previous source update tracked development build **1.0 (5128)**. That update started from the published 5058 tree and brought in the product changes through local source commit `c1adc019f68d2da5435d92c1c4fceb61dc8645f3`, whose 151 product inputs matched the frozen 5128 build inputs. The sections below retain their historical verification context.
 
 This remains a portable source variant: configurable app identity, sponsorship off by default, reviewed assets and neutral synthetic fixtures are retained from the first publication. The source project sets version 5128 explicitly for both app and extension, Debug and Release. It is not byte-identical to a signed device archive. See [5128 changes and verification](SNAPSHOT_5128.md) and the [repository guide](REPOSITORY_GUIDE.md).
 

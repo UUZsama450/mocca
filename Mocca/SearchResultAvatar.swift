@@ -233,7 +233,7 @@ struct SearchResultAvatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
-        .accessibilityLabel("\(descriptor.authorName)的消息")
+        .accessibilityLabel(L10n.format("%@的消息", [descriptor.authorName]))
         .task(id: request?.key) {
             guard let request,
                   let entry = await SearchResultAvatarImageCache.entry(for: request),

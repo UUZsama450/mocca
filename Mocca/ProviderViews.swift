@@ -546,7 +546,7 @@ struct ProviderEditorView: View {
                     ProviderModelsWorkspaceView(configuration: $configuration)
                 }
             }
-            .navigationTitle(configuration.name.isEmpty ? L10n.lookup("服务商") : configuration.name)
+            .navigationTitle(configuration.name.isEmpty ? L10n.lookup("serviceProvider.field.label") : configuration.name)
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 editorTabBar
@@ -2303,13 +2303,13 @@ struct ModelSelectorView: View {
                 }
 
                 if !filteredFavorites.isEmpty {
-                    sectionHeader(L10n.lookup("收藏"), systemImage: "heart.fill")
+                    sectionHeader(L10n.lookup("favoriteModels.title"), systemImage: "heart.fill")
                         .id("favorites")
                     ForEach(filteredFavorites, id: \.favoriteID) { item in
                         modelCard(item, showsProvider: true)
                     }
                 } else if favoritesOnly {
-                    ContentUnavailableView(L10n.lookup("还没有收藏"), systemImage: "heart", description: Text(L10n.lookup("点模型右侧的心形就会收进这里")))
+                    ContentUnavailableView(L10n.lookup("favoriteModels.empty"), systemImage: "heart", description: Text(L10n.lookup("点模型右侧的心形就会收进这里")))
                         .padding(.vertical, 44)
                 }
 
@@ -3032,7 +3032,7 @@ private struct ModelConfigurationEditorSheet: View {
             }
 
             VStack(spacing: 0) {
-                infoRow(title: L10n.lookup("服务商"), value: item.provider.name, systemImage: "server.rack")
+                infoRow(title: L10n.lookup("serviceProvider.field.label"), value: item.provider.name, systemImage: "server.rack")
                 Divider().padding(.leading, 58)
                 infoRow(title: L10n.lookup("协议"), value: item.provider.type.title, systemImage: item.provider.type.systemImage)
                 Divider().padding(.leading, 58)

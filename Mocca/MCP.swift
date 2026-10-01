@@ -805,7 +805,7 @@ struct MCPServerSelectionView: View {
                         )) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(server.normalizedName)
-                                Text("\(server.tools.filter(\.enabled).count)/\(server.tools.count) 个工具")
+                                Text(L10n.format("%@/%@ 个工具", [String(server.tools.filter(\.enabled).count), String(server.tools.count)]))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
