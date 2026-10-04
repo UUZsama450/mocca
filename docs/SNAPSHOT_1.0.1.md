@@ -16,3 +16,9 @@ This patch keeps the native chat transcript and its system top bar mounted while
 App Store review and release are tracked separately from source synchronization. The older 5135 unsigned IPA remains in release history; this source update does not relabel that binary as 1.0.1.
 
 App Store 审核与发布独立记录。旧的 5135 未签名 IPA 保留在发布历史中，不会因源码升级而被改称为 1.0.1。
+
+## 2026-10-04 submission record
+
+The fresh portable Release simulator build passed with all 143 frozen product inputs unchanged. The production archive passed version, signature, entitlement, dSYM, privacy-manifest, and source-provenance checks. App Store Connect accepted **1.0.1 (5157)** and now shows **Waiting for Review**. English metadata and five screenshots using the current app UI are included. Release remains manual after approval.
+
+本次可移植源码的 Release 模拟器构建通过，143 项冻结产品输入未变化。正式归档的版本、签名、权限、符号、隐私清单和来源检查均通过。App Store Connect 已接收 **1.0.1（5157）**，当前状态为 **正在等待审核**；包含英文介绍及五张基于当前 App 界面的英文商品图。审核通过后仍需手动发布。
