@@ -339,13 +339,16 @@ struct ComposerView: View {
         // failed precommit also leaves the draft and keyboard ready for retry.
         guard model.sendDraft(for: conversationID) else { return }
         cancelLongPaste()
+        // Clear declarative focus before UIKit starts dismissing. A pending
+        // update of the retiring input must not reacquire first responder
+        // while its keyboard is already animating out.
+        isFocused = false
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder),
             to: nil,
             from: nil,
             for: nil
         )
-        isFocused = false
         // End this input's editing identity after a successful send. The new
         // control starts at one line with no stale selection, undo or paste.
         inputResetID &+= 1

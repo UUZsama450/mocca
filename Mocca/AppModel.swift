@@ -1004,19 +1004,6 @@ final class AppModel {
     }
     var conversationBottomReturnRequest = 0
     var conversationBottomReturnTargetID: UUID?
-    private var concreteConversationEntryWindow: (conversationID: UUID, request: Int)?
-
-    var usesConcreteConversationEntryWindow: Bool {
-        guard let entry = concreteConversationEntryWindow else { return false }
-        return entry.conversationID == selectedConversationID
-            && entry.request == conversationBottomReturnRequest
-            && !hasLaterMessages
-            && messages.count <= 24
-    }
-
-    func releaseConcreteConversationEntryWindow() {
-        concreteConversationEntryWindow = nil
-    }
     let conversationMessageStore: ConversationMessageStore
     // Value-semantic bulk API for persistence, import and independent rollback
     // snapshots. Per-conversation paths use conversationMessageStore[id].
@@ -1894,8 +1881,7 @@ final class AppModel {
             // the canonical assistant row; only its transcript projection is
             // staged while the initial send owns layout and scrolling. A very
             // fast provider may finish before the real user row acknowledges;
-            // completion alone must not publish the assistant into an
-            // unmaterialized LazyVStack revision.
+            // completion alone must not end the staged send presentation.
             return windowMessages
         }
         return Array(windowMessages.dropLast())
@@ -2022,8 +2008,6 @@ final class AppModel {
         let allMessages = selectedMessages(for: conversationID)
         let window = messageWindow(for: conversationID, messages: allMessages)
         guard window.startIndex > 0 else { return false }
-        releaseConcreteConversationEntryWindow()
-
         let newStart = max(0, window.startIndex - Self.messageWindowPageSize)
         let newCount = min(Self.messageWindowLoadedMax, window.endIndex - newStart)
         messageWindowsByConversation[conversationID] = MessageWindowState(
@@ -2039,8 +2023,6 @@ final class AppModel {
         let allMessages = selectedMessages(for: conversationID)
         let window = messageWindow(for: conversationID, messages: allMessages)
         guard window.endIndex < allMessages.count else { return false }
-        releaseConcreteConversationEntryWindow()
-
         let newEnd = min(allMessages.count, window.endIndex + Self.messageWindowPageSize)
         let newStart = max(0, newEnd - Self.messageWindowLoadedMax)
         messageWindowsByConversation[conversationID] = MessageWindowState(
@@ -2052,7 +2034,6 @@ final class AppModel {
 
     @discardableResult
     func loadStartMessageWindow() -> Bool {
-        releaseConcreteConversationEntryWindow()
         let conversationID = selectedConversationID
         let totalCount = selectedMessages(for: conversationID).count
         guard totalCount > 0 else { return false }
@@ -2073,9 +2054,6 @@ final class AppModel {
         let allMessages = selectedMessages(for: conversationID)
         let next = Self.initialMessageWindow(for: allMessages)
         guard messageWindowsByConversation[conversationID] != next else { return false }
-        if concreteConversationEntryWindow?.conversationID == conversationID {
-            releaseConcreteConversationEntryWindow()
-        }
         messageWindowsByConversation[conversationID] = next
         return true
     }
@@ -2143,7 +2121,6 @@ final class AppModel {
     }
 
     private func prepareConcreteConversationEntryWindow() {
-        releaseConcreteConversationEntryWindow()
         let conversationID = selectedConversationID
         guard !isConversationStreaming(conversationID) else { return }
         let allMessages = selectedMessages(for: conversationID)
@@ -2153,10 +2130,9 @@ final class AppModel {
                 current: messageWindow(for: conversationID, messages: allMessages),
                 targetID: tail.id
               ) else { return }
-        // Prepare before selection publishes its first view: the destination is
-        // a bounded concrete stack, so entering it never needs a top-seed scroll.
+        // Bound the initial native transcript's measurement work before the
+        // selection publishes. Ordinary paging can expand this window later.
         messageWindowsByConversation[conversationID] = window
-        concreteConversationEntryWindow = (conversationID, conversationBottomReturnRequest)
     }
 
     private func appendMessagePreservingLatestWindow(
@@ -5707,7 +5683,7 @@ final class AppModel {
             usesCoveredViewportTransition
             && regenerationSourceMessageID == nil
         // A covered favorite opens on one concrete target row followed by a
-        // normal lazy page. This removes every estimated historical row from
+        // normal history page. This removes every estimated historical row from
         // above the landing coordinate without changing ordinary conversation
         // opening, regeneration, or the shared paging size.
         let startIndex = usesIsolatedFavoriteTargetWindow
@@ -6128,7 +6104,6 @@ final class AppModel {
         let oldDraftIDs = unsavedDraftConversationIDs
         let oldComposerPackets = composerPacketsByConversation
         let oldWindows = messageWindowsByConversation
-        let oldConcreteWindow = concreteConversationEntryWindow
         let oldPersistenceState = conversationPersistenceState
         return { [self] in
             appearanceMode = oldAppearance
@@ -6161,7 +6136,6 @@ final class AppModel {
             unsavedDraftConversationIDs = oldDraftIDs
             composerPacketsByConversation = oldComposerPackets
             messageWindowsByConversation = oldWindows
-            concreteConversationEntryWindow = oldConcreteWindow
             conversationPersistenceState = oldPersistenceState
         }
     }
@@ -7603,8 +7577,8 @@ final class AppModel {
         )
         // A send is not a conversation selection. Give the transcript the
         // concrete user row to reveal before it hands ownership to streaming;
-        // reusing the conversation-return request can resolve only the cheap
-        // bottom sentinel and leave a LazyVStack viewport blank.
+        // the send request identifies that row independently of conversation
+        // selection and keeps its presentation gate tied to the same request.
         let sendPositionRequest = UserMessageSendPositionRequest(
             id: UUID(),
             conversationID: conversationID,

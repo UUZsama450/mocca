@@ -6,17 +6,14 @@ import XCTest
 final class LivePanelUITests: XCTestCase {
     private let bundle = "com.uuzsama450.mocca.migration"
 
-    func testNativeEntryAndDrawer() throws { try entryAndDrawer(native: true) }
-    func testBaselineEntryAndDrawer() throws { try entryAndDrawer(native: false) }
-    func testNativeKeyboard() throws { try keyboard(native: true) }
-    func testBaselineKeyboard() throws { try keyboard(native: false) }
-    func testNativeEmptyAndGestures() throws { try emptyAndGestures(native: true) }
-    func testBaselineEmptyAndGestures() throws { try emptyAndGestures(native: false) }
+    func testNativeEntryAndDrawer() throws { try entryAndDrawer() }
+    func testNativeKeyboard() throws { try keyboard() }
+    func testNativeEmptyAndGestures() throws { try emptyAndGestures() }
 
     func testNativeBackgroundDuringPartialDrag() throws {
         // Run with the simulator Home sidecar: XCTest rejects overlapping
         // touch synthesis and XCUIDevice.press(.home) in its own event queue.
-        let app = launch(native: true, fixture: "-previewKeyboardShortChat")
+        let app = launch(fixture: "-previewKeyboardShortChat")
         for (name, endX, opens) in [("near-chat", 0.28, false), ("near-drawer", 0.68, true)] {
             app.buttons["新聊天"].firstMatch.tap()
             let closedX = drawer(app).frame.minX
@@ -47,7 +44,7 @@ final class LivePanelUITests: XCTestCase {
     }
 
     func testNativeStableEndpointsSurviveBackground() throws {
-        let app = launch(native: true, fixture: "-previewKeyboardShortChat")
+        let app = launch(fixture: "-previewKeyboardShortChat")
         let closedX = drawer(app).frame.minX
         for open in [false, true] {
             if open { drawer(app).tap() }
@@ -73,7 +70,7 @@ final class LivePanelUITests: XCTestCase {
     }
 
     func testNativePartialAndRepeatedFingerDrags() throws {
-        let app = launch(native: true, fixture: "-previewKeyboardShortChat")
+        let app = launch(fixture: "-previewKeyboardShortChat")
         app.buttons["新聊天"].firstMatch.tap()
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.45))
         let partial = app.coordinate(withNormalizedOffset: CGVector(dx: 0.26, dy: 0.45))
@@ -92,11 +89,10 @@ final class LivePanelUITests: XCTestCase {
         }
     }
 
-    private func launch(native: Bool, fixture: String) -> XCUIApplication {
+    private func launch(fixture: String) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: bundle)
         app.launchArguments = [fixture]
-        if !native { app.launchArguments.append("-disableDrawerLiveUIKitPanel") }
         app.launch()
         let later = app.buttons["稍后"]
         if later.waitForExistence(timeout: 3) { later.tap() }
@@ -127,13 +123,13 @@ final class LivePanelUITests: XCTestCase {
         print("LIVE_PANEL_GEOMETRY \(name) drawer=\(drawer(app).frame) composer=\(composer(app).frame) app=\(app.frame)")
     }
 
-    private func entryAndDrawer(native: Bool) throws {
-        let app = launch(native: native, fixture: "-previewNavigationStress")
+    private func entryAndDrawer() throws {
+        let app = launch(fixture: "-previewNavigationStress")
         for name in ["A", "B", "A"] {
             drawer(app).tap()
             let row = app.buttons["导航压力 \(name)"].firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 10))
-            capture(app, "\(native)-open-\(name)")
+            capture(app, "native-open-\(name)")
             row.tap() // One tap must reach the exposed drawer through the wrapper.
             wait { self.drawer(app).frame.minX < 100 }
             let conversationText = app.descendants(matching: .any).matching(NSPredicate(
@@ -147,7 +143,7 @@ final class LivePanelUITests: XCTestCase {
                 tail.exists && tail.frame.minY >= 110
                     && tail.frame.maxY <= app.frame.height - 130
             }
-            capture(app, "\(native)-entry-\(name)")
+            capture(app, "native-entry-\(name)")
         }
         // The original live transcript must still scroll after closing.
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.3))
@@ -156,15 +152,15 @@ final class LivePanelUITests: XCTestCase {
         drawer(app).tap()
         app.buttons["导航压力 A"].firstMatch.tap()
         wait { self.drawer(app).frame.minX < 100 }
-        capture(app, "\(native)-same-conversation-return")
-        // Scrim hit testing must close on its first tap as well.
+        capture(app, "native-same-conversation-return")
+        // The native shield over the dimmed panel must close on its first tap.
         drawer(app).tap()
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.45)).tap()
         wait { self.drawer(app).frame.minX < 100 }
     }
 
-    private func keyboard(native: Bool) throws {
-        let app = launch(native: native, fixture: "-previewKeyboardShortChat")
+    private func keyboard() throws {
+        let app = launch(fixture: "-previewKeyboardShortChat")
         let tail = app.textViews.matching(NSPredicate(
             format: "label BEGINSWITH %@", "第三轮短回复："
         )).firstMatch
@@ -176,7 +172,7 @@ final class LivePanelUITests: XCTestCase {
             tail.exists && tail.frame.minY >= 110
                 && tail.frame.maxY < keyboard.frame.minY - 80
         }
-        capture(app, "\(native)-keyboard")
+        capture(app, "native-keyboard")
         drawer(app).tap()
         let row = app.buttons["键盘测试"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
@@ -185,11 +181,11 @@ final class LivePanelUITests: XCTestCase {
             self.drawer(app).frame.minX < 100 && tail.exists
                 && tail.frame.minY >= 110 && tail.frame.maxY < app.frame.height - 130
         }
-        capture(app, "\(native)-keyboard-reentry")
+        capture(app, "native-keyboard-reentry")
     }
 
-    private func emptyAndGestures(native: Bool) throws {
-        let app = launch(native: native, fixture: "-previewKeyboardShortChat")
+    private func emptyAndGestures() throws {
+        let app = launch(fixture: "-previewKeyboardShortChat")
         XCTAssertTrue(app.textViews.matching(NSPredicate(
             format: "label BEGINSWITH %@", "第三轮短回复："
         )).firstMatch.waitForExistence(timeout: 15))
@@ -210,6 +206,6 @@ final class LivePanelUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.45)).tap()
         wait { self.drawer(app).frame.minX < 100 }
         XCTAssertTrue(composer(app).exists)
-        capture(app, "\(native)-empty")
+        capture(app, "native-empty")
     }
 }
