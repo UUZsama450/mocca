@@ -2203,13 +2203,14 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
 /// scroll or text-size event. Reuse the viewport coverage check once at landing.
 @MainActor
 enum MessageTextViewportDrawing {
-    static func refreshAfterLayout(in view: UIView) {
+    static func refreshAfterLayout(in view: UIView, visibleOnly: Bool = false) {
+        if visibleOnly, view.isHidden || view.alpha <= 0 { return }
         if let textView = view as? GlyphSelectableTextView {
-            textView.refreshViewportDrawingAfterLayout()
+            textView.refreshViewportDrawingAfterLayout(visibleOnly: visibleOnly)
             return
         }
         for subview in view.subviews {
-            refreshAfterLayout(in: subview)
+            refreshAfterLayout(in: subview, visibleOnly: visibleOnly)
         }
     }
 }
@@ -2433,7 +2434,14 @@ private final class GlyphSelectableTextView: UITextView {
         )
     }
 
-    func refreshViewportDrawingAfterLayout() {
+    func refreshViewportDrawingAfterLayout(visibleOnly: Bool = false) {
+        // A cell-placement handoff only repairs currently exposed prose. An
+        // inner host may still be clipped while SwiftUI lays it out; do not
+        // clear previously valid coverage from this additional entry point.
+        if visibleOnly {
+            let rect = currentClippedVisibleRect()
+            guard !rect.isNull, !rect.isEmpty else { return }
+        }
         invalidateViewportDrawingIfNeeded(force: false, reason: "content-layout")
     }
 

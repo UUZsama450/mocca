@@ -1,16 +1,13 @@
 import XCTest
 
 @MainActor final class DrawerNativeHitRoutingUITests: XCTestCase {
-    func testBaselineInteractions() throws { try interactions(candidate: false) }
-    func testCandidateInteractions() throws { try interactions(candidate: true) }
-    func testBaselineTextDrags() throws { try textDrags(candidate: false) }
-    func testCandidateTextDrags() throws { try textDrags(candidate: true) }
+    func testNativeInteractions() throws { try interactions() }
+    func testNativeTextDrags() throws { try textDrags() }
 
-    private func textDrags(candidate: Bool) throws {
+    private func textDrags() throws {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: "com.uuzsama450.mocca.migration")
         app.launchArguments = ["-previewNavigationStress"]
-        if !candidate { app.launchArguments.append("-disableDrawerNativeHitRouting") }
         app.launch()
         if app.buttons["稍后"].waitForExistence(timeout: 2) { app.buttons["稍后"].tap() }
         let menu = app.buttons["打开聊天列表"].firstMatch
@@ -23,11 +20,11 @@ import XCTest
             wait { menu.frame.minX > app.frame.width * 0.65 }
             if cycle == 0 {
                 let shot = XCTAttachment(screenshot: app.screenshot())
-                shot.name = "text-open-native-routing-\(candidate)"; shot.lifetime = .keepAlways; add(shot)
+                shot.name = "text-open-native-routing"; shot.lifetime = .keepAlways; add(shot)
             }
             right.press(forDuration: 0.05, thenDragTo: left, withVelocity: .fast, thenHoldForDuration: 0)
             wait { abs(menu.frame.minX - closedX) < 3 }
-            print("ROUTING_UI text-drag-cycle=\(cycle) candidate=\(candidate)")
+            print("ROUTING_UI text-drag-cycle=\(cycle) routing=native")
         }
         menu.tap()
         wait { menu.frame.minX > app.frame.width * 0.65 }
@@ -36,7 +33,7 @@ import XCTest
         let message = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "B 用户消息 18：")).firstMatch
         XCTAssertTrue(message.waitForExistence(timeout: 15))
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "text-switched-native-routing-\(candidate)"; shot.lifetime = .keepAlways; add(shot)
+        shot.name = "text-switched-native-routing"; shot.lifetime = .keepAlways; add(shot)
     }
 
     private func wait(_ condition: @escaping () -> Bool) {
@@ -44,11 +41,10 @@ import XCTest
         XCTAssertEqual(XCTWaiter.wait(for: [e], timeout: 12), .completed)
     }
 
-    private func interactions(candidate: Bool) throws {
+    private func interactions() throws {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: "com.uuzsama450.mocca.migration")
         app.launchArguments = ["-previewKeyboardShortChat"]
-        if !candidate { app.launchArguments.append("-disableDrawerNativeHitRouting") }
         app.launch()
         if app.buttons["稍后"].waitForExistence(timeout: 3) { app.buttons["稍后"].tap() }
         let menu = app.buttons["打开聊天列表"].firstMatch
@@ -70,7 +66,7 @@ import XCTest
             // Native shield must close on the first actual injected tap.
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.45)).tap()
             wait { abs(menu.frame.minX - closedX) < 3 }
-            print("ROUTING_UI text-cycle=\(cycle) candidate=\(candidate)")
+            print("ROUTING_UI text-cycle=\(cycle) routing=native")
         }
 
         // First composer touch after closing must still reach the real editor.
@@ -94,10 +90,10 @@ import XCTest
             right.press(forDuration: 0.05, thenDragTo: left, withVelocity: .fast, thenHoldForDuration: 0)
             wait { abs(menu.frame.minX - closedX) < 3 }
             XCTAssertTrue(composer.exists)
-            print("ROUTING_UI empty-drag-cycle=\(cycle) candidate=\(candidate)")
+            print("ROUTING_UI empty-drag-cycle=\(cycle) routing=native")
         }
         let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "routing-\(candidate)-final"; attachment.lifetime = .keepAlways
+        attachment.name = "routing-native-final"; attachment.lifetime = .keepAlways
         add(attachment)
     }
 }

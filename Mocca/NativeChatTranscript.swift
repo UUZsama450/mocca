@@ -170,6 +170,7 @@ struct NativeChatViewportLayoutChange {
 
 fileprivate final class NativeChatCollectionView: UICollectionView {
     var onViewportLayout: ((NativeChatViewportMetrics, NativeChatViewportMetrics, CGFloat?) -> Void)?
+    var onContentLayoutCompleted: (() -> Void)?
     private var lastLayoutMetrics: NativeChatViewportMetrics?
     private var deliveringViewportLayout = false
     private var hasLaidOutViewport = false
@@ -199,6 +200,7 @@ fileprivate final class NativeChatCollectionView: UICollectionView {
             && abs(current.viewportHeight - previous.viewportHeight) > 0.5
     }
     override func layoutSubviews() {
+        defer { onContentLayoutCompleted?() }
         let previous = lastLayoutMetrics
         let presentedOffset = layer.presentation()?.bounds.origin.y
         super.layoutSubviews()
@@ -601,6 +603,9 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
         return entry.measured && entry.revision == key.revision
             && abs(entry.width - width) < 0.01 && hasCurrentHost(entry.hostID, for: key)
     }
+    func isMeasured(_ key: NativeChatRowKey, by hostID: UUID) -> Bool {
+        isMeasured(key) && cache[key.id]?.hostID == hostID && hasCurrentHost(hostID, for: key)
+    }
     /// A recreated SwiftUI host may reset local disclosure @State. Keep its old
     /// numeric height only as an estimate until this actual host measures it.
     func bindMeasurementHost(_ cell: NativeChatCell, key: NativeChatRowKey) {
@@ -839,6 +844,14 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
     }
 }
 
+private struct NativeChatTextPlacement: Equatable {
+    let key: NativeChatRowKey
+    let publication: AnyHashable
+    let hostID: UUID
+    let cellFrame: CGRect
+    let messageFrame: CGRect
+}
+
 private final class NativeChatCell: UICollectionViewCell {
     // The transcript applies viewport safe-area clearance through contentInset.
     // A row's intrinsic height must not change as it crosses that viewport edge.
@@ -860,6 +873,8 @@ private final class NativeChatCell: UICollectionViewCell {
     var configuredKey: NativeChatRowKey?
     var configuredPublication: AnyHashable?
     var messageLocalFrame: CGRect?
+    var textFramePublication: AnyHashable?
+    var refreshedTextPlacement: NativeChatTextPlacement?
     private(set) var measurementHostID = UUID()
     var disclosureMotionID: UUID?
     var isDisclosureHostCurrent: () -> Bool = { false }
@@ -869,12 +884,15 @@ private final class NativeChatCell: UICollectionViewCell {
         onRetireMeasurementHost?(measurementHostID, previous)
         disclosureMotionID = nil
         measurementHostID = UUID()
+        textFramePublication = nil
+        refreshedTextPlacement = nil
     }
     override func prepareForReuse() {
         disclosureMotionID = nil
         if let key = configuredKey { onRetireMeasurementHost?(measurementHostID, key) }
         measurementHostID = UUID()
         configuredKey = nil; configuredPublication = nil; messageLocalFrame = nil
+        textFramePublication = nil; refreshedTextPlacement = nil
         super.prepareForReuse()
     }
     override func invalidateIntrinsicContentSize() {
@@ -985,6 +1003,8 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     private var userGesture = false
     private var previousOffset: CGFloat = 0
     private var emissionScheduled = false
+    private var needsTextCoverageCheck = false
+    private var refreshingTextCoverage = false
     private var pendingCodeFrames: [UUID: CGRect] = [:]
     private var scheduledPage: Task<Void, Never>?
     private var requestedPagePublication: AnyHashable?
@@ -1058,7 +1078,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             }
             return self.input.driver.target
         }
-        layout.onInvalidated = { [weak self] in self?.scheduleEmission() }
+        layout.onInvalidated = { [weak self] in
+            self?.needsTextCoverageCheck = true
+            self?.scheduleEmission()
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -1075,6 +1098,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             collection.topEdgeEffect.style = .soft
         }
         collection.dataSource = self; collection.delegate = self
+        collection.onContentLayoutCompleted = { [weak self] in
+            guard let self, self.needsTextCoverageCheck else { return }
+            self.scheduleEmission()
+        }
         collection.onViewportLayout = { [weak self] previous, current, presentedOffset in
             guard let self, !self.detached, self.attachmentReady,
                   self.input.driver.controller === self else { return }
@@ -1179,6 +1206,8 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         detached = true; visible = false
         cancelHostedDisclosureMotions()
         collection.onViewportLayout = nil
+        collection.onContentLayoutCompleted = nil
+        needsTextCoverageCheck = false
         attachmentTask?.cancel(); attachmentTask = nil; attachmentReady = false
         scheduledPage?.cancel(); scheduledPage = nil; pendingInput = nil
         cancelCommand(reason: "detached")
@@ -1374,6 +1403,9 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         let key = NativeChatRowKey(id: row.id, revision: row.revision)
         let publication = input.publicationID
         if cell.configuredKey != key || cell.configuredPublication != publication {
+            cell.textFramePublication = nil
+            cell.refreshedTextPlacement = nil
+            needsTextCoverageCheck = true
             // Keep a model-backed toggle's own revision, but never lend its
             // animation to a later stream update or unrelated publication.
             if cell.disclosureMotionID != input.disclosureOperation {
@@ -1423,10 +1455,11 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                         cell.disclosureMotionID = operation
                         return operation
                     },
-                    end: { [weak cell] operation in
+                    end: { [weak self, weak cell] operation in
                         guard let cell, cell.measurementHostID == measurementHostID,
                               cell.disclosureMotionID == operation else { return }
                         cell.disclosureMotionID = nil
+                        if let self, self.needsTextCoverageCheck { self.scheduleEmission() }
                     }
                 ))
                 .frame(maxWidth: .infinity)
@@ -1455,6 +1488,8 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                               frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
                               frame.width > 0, frame.height > 0 else { return }
                         cell.messageLocalFrame = frame
+                        cell.textFramePublication = observation.publication
+                        self.needsTextCoverageCheck = true
                         self.scheduleEmission()
                     }
                 }
@@ -1479,6 +1514,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         guard let cell = cell as? NativeChatCell, rows.indices.contains(indexPath.item) else { return }
         let row = rows[indexPath.item]
         if cell.configuredKey != NativeChatRowKey(id: row.id, revision: row.revision) || cell.configuredPublication != input.publicationID { configure(cell, row: row) }
+        needsTextCoverageCheck = true
         scheduleEmission()
     }
     func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
@@ -1511,6 +1547,52 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                      contentInsets: collection.adjustedContentInset,
                      contentOffset: collection.contentOffset, containerSize: collection.bounds.size, visibleRect: collection.bounds)
     }
+    /// Offset KVO can precede UIKit moving the cells. Check coverage only after
+    /// current host geometry agrees with the accepted layout, including a fresh
+    /// SwiftUI frame acknowledgement for this publication. Failed checks wait
+    /// for an existing layout/frame/batch event; they never enqueue a retry.
+    private func refreshPendingTextCoverage() {
+        guard needsTextCoverageCheck, !refreshingTextCoverage,
+              !detached, attachmentReady, input.driver.controller === self,
+              collection.window != nil, batchID == nil,
+              !input.driver.externalViewportMotion, command == nil,
+              animator == nil, nativeAnimatedCommandID == nil else { return }
+        needsTextCoverageCheck = false
+        refreshingTextCoverage = true
+        defer { refreshingTextCoverage = false }
+        for case let cell as NativeChatCell in collection.visibleCells {
+            guard let index = collection.indexPath(for: cell)?.item,
+                  rows.indices.contains(index), rows[index].isMessage else { continue }
+            let row = rows[index]
+            let key = NativeChatRowKey(id: row.id, revision: row.revision)
+            guard cell.window === collection.window, !cell.isHidden, cell.alpha > 0,
+                  cell.disclosureMotionID == nil,
+                  cell.configuredKey == key,
+                  cell.configuredPublication == input.publicationID,
+                  cell.textFramePublication == input.publicationID,
+                  layout.isMeasured(key, by: cell.measurementHostID), let local = cell.messageLocalFrame,
+                  let expected = layout.frame(for: key.id),
+                  abs(cell.frame.minX - expected.minX) <= 0.01,
+                  abs(cell.frame.minY - expected.minY) <= 0.5,
+                  abs(cell.frame.width - expected.width) <= 0.01,
+                  abs(cell.frame.height - expected.height) <= 0.5 else {
+                needsTextCoverageCheck = true
+                continue
+            }
+            // Collection content coordinates deliberately exclude scroll offset:
+            // ordinary scrolling is already covered by the text's KVO path.
+            let placement = NativeChatTextPlacement(
+                key: key, publication: input.publicationID, hostID: cell.measurementHostID,
+                cellFrame: cell.convert(cell.bounds, to: collection),
+                messageFrame: cell.contentView.convert(local, to: collection))
+            guard cell.refreshedTextPlacement != placement else { continue }
+            // Consume before calling into UIKit so a reentrant event cannot
+            // repeat this placement or have its new pending work erased.
+            cell.refreshedTextPlacement = placement
+            MessageTextViewportDrawing.refreshAfterLayout(in: cell.contentView, visibleOnly: true)
+        }
+    }
+
     private func scheduleEmission() {
         guard !detached, !emissionScheduled else { return }
         emissionScheduled = true
@@ -1535,6 +1617,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                 self.input.driver.codeLayoutEvents.send(frames); self.input.onCodeLayout(frames)
             }
             self.completeCommandIfReady(geometry)
+            self.refreshPendingTextCoverage()
             #if DEBUG
             self.updateAccessibility(geometry)
             #endif
