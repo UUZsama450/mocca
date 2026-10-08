@@ -21,6 +21,7 @@ private enum PreferencesSheetRoute: String, Identifiable, Hashable {
 }
 
 private enum SettingsSearchDestination: Hashable {
+    case userProfile
     case assistantManagement
     case currentAssistant
     case groupChat
@@ -70,6 +71,7 @@ private struct SettingsSearchItem: Identifiable {
     }
 
     static let catalog: [SettingsSearchItem] = [
+        .init(title: "个人资料", context: "便签", keywords: "用户 昵称 头像 便签 喜好 兴趣 偏好 notes profile", systemImage: "person.crop.circle", destination: .userProfile),
         .init(title: "助手", context: "助手与聊天", keywords: "助手管理 头像 记忆 提示词", systemImage: "person.crop.circle", destination: .assistantManagement),
         .init(title: "当前助手图像生成", context: "助手", keywords: "生图 图片 模型", systemImage: "sparkles", destination: .currentAssistant),
         .init(title: "群聊设置", context: "助手与聊天", keywords: "群聊 多助手", systemImage: "bubble.left.and.bubble.right", destination: .groupChat),
@@ -123,6 +125,28 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 if normalizedSearchText.isEmpty {
+                    Section {
+                        NavigationLink(value: SettingsSearchDestination.userProfile) {
+                            HStack(spacing: 12) {
+                                SponsorWearableAvatar(target: .user, badgeSize: 19) {
+                                    UserProfileAvatarView(profile: model.userProfile, size: 64)
+                                }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(model.userProfile.nickname)
+                                        .font(.title3.weight(.semibold))
+                                    Text(L10n.lookup("个人资料"))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .accessibilityLabel(L10n.lookup("个人资料"))
+                        .accessibilityIdentifier("settings.userProfile")
+                        .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
+                        .listRowBackground(SettingsOverviewRowBackground())
+                        .listRowSeparator(.hidden)
+                    }
                 if showsAssistantAndChatSection {
                     Section {
                     if settingsMatch("助手", keywords: "助手管理 助手头像 图像生成 生图 记忆 提示词") {
@@ -554,6 +578,8 @@ struct SettingsView: View {
     @ViewBuilder
     private func searchDestination(_ destination: SettingsSearchDestination) -> some View {
         switch destination {
+        case .userProfile:
+            UserProfileView(profile: model.userProfile, onCloseSettings: { dismiss() })
         case .assistantManagement:
             AssistantManagementView()
         case .currentAssistant:

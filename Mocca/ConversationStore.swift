@@ -93,6 +93,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     let createdAt: Date
     var updatedAt: Date
     var status: Status
+    /// Orders received generation content independently of presentation frames
+    /// and wall-clock timestamps. Absent on messages saved by older versions.
+    var streamingRevision: UInt64?
     var parts: [MessagePart]
     var reasoningSegments: [ReasoningSegment]
     var attachments: [MessageAttachment]
@@ -122,6 +125,17 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     /// into one logical message.
     var versionGroupKey: String {
         versionGroupID ?? id.uuidString
+    }
+
+    mutating func interruptUnfinishedGeneration() {
+        status = .interrupted
+        for index in reasoningSegments.indices where reasoningSegments[index].finishedAt == nil {
+            reasoningSegments[index].finishedAt = max(updatedAt, reasoningSegments[index].startedAt ?? updatedAt)
+        }
+        for index in toolEvents.indices
+        where toolEvents[index].status == .pending || toolEvents[index].status == .running {
+            toolEvents[index].status = .failed
+        }
     }
 
     init(
@@ -422,13 +436,15 @@ struct PendingGenerationCompletionRecord: Codable, Hashable {
     var createdAt: Date
     var completedAt: Date?
     var message: ChatMessage?
+    var sequence: UInt64?
 
     init(
         runID: UUID,
         conversationID: UUID,
         createdAt: Date = .now,
         completedAt: Date? = nil,
-        message: ChatMessage? = nil
+        message: ChatMessage? = nil,
+        sequence: UInt64? = nil
     ) {
         schemaVersion = Self.currentSchemaVersion
         self.runID = runID
@@ -436,6 +452,148 @@ struct PendingGenerationCompletionRecord: Codable, Hashable {
         self.createdAt = createdAt
         self.completedAt = completedAt
         self.message = message
+        self.sequence = sequence
+    }
+}
+
+/// Merges only a newer payload for an existing, unfinished reply. Deletion,
+/// cancellation and user-owned message metadata remain authoritative.
+enum StreamingMessageRecovery {
+    @discardableResult
+    static func merge(
+        _ incoming: ChatMessage, into snapshot: inout ConversationSnapshot,
+        previouslyJournaled: ChatMessage? = nil
+    ) -> Bool {
+        guard let revision = incoming.streamingRevision, revision > 0,
+              incoming.role == .assistant,
+              let conversationIndex = snapshot.conversations.firstIndex(where: { $0.id == incoming.conversationID }),
+              var messages = snapshot.messagesByConversation[incoming.conversationID],
+              let index = messages.firstIndex(where: { $0.id == incoming.id }) else { return false }
+        var current = messages[index]
+        guard current.role == .assistant,
+              current.conversationID == incoming.conversationID,
+              current.groupID == incoming.groupID,
+              current.versionGroupID == incoming.versionGroupID,
+              current.version == incoming.version,
+              current.providerID == incoming.providerID,
+              current.modelID == incoming.modelID else { return false }
+        let newerUnfinished = (current.status == .streaming || current.status == .interrupted)
+            && revision > (current.streamingRevision ?? 0)
+        // Image post-processing can extend an already completed text reply.
+        // Permit that only with an exact verified predecessor, so an edited,
+        // cancelled or otherwise changed terminal row is never overwritten.
+        let verifiedFinalExtension = current.status == .complete && incoming.status == .complete
+            && current == previouslyJournaled && incoming != current
+            && revision >= (current.streamingRevision ?? 0)
+        guard newerUnfinished || verifiedFinalExtension else { return false }
+        current.text = incoming.text
+        current.parts = incoming.parts
+        current.reasoningSegments = incoming.reasoningSegments
+        current.attachments = incoming.attachments
+        current.toolEvents = incoming.toolEvents
+        current.tokenUsage = incoming.tokenUsage
+        current.streamingRevision = revision
+        current.updatedAt = max(current.updatedAt, incoming.updatedAt)
+        if incoming.status == .streaming {
+            current.interruptUnfinishedGeneration()
+        } else {
+            current.status = incoming.status
+        }
+        messages[index] = current
+        snapshot.messagesByConversation[incoming.conversationID] = messages
+        snapshot.conversations[conversationIndex].updatedAt = max(
+            snapshot.conversations[conversationIndex].updatedAt, current.updatedAt
+        )
+        return true
+    }
+}
+
+/// One global, bounded stream-save lane. Token delivery only marks identities;
+/// the owner captures the latest payload when the lane is ready to write.
+@MainActor
+final class StreamingCheckpointScheduler {
+    private let interval: Duration
+    private let clock = ContinuousClock()
+    private let write: @MainActor (Set<UUID>) async -> Void
+    private let didFinishBatch: @MainActor () -> Void
+    private var dirty = Set<UUID>()
+    private var scheduled: Task<Void, Never>?
+    private var writing: Task<Void, Never>?
+    private var nextWriteAt: ContinuousClock.Instant?
+    private var urgent = false
+
+    init(interval: Duration = .seconds(2),
+         didFinishBatch: @escaping @MainActor () -> Void = {},
+         write: @escaping @MainActor (Set<UUID>) async -> Void) {
+        self.interval = interval
+        self.didFinishBatch = didFinishBatch
+        self.write = write
+    }
+
+    var hasWork: Bool { !dirty.isEmpty || writing != nil }
+
+    func markDirty(_ id: UUID) {
+        dirty.insert(id)
+        schedule()
+    }
+
+    func flush() {
+        urgent = true
+        scheduled?.cancel()
+        scheduled = nil
+        schedule()
+    }
+
+    func remove(_ id: UUID) {
+        dirty.remove(id)
+        if dirty.isEmpty {
+            urgent = false
+            scheduled?.cancel()
+            scheduled = nil
+            if writing == nil { didFinishBatch() }
+        }
+    }
+
+    func cancelPending() {
+        dirty.removeAll()
+        urgent = false
+        scheduled?.cancel()
+        scheduled = nil
+        if writing == nil { didFinishBatch() }
+    }
+
+    private func schedule() {
+        guard writing == nil, !dirty.isEmpty, scheduled == nil else { return }
+        let deadline = urgent ? clock.now : (nextWriteAt ?? clock.now)
+        scheduled = Task { [weak self] in
+            do { try await ContinuousClock().sleep(until: deadline) }
+            catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.scheduled = nil
+            self.beginWrite()
+        }
+    }
+
+    private func beginWrite() {
+        guard writing == nil, !dirty.isEmpty else { return }
+        let ids = dirty
+        dirty.removeAll()
+        urgent = false
+        nextWriteAt = clock.now.advanced(by: interval)
+        writing = Task { [weak self] in
+            guard let self else { return }
+            await self.write(ids)
+            self.writing = nil
+            // A background flush lease covers its requested batch, including
+            // an urgent follow-up captured while a previous write was busy.
+            // Ordinary future tokens must not hold that lease through the
+            // next throttle interval or turn it into generation keep-alive.
+            if !self.urgent || self.dirty.isEmpty { self.didFinishBatch() }
+            if self.dirty.isEmpty {
+                self.urgent = false
+            }
+            else { self.schedule() }
+        }
     }
 }
 
@@ -464,187 +622,194 @@ enum PendingGenerationCompletionJournal {
     final class Writer: @unchecked Sendable {
         let runID: UUID
         let conversationID: UUID
-        let fileURL: URL
-
+        private let fileURLs: [URL]
         private let fileManager: FileManager
-        private var fileHandle: FileHandle?
-        private let encoder: JSONEncoder
+        private var handles: [FileHandle] = []
+        private let encoder = PendingGenerationCompletionJournal.makeEncoder()
         private let queue = PendingGenerationCompletionJournal.queue
-        private var lastCompletedMessage: ChatMessage?
+        private var lastMessage: ChatMessage?
+        private var lastSlot = 0
+        private var sequence: UInt64 = 0
+        private var closed = false
 
-        private final class CompletionRequest: @unchecked Sendable {
+        // Test/diagnostic callers receive the last verified slot, never the
+        // replacement currently being written.
+        var fileURL: URL { queue.sync { fileURLs[lastSlot] } }
+        var containsRecoveryMessage: Bool { queue.sync { lastMessage != nil } }
+
+        private final class WriteRequest: @unchecked Sendable {
             let message: ChatMessage
             init(_ message: ChatMessage) { self.message = message }
         }
 
-        fileprivate init(
-            runID: UUID,
-            conversationID: UUID,
-            fileURL: URL,
-            fileManager: FileManager,
-            fileHandle: FileHandle
-        ) throws {
+        fileprivate init(runID: UUID, conversationID: UUID,
+                         directory: URL, fileManager: FileManager) {
             self.runID = runID
             self.conversationID = conversationID
-            self.fileURL = fileURL
             self.fileManager = fileManager
-            self.fileHandle = fileHandle
-            encoder = PendingGenerationCompletionJournal.makeEncoder()
-            try writeRecord(
-                PendingGenerationCompletionRecord(
-                    runID: runID,
-                    conversationID: conversationID
-                )
-            )
+            fileURLs = [
+                directory.appendingPathComponent("\(runID.uuidString.lowercased()).json"),
+                directory.appendingPathComponent("\(runID.uuidString.lowercased()).previous.json")
+            ]
         }
 
-        deinit {
-            try? fileHandle?.close()
+        deinit { for handle in handles { try? handle.close() } }
+
+        fileprivate func prepareOnQueue() throws {
+            guard !closed else { throw ConversationStoreError.persistenceBlocked }
+            guard handles.isEmpty else { return }
+            try fileManager.createDirectory(at: fileURLs[0].deletingLastPathComponent(),
+                                            withIntermediateDirectories: true)
+            do {
+                for url in fileURLs {
+                    var attributes: [FileAttributeKey: Any] = [:]
+                    #if os(iOS)
+                    attributes[.protectionKey] = FileProtectionType.completeUnlessOpen
+                    #endif
+                    guard fileManager.createFile(atPath: url.path, contents: Data(), attributes: attributes) else {
+                        throw ConversationStoreError.persistenceBlocked
+                    }
+                    handles.append(try FileHandle(forUpdating: url))
+                }
+                try writeRecord(PendingGenerationCompletionRecord(runID: runID, conversationID: conversationID),
+                                slot: 0, synchronize: false)
+            } catch {
+                for handle in handles { try? handle.close() }
+                handles.removeAll()
+                for url in fileURLs { try? fileManager.removeItem(at: url) }
+                throw error
+            }
         }
 
         func persistCompletedMessage(_ message: ChatMessage) throws {
-            try queue.sync { try persistCompletedMessageOnQueue(message) }
+            try queue.sync { try persistOnQueue(message, checkpoint: false) }
+        }
+
+        func persistCheckpoint(_ message: ChatMessage) throws {
+            try queue.sync { try persistOnQueue(message, checkpoint: true) }
         }
 
         func enqueueCompletedMessage(
             _ message: ChatMessage,
             completion: @escaping @Sendable (Result<Void, Error>) -> Void
         ) {
-            let request = CompletionRequest(message)
+            enqueue(message, checkpoint: false, completion: completion)
+        }
+
+        func enqueueCheckpoint(
+            _ message: ChatMessage,
+            completion: @escaping @Sendable (Result<Void, Error>) -> Void
+        ) {
+            enqueue(message, checkpoint: true, completion: completion)
+        }
+
+        private func enqueue(_ message: ChatMessage, checkpoint: Bool,
+                             completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
+            let request = WriteRequest(message)
             queue.async { [self, request] in
-                completion(Result { try persistCompletedMessageOnQueue(request.message) })
+                completion(Result { try persistOnQueue(request.message, checkpoint: checkpoint) })
             }
         }
 
-        private func persistCompletedMessageOnQueue(_ message: ChatMessage) throws {
-            guard fileHandle != nil else { throw ConversationStoreError.persistenceBlocked }
-            guard message.id == runID,
-                  message.conversationID == conversationID,
+        private func persistOnQueue(_ message: ChatMessage, checkpoint: Bool) throws {
+            guard !closed, message.id == runID, message.conversationID == conversationID,
                   message.role == .assistant,
-                  message.status != .streaming else {
-                throw ConversationStoreError.invalidSnapshotStructure(
-                    "待提交回复身份或状态无效"
-                )
+                  checkpoint ? (message.status == .streaming && (message.streamingRevision ?? 0) > 0)
+                             : message.status != .streaming else {
+                throw ConversationStoreError.invalidSnapshotStructure("待提交回复身份或状态无效")
             }
-            // Image post-processing may submit the same already-durable text
-            // completion again. Compare the whole value, including metadata.
-            guard lastCompletedMessage != message else { return }
-            // A failed replacement can leave an incomplete file. Its previous
-            // value must no longer qualify for the durable-write fast path.
-            lastCompletedMessage = nil
+            if checkpoint, let lastMessage {
+                // A final write closes admission for every old streaming
+                // callback, including a checkpoint captured before an await.
+                guard lastMessage.status == .streaming,
+                      (message.streamingRevision ?? 0) > (lastMessage.streamingRevision ?? 0) else {
+                    return
+                }
+            }
+            guard lastMessage != message else { return }
+            try prepareOnQueue()
+            let nextSlot = 1 - lastSlot
+            let nextSequence = sequence + 1
             try writeRecord(
                 PendingGenerationCompletionRecord(
-                    runID: runID,
-                    conversationID: conversationID,
-                    completedAt: .now,
-                    message: message
-                )
+                    runID: runID, conversationID: conversationID,
+                    completedAt: message.status == .streaming ? nil : .now,
+                    message: message, sequence: nextSequence
+                ),
+                slot: nextSlot
             )
-            lastCompletedMessage = message
+            // Replacement never truncates the last verified record. A crash
+            // or failed write leaves at least that older checkpoint readable.
+            lastSlot = nextSlot
+            sequence = nextSequence
+            lastMessage = message
         }
 
-        func closeKeepingFile() {
-            queue.sync { closeFileOnQueue() }
-        }
-
-        private func closeFileOnQueue() {
-            try? fileHandle?.close()
-            fileHandle = nil
-            lastCompletedMessage = nil
-        }
+        func closeKeepingFile() { queue.sync { closeOnQueue() } }
 
         func closeAndRemoveFile() {
             queue.sync {
-                closeFileOnQueue()
-                try? fileManager.removeItem(at: fileURL)
+                closeOnQueue()
+                for url in fileURLs { try? fileManager.removeItem(at: url) }
             }
         }
 
-        private func writeRecord(
-            _ record: PendingGenerationCompletionRecord
-        ) throws {
-            guard let fileHandle else {
-                throw ConversationStoreError.persistenceBlocked
-            }
+        private func closeOnQueue() {
+            closed = true
+            for handle in handles { try? handle.close() }
+            handles.removeAll()
+            lastMessage = nil
+        }
+
+        private func writeRecord(_ record: PendingGenerationCompletionRecord,
+                                 slot: Int, synchronize: Bool = true) throws {
             let data = try encoder.encode(record)
             guard data.count <= PendingGenerationCompletionJournal.maximumRecordByteCount else {
-                throw ConversationStoreError.invalidSnapshotStructure(
-                    "待提交回复超过安全大小上限"
-                )
+                throw ConversationStoreError.invalidSnapshotStructure("待提交回复超过安全大小上限")
             }
-
-            try fileHandle.seek(toOffset: 0)
-            try fileHandle.truncate(atOffset: 0)
-            try fileHandle.write(contentsOf: data)
-            try fileHandle.synchronize()
-
-            try fileHandle.seek(toOffset: 0)
-            let verifiedData = try fileHandle.read(upToCount: data.count + 1) ?? Data()
-            guard verifiedData == data else {
+            let handle = handles[slot]
+            try handle.seek(toOffset: 0)
+            try handle.truncate(atOffset: 0)
+            try handle.write(contentsOf: data)
+            if synchronize { try handle.synchronize() }
+            try handle.seek(toOffset: 0)
+            guard try handle.read(upToCount: data.count + 1) == data else {
                 throw ConversationStoreError.stagedWriteMismatch
             }
-            _ = try fileHandle.seekToEnd()
         }
     }
 
     static func makeWriter(
-        runID: UUID,
-        conversationID: UUID,
-        fileManager: FileManager = .default,
-        directoryURL: URL? = nil
+        runID: UUID, conversationID: UUID,
+        fileManager: FileManager = .default, directoryURL: URL? = nil
     ) throws -> Writer {
-        try queue.sync {
-            try makeWriterOnQueue(runID: runID, conversationID: conversationID,
-                                  fileManager: fileManager, directoryURL: directoryURL)
-        }
+        let writer = try unpreparedWriter(runID: runID, conversationID: conversationID,
+                                          fileManager: fileManager, directoryURL: directoryURL)
+        try queue.sync { try writer.prepareOnQueue() }
+        return writer
     }
 
-    private static func makeWriterOnQueue(
-        runID: UUID,
-        conversationID: UUID,
-        fileManager: FileManager,
-        directoryURL: URL?
+    /// Preparation enters the same lane before subsequent saves, but never
+    /// makes a send animation wait for file creation or a manifest sync.
+    static func makeDeferredWriter(
+        runID: UUID, conversationID: UUID,
+        fileManager: FileManager = .default, directoryURL: URL? = nil
     ) throws -> Writer {
-        let directory = try resolvedDirectory(
-            fileManager: fileManager,
-            directoryURL: directoryURL
-        )
-        try fileManager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        let fileURL = directory.appendingPathComponent(
-            "\(runID.uuidString.lowercased()).json"
-        )
-        if fileManager.fileExists(atPath: fileURL.path) {
-            try fileManager.removeItem(at: fileURL)
+        let writer = try unpreparedWriter(runID: runID, conversationID: conversationID,
+                                          fileManager: fileManager, directoryURL: directoryURL)
+        queue.async {
+            do { try writer.prepareOnQueue() }
+            catch { NSLog("[generation-journal] preparation failed: %@", error.localizedDescription) }
         }
+        return writer
+    }
 
-        var attributes: [FileAttributeKey: Any] = [:]
-        #if os(iOS)
-        attributes[.protectionKey] = FileProtectionType.completeUnlessOpen
-        #endif
-        guard fileManager.createFile(
-            atPath: fileURL.path,
-            contents: Data(),
-            attributes: attributes
-        ) else {
-            throw ConversationStoreError.persistenceBlocked
-        }
-
-        do {
-            let handle = try FileHandle(forUpdating: fileURL)
-            return try Writer(
-                runID: runID,
-                conversationID: conversationID,
-                fileURL: fileURL,
-                fileManager: fileManager,
-                fileHandle: handle
-            )
-        } catch {
-            try? fileManager.removeItem(at: fileURL)
-            throw error
-        }
+    private static func unpreparedWriter(
+        runID: UUID, conversationID: UUID, fileManager: FileManager, directoryURL: URL?
+    ) throws -> Writer {
+        Writer(runID: runID, conversationID: conversationID,
+               directory: try resolvedDirectory(fileManager: fileManager, directoryURL: directoryURL),
+               fileManager: fileManager)
     }
 
     static func mergeRecoverableCompletions(
@@ -693,95 +858,104 @@ enum PendingGenerationCompletionJournal {
         }
 
         let decoder = makeDecoder()
+        var newest: [UUID: PendingGenerationCompletionRecord] = [:]
+        var predecessors: [UUID: PendingGenerationCompletionRecord] = [:]
+        var manifests: [UUID: URL] = [:]
         for fileURL in files {
             do {
-                let values = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-                let byteCount = values.fileSize ?? 0
-                guard byteCount > 0,
-                      byteCount <= maximumRecordByteCount else {
+                let byteCount = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard byteCount > 0, byteCount <= maximumRecordByteCount else { continue }
+                let record = try decoder.decode(PendingGenerationCompletionRecord.self,
+                                                from: Data(contentsOf: fileURL))
+                guard record.schemaVersion <= PendingGenerationCompletionRecord.currentSchemaVersion else {
+                    report.failures.append("\(fileURL.lastPathComponent)：待提交回复结构无效")
                     continue
                 }
-                let data = try Data(contentsOf: fileURL)
-                let record = try decoder.decode(
-                    PendingGenerationCompletionRecord.self,
-                    from: data
-                )
-                guard record.schemaVersion
-                        <= PendingGenerationCompletionRecord.currentSchemaVersion,
-                      let conversationIndex = snapshot.conversations.firstIndex(
-                        where: { $0.id == record.conversationID }
-                      ) else {
-                    report.failures.append(
-                        "\(fileURL.lastPathComponent)：待提交回复结构无效"
-                    )
-                    continue
-                }
-                // A run that was cancelled or killed before completion leaves
-                // only the pre-opened manifest. It contains no reply to merge
-                // and must not be treated as a corrupt completion.
                 guard let message = record.message else {
+                    manifests[record.runID] = fileURL
                     continue
                 }
-                guard record.runID == message.id,
-                      record.conversationID == message.conversationID,
+                guard record.runID == message.id, record.conversationID == message.conversationID,
                       message.role == .assistant,
-                      message.status != .streaming else {
-                    report.failures.append(
-                        "\(fileURL.lastPathComponent)：待提交回复身份或状态无效"
-                    )
+                      message.status != .streaming || (message.streamingRevision ?? 0) > 0 else {
+                    report.failures.append("\(fileURL.lastPathComponent)：待提交回复身份或状态无效")
                     continue
                 }
-
-                var messages =
-                    snapshot.messagesByConversation[record.conversationID] ?? []
-                if let messageIndex = messages.firstIndex(
-                    where: { $0.id == message.id }
-                ) {
-                    let current = messages[messageIndex]
-                    if current == message {
-                        report.filesReadyForRemoval.append(fileURL)
+                if let previous = newest[record.runID] {
+                    if (previous.sequence ?? 0) > (record.sequence ?? 0) {
+                        if (record.sequence ?? 0) > (predecessors[record.runID]?.sequence ?? 0) {
+                            predecessors[record.runID] = record
+                        }
                         continue
                     }
-                    guard current.role == .assistant,
-                          current.status == .streaming
-                            || current.status == .interrupted
-                            || current.status == .cancelled
-                            || current.text.trimmingCharacters(
-                                in: .whitespacesAndNewlines
-                            ).isEmpty else {
-                        report.failures.append(
-                            "\(fileURL.lastPathComponent)：已有不同的完整消息，未覆盖"
-                        )
-                        continue
-                    }
-                    messages[messageIndex] = message
-                } else {
-                    // ISO-8601 persistence can collapse the user row and its
-                    // assistant placeholder onto the same whole second. Never
-                    // use random UUIDs to break that tie: doing so reshuffles
-                    // every existing equal-time turn when one durable reply is
-                    // recovered. Insert only the missing reply before the first
-                    // strictly later row, preserving all existing order and
-                    // placing the recovered assistant after equal-time rows.
-                    let insertionIndex = messages.firstIndex {
-                        $0.createdAt > message.createdAt
-                    } ?? messages.endIndex
-                    messages.insert(message, at: insertionIndex)
+                    predecessors[record.runID] = previous
                 }
-
-                snapshot.messagesByConversation[record.conversationID] = messages
-                if snapshot.conversations[conversationIndex].updatedAt
-                    < message.updatedAt {
-                    snapshot.conversations[conversationIndex].updatedAt =
-                        message.updatedAt
-                }
-                report.recoveredMessageIDs.append(message.id)
-                report.filesReadyForRemoval.append(fileURL)
+                newest[record.runID] = record
             } catch {
-                report.failures.append(
-                    "\(fileURL.lastPathComponent)：\(error.localizedDescription)"
-                )
+                report.failures.append("\(fileURL.lastPathComponent)：\(error.localizedDescription)")
             }
+        }
+        for (runID, record) in newest {
+            guard let message = record.message,
+                  let conversationIndex = snapshot.conversations.firstIndex(where: { $0.id == record.conversationID }) else {
+                report.failures.append("\(runID)：待提交回复的会话不存在")
+                continue
+            }
+            // Include a torn companion slot in retirement only after its
+            // surviving record has been safely reconciled with the store.
+            let ownedFiles = files.filter {
+                $0.lastPathComponent.lowercased().hasPrefix(runID.uuidString.lowercased() + ".")
+            }
+            if message.streamingRevision != nil {
+                if StreamingMessageRecovery.merge(
+                    message, into: &snapshot, previouslyJournaled: predecessors[runID]?.message
+                ) {
+                    report.recoveredMessageIDs.append(message.id)
+                }
+                // New records require an existing unfinished owner. A deleted,
+                // newer or terminal row must never be resurrected/rolled back.
+                report.filesReadyForRemoval.append(contentsOf: ownedFiles)
+                continue
+            }
+
+            // Compatibility for completions written before progress revisions
+            // existed (their empty placeholder may have been removed on load).
+            var messages = snapshot.messagesByConversation[record.conversationID] ?? []
+            if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                let current = messages[index]
+                if current == message {
+                    report.filesReadyForRemoval.append(contentsOf: ownedFiles)
+                    continue
+                }
+                guard current.role == .assistant,
+                      current.status == .streaming || current.status == .interrupted
+                        || current.status == .cancelled
+                        || current.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    report.failures.append("\(runID)：已有不同的完整消息，未覆盖")
+                    continue
+                }
+                messages[index] = message
+            } else {
+                let insertionIndex = messages.firstIndex { $0.createdAt > message.createdAt } ?? messages.endIndex
+                messages.insert(message, at: insertionIndex)
+            }
+            snapshot.messagesByConversation[record.conversationID] = messages
+            snapshot.conversations[conversationIndex].updatedAt = max(
+                snapshot.conversations[conversationIndex].updatedAt, message.updatedAt
+            )
+            report.recoveredMessageIDs.append(message.id)
+            report.filesReadyForRemoval.append(contentsOf: ownedFiles)
+        }
+        // An abandoned run with only a manifest has no recoverable payload.
+        for (runID, url) in manifests where newest[runID] == nil {
+            report.filesReadyForRemoval.append(url)
+            // Only retire an empty companion. An invalid nonempty record may
+            // need later diagnosis/recovery and must not be treated as a seed.
+            let emptyCompanions = files.filter {
+                $0.lastPathComponent.lowercased().hasPrefix(runID.uuidString.lowercased() + ".")
+                    && (try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize) == 0
+            }
+            report.filesReadyForRemoval.append(contentsOf: emptyCompanions)
         }
         return report
     }
@@ -1739,16 +1913,11 @@ struct LegacyConversationStore {
                 continue
             }
             var messages = snapshot.messagesByConversation[conversation.id] ?? []
-            let originalCount = messages.count
-            messages.removeAll { message in
-                message.status == .streaming && message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
+            // Preserve empty, reasoning-only and tool-only replies as explicit
+            // interruptions. Their presence is also the ownership anchor for a
+            // newer journal checkpoint; removing them would lose that boundary.
             for index in messages.indices where messages[index].status == .streaming {
-                messages[index].status = .interrupted
-                messages[index].updatedAt = .now
-                changed = true
-            }
-            if messages.count != originalCount {
+                messages[index].interruptUnfinishedGeneration()
                 changed = true
             }
             snapshot.messagesByConversation[conversation.id] = messages
@@ -1820,7 +1989,6 @@ final class ConversationRecordDatabase {
     private var committed: ConversationSnapshot?
     private var generation: Int64 = 0
     private var didLoad = false
-    private var coldStartRemovals: Set<UUID> = []
     private(set) var lastChangedRecordCount = 0
     private(set) var lastEncodedByteCount = 0
     #if DEBUG
@@ -2078,10 +2246,8 @@ final class ConversationRecordDatabase {
     }
 
     private func normalizeLoaded(_ snapshot: inout ConversationSnapshot) {
-        if isReplica { coldStartRemovals = []; return }
-        let before = Set(snapshot.messagesByConversation.values.joined().map(\.id))
+        guard !isReplica else { return }
         _ = legacy.normalizeAfterColdStart(&snapshot)
-        coldStartRemovals = before.subtracting(snapshot.messagesByConversation.values.joined().map(\.id))
     }
 
     private func mayRecover(_ error: Error) -> Bool {
@@ -2153,7 +2319,7 @@ final class ConversationRecordDatabase {
             }
             if !authorizedReduction,
                (!oldConversationIDs.isSubset(of: newConversationIDs)
-                || !oldMessageIDs.subtracting(coldStartRemovals).isSubset(of: newMessageIDs)) {
+                || !oldMessageIDs.isSubset(of: newMessageIDs)) {
                 throw failure("拒绝未授权的聊天或消息减少")
             }
             changes = []
@@ -2244,7 +2410,6 @@ final class ConversationRecordDatabase {
         try execute("COMMIT")
         committedTransaction = true
         committed = snapshot; generation = nextGeneration; didLoad = true
-        coldStartRemovals = []
         #if DEBUG
         lastStageTimings = ["validation": (validationEnd - stageStart) * 1000,
                             "diff": (diffEnd - validationEnd) * 1000,

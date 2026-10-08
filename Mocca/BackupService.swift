@@ -1694,11 +1694,13 @@ private enum LegacyKelivoSettingsDecoder {
             nickname: string(values, "user_name") ?? UserProfile.defaultNickname,
             avatarJPEGData: avatarData,
             isEnabled: bool(values, "user_profile_enabled_v1") ?? false,
-            personalityTraits: stringArray(values, "user_profile_traits_v1"),
-            preferredAIStyles: stringArray(values, "user_profile_ai_styles_v1"),
-            interests: string(values, "user_profile_interests_v1") ?? "",
-            avoidTopics: string(values, "user_profile_avoid_topics_v1") ?? "",
-            additionalNotes: string(values, "user_profile_custom_notes_v1") ?? ""
+            noteTopics: UserProfile.legacyNoteTopics(
+                interests: string(values, "user_profile_interests_v1") ?? "",
+                avoidTopics: string(values, "user_profile_avoid_topics_v1") ?? "",
+                additionalNotes: string(values, "user_profile_custom_notes_v1") ?? "",
+                personalityTraits: stringArray(values, "user_profile_traits_v1"),
+                preferredAIStyles: stringArray(values, "user_profile_ai_styles_v1")
+            )
         )
         profile.normalize()
         return profile

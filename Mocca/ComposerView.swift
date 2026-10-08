@@ -91,6 +91,7 @@ struct ComposerView: View {
 
     private let inputFocusExpansion: CGFloat = 6
     private let controlVisualHeight: CGFloat = 38
+    private let leadingControlsVerticalOffset: CGFloat = 3
 
     private var promptPlaceholder: String {
         let custom = model.preferences.chatInputPlaceholder.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -165,9 +166,16 @@ struct ComposerView: View {
                     resetRevision: inputRevision
                 ))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, inputFocusExpansion)
+                // Use the shell's existing inset without changing text wrapping.
+                .offset(x: 4)
+                // Share the existing padding above and below the editor so
+                // text and caret sit lower without moving the toolbar.
+                .padding(.vertical, inputFocusExpansion / 2)
                 .background(
                     Color.clear
+                        // Extend only into the existing gap above the controls.
+                        // Background geometry does not change editor/shell height.
+                        .padding(.bottom, -8)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             isFocused = true
@@ -175,35 +183,51 @@ struct ComposerView: View {
                 )
 
             HStack(spacing: 10) {
-                Button {
-                    presentBottomToolsAfterDismissingKeyboard()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 19, weight: .medium))
-                        .frame(width: controlVisualHeight, height: controlVisualHeight)
-                        .background(Color.primary.opacity(0.055), in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(L10n.lookup("打开工具菜单"))
-
-                Button {
-                    model.isModelSelectorPresented = true
-                } label: {
-                    HStack(spacing: 6) {
-                        AssistantAvatarView(profile: model.currentAssistant, size: 23)
-                        Text(model.currentAssistant.name)
-                            .font(.system(size: 14, weight: .semibold))
-                            .lineLimit(1)
+                HStack(spacing: 4) {
+                    Button {
+                        presentBottomToolsAfterDismissingKeyboard()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 19, weight: .medium))
+                            .frame(width: controlVisualHeight, height: controlVisualHeight)
+                            .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 11)
-                    .frame(height: controlVisualHeight)
-                    .background(Color.primary.opacity(0.055), in: Capsule())
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.lookup("打开工具菜单"))
 
-                Spacer(minLength: 0)
+                    Button {
+                        model.isModelSelectorPresented = true
+                    } label: {
+                        ComposerModelBubbleIcon()
+                            .frame(width: 23, height: 23)
+                            .scaleEffect(0.84)
+                            .frame(width: controlVisualHeight, height: controlVisualHeight)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.lookup("选择模型"))
+                    .accessibilityValue(model.currentAssistant.name)
+                }
+                .overlay(alignment: .top) {
+                    // Only the strip above the lowered pair focuses the editor.
+                    // It stops at their top edges and never crosses a button.
+                    Color.clear
+                        .frame(height: leadingControlsVerticalOffset)
+                        .contentShape(Rectangle())
+                        .onTapGesture { isFocused = true }
+                        .accessibilityHidden(true)
+                        .offset(y: -leadingControlsVerticalOffset)
+                }
+                .offset(x: -3, y: leadingControlsVerticalOffset)
+
+                // The newly freed toolbar space focuses the editor. This is a
+                // sibling of the buttons, so their hit regions stay separate.
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: controlVisualHeight)
+                    .contentShape(Rectangle())
+                    .onTapGesture { isFocused = true }
+                    .accessibilityHidden(true)
 
                 if !model.visibleQuickPhrases.isEmpty {
                     Menu {
@@ -430,6 +454,40 @@ struct ComposerView: View {
             for: nil
         )
         model.presentBottomTools()
+    }
+}
+
+private struct ComposerModelBubbleIcon: View {
+    var body: some View {
+        ZStack {
+            ComposerModelBubbleOutline()
+                .stroke(style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            HStack(spacing: 4.7) {
+                Capsule().frame(width: 2, height: 2.6)
+                Capsule().frame(width: 2, height: 2.6)
+            }
+            .offset(y: -0.8)
+        }
+        .foregroundStyle(Color.primary)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct ComposerModelBubbleOutline: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 7.8, y: 20))
+        path.addCurve(to: CGPoint(x: 12, y: 21), control1: CGPoint(x: 9.1, y: 20.7), control2: CGPoint(x: 10.5, y: 21))
+        path.addCurve(to: CGPoint(x: 21.5, y: 11.7), control1: CGPoint(x: 17.3, y: 21), control2: CGPoint(x: 21.5, y: 16.9))
+        path.addCurve(to: CGPoint(x: 12, y: 2.3), control1: CGPoint(x: 21.5, y: 6.5), control2: CGPoint(x: 17.3, y: 2.3))
+        path.addCurve(to: CGPoint(x: 2.5, y: 11.7), control1: CGPoint(x: 6.7, y: 2.3), control2: CGPoint(x: 2.5, y: 6.5))
+        path.addCurve(to: CGPoint(x: 3.9, y: 16.7), control1: CGPoint(x: 2.5, y: 13.5), control2: CGPoint(x: 3, y: 15.2))
+        path.addLine(to: CGPoint(x: 2.8, y: 20.6))
+        path.addQuadCurve(to: CGPoint(x: 3.5, y: 21.3), control: CGPoint(x: 2.5, y: 21.6))
+        path.addLine(to: CGPoint(x: 7.8, y: 20))
+        path.closeSubpath()
+        return path.applying(CGAffineTransform(translationX: rect.minX, y: rect.minY)
+            .scaledBy(x: rect.width / 24, y: rect.height / 24))
     }
 }
 

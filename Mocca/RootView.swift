@@ -2638,9 +2638,6 @@ struct RootView: View {
         .sheet(isPresented: $model.isSettingsPresented) {
             SettingsView()
         }
-        .sheet(isPresented: $model.isUserProfilePresented) {
-            UserProfileView()
-        }
         .sheet(isPresented: $model.isFavoritesPresented) {
             FavoriteMessagesView()
         }
@@ -4126,7 +4123,8 @@ private struct ChatView: View {
                 bottom: composerBottomClearance,
                 gap: conversationMessageSpacing,
                 minimumIncludesTopInset: visibleMessageCount > 0 && !isFreshConversationFirstMessage,
-                alignShortContentToBottom: false
+                alignShortContentToBottom: false,
+                bottomFollowClearance: max(0, composerBottomClearance - composerHeight)
             ),
             publicationID: AnyHashable(publicationID),
             sessionID: AnyHashable(model.selectedConversationID),
@@ -4135,6 +4133,7 @@ private struct ChatView: View {
             hasLater: model.hasLaterMessages,
             initialBottom: visibleMessageCount > 0 && !isFreshConversationFirstMessage,
             holdsAutomaticBottomFollow: isUserMessageSendPositioning,
+            streamingTailID: !model.hasLaterMessages && hosts.last?.message.isStreaming == true ? hosts.last?.message.id : nil,
             mutationLanding: nativeMutationLanding(for: publicationID),
             debugWindow: nativeTranscriptDebugWindow(
                 start: model.messageWindowStartIndex,
@@ -4522,6 +4521,7 @@ private struct ChatView: View {
             acknowledgeCodeDisclosureLayout(frames, using: scrollProxy)
         }
         .onPreferenceChange(MessageFramePreferenceKey.self) { snapshot in
+            StreamLayoutWorkProbe.hit("root.messageFramePreference")
             guard let snapshot,
                   snapshot.anchorID == bottomAnchorID else { return }
             if let requestID = activeCodeLayoutRequestID,
@@ -4647,10 +4647,11 @@ private struct ChatView: View {
                   bottomSnapshot.anchorID == bottomAnchorID,
                   let tailMessageID = bottomSnapshot.anchorID.messageIDs.last,
                   messageFrames[tailMessageID] != nil else { return }
-            handleConversationBottomAnchorFrame(bottomSnapshot, using: scrollProxy)
+            handleConversationBottomAnchorFrame(bottomSnapshot, using: scrollProxy, source: "message")
         }
         .onPreferenceChange(ConversationBottomAnchorFramePreferenceKey.self) { snapshot in
-            handleConversationBottomAnchorFrame(snapshot, using: scrollProxy)
+            StreamLayoutWorkProbe.hit("root.bottomFramePreference")
+            handleConversationBottomAnchorFrame(snapshot, using: scrollProxy, source: "bottom")
             advanceMessageReplacementIfReady(using: scrollProxy)
             finishMessageReplacementIfReady()
         }
@@ -6506,6 +6507,15 @@ private struct ChatView: View {
             } action: { height in
                 updateComposerHeight(height)
             }
+            #if DEBUG
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: { frame in
+                if StreamOcclusionProbe.enabled {
+                    StreamOcclusionProbe.composerFrame = frame
+                }
+            }
+            #endif
     }
 
     private func updateComposerHeight(_ height: CGFloat) {
@@ -8098,8 +8108,17 @@ private struct ChatView: View {
 
     private func handleConversationBottomAnchorFrame(
         _ snapshot: ConversationBottomAnchorFrame?,
-        using scrollProxy: ChatTranscriptProxy
+        using scrollProxy: ChatTranscriptProxy,
+        source: String = "state"
     ) {
+        StreamLayoutWorkProbe.hit("root.handleBottomFrame")
+        var outcome = "invalid"
+        defer {
+            if StreamLayoutWorkProbe.enabled {
+                StreamLayoutWorkProbe.hit("bottom.source." + source)
+                StreamLayoutWorkProbe.hit("bottom.outcome." + outcome)
+            }
+        }
         guard let snapshot,
               snapshot.anchorID == currentConversationBottomAnchorID,
               snapshot.frame != .zero else { return }
@@ -8118,6 +8137,10 @@ private struct ChatView: View {
                 + " drawerSemantic=\(model.isDrawerPresented)"
                 + " tailFrame=\(snapshot.anchorID.messageIDs.last.map { messageFrames[$0] != nil } ?? false)"
         )
+        if StreamLayoutWorkProbe.enabled {
+            StreamLayoutWorkProbe.hit(latestConversationBottomAnchorFrame == snapshot
+                ? "bottom.sameSnapshot" : "bottom.changedSnapshot")
+        }
         latestConversationBottomAnchorFrame = snapshot
         let hadAutomaticCollapseOwner =
             automaticReasoningCollapseOwner?.id.anchorID == snapshot.anchorID
@@ -8126,6 +8149,7 @@ private struct ChatView: View {
         )
         if hadAutomaticCollapseOwner
             || automaticReasoningCollapseOwner?.id.anchorID == snapshot.anchorID {
+            outcome = "reasoningOwner"
             ChatBottomTrace.log(
                 "REASONING_COLLAPSE_OWNER_DEFER source=bottomAnchor "
                     + chatBottomTraceState
@@ -8158,13 +8182,30 @@ private struct ChatView: View {
         }
         completeFreshConversationBottomHandoffIfNeeded()
         guard !model.isDrawerPresented || holdsDrawerForConcreteTail else {
+            outcome = "drawer"
             return
         }
 
 
+        // After readiness is committed, ordinary geometry updates have no
+        // readiness transition left to perform. The only later completion is
+        // conversation return, which still needs its concrete-tail checks.
+        // Keep sentinel delivery, collapse ownership, drawer notification and
+        // fresh-send handoff above this gate so their event order is unchanged.
+        if nativeConversationContentReadyAnchorID == snapshot.anchorID,
+           !isPositioningCurrentConversation,
+           !holdsDrawerForConcreteTail {
+            outcome = "alreadyReadySkipped"
+            return
+        }
+        StreamLayoutWorkProbe.hit("bottom.concreteReadinessCheck")
+
         // Readiness requires an actual measured tail in the current native
         // publication, independently of the inexpensive bottom spacer.
-        if needsNativeTailMeasurement(for: snapshot.anchorID) { return }
+        if needsNativeTailMeasurement(for: snapshot.anchorID) {
+            outcome = "unmeasuredTail"
+            return
+        }
 
         // Regeneration replaces a tall selected reply with a new streaming
         // tail without starting a conversation-return handoff. Neither an old
@@ -8196,6 +8237,7 @@ private struct ChatView: View {
                 && snapshot.frame.minY < nativeViewportHeight
 
             if !tailIntersectsViewport || !sentinelIntersectsViewport {
+                outcome = "regenerationRecovery"
                 let tailFrameDescription = tailFrame.map {
                     "\(String(format: "%.1f", $0.minY))...\(String(format: "%.1f", $0.maxY))"
                 } ?? "nil"
@@ -8235,6 +8277,7 @@ private struct ChatView: View {
         // this same revision; estimated cell geometry is not sufficient.
         guard !model.hasLaterMessages,
               hasConcreteTailFrame(for: snapshot.anchorID) else {
+            outcome = "missingLatestTail"
             ChatBottomTrace.log(
                 "CONTENT_READY_DEFER reason=concreteLatestTailMissing "
                     + chatBottomTraceState
@@ -8242,6 +8285,8 @@ private struct ChatView: View {
             return
         }
 
+        outcome = nativeConversationContentReadyAnchorID == snapshot.anchorID
+            ? "alreadyReady" : "becameReady"
         if nativeConversationContentReadyAnchorID != snapshot.anchorID {
             VersionFlashTrace.recordOnce(
                 "contentReady-\(snapshot.positionRequest.conversationID)-\(snapshot.positionRequest.request)",
@@ -8514,19 +8559,64 @@ private struct ChatView: View {
 
     private func nativeNavigationLandingGeometry(
         _ request: MessageNavigationRequest,
-        anchorID: ConversationBottomAnchorID
+        anchorID: ConversationBottomAnchorID,
+        readsCurrentNativeGeometry: Bool = false
     ) -> NativeChatScrollGeometry? {
         guard navigationRequest == request,
               currentConversationBottomAnchorID == anchorID,
               anchorID.positionRequest == request.positionRequest else { return nil }
-        return currentNativeLandingGeometry(anchorID: anchorID)
+        return currentNativeLandingGeometry(anchorID: anchorID,
+            readsCurrentNativeGeometry: readsCurrentNativeGeometry)
     }
 
     private func currentNativeLandingGeometry(
-        anchorID: ConversationBottomAnchorID
+        anchorID: ConversationBottomAnchorID,
+        readsCurrentNativeGeometry: Bool = false
     ) -> NativeChatScrollGeometry? {
+        // A completed bottom command can resume after another stream layout.
+        // Read one current native snapshot without forcing a layout or scroll.
+        let observedGeometry = readsCurrentNativeGeometry
+            ? nativeTranscriptDriver.currentGeometrySnapshot()
+            : nativeTranscriptDriver.latestGeometry
+        #if DEBUG
+        if readsCurrentNativeGeometry {
+            let g = observedGeometry
+            let sv = chatScrollViewBox.scrollView
+            var checks: [String: Bool] = [
+                "anchor": currentConversationBottomAnchorID == anchorID,
+                "geometry": g != nil,
+                "session": g?.sessionID == AnyHashable(model.selectedConversationID),
+                "publication": g?.publicationID == AnyHashable(NativeChatPublicationID(
+                    anchorID: anchorID, layoutRequestID: activeCodeLayoutRequestID)),
+                "scroll": sv != nil && sv === nativeTranscriptDriver.scrollView,
+                "window": sv?.window != nil,
+                "touch": !nativeScrollHasActiveTouch(sv),
+                "tracking": sv?.isTracking == false,
+                "dragging": sv?.isDragging == false,
+                "decelerating": sv?.isDecelerating == false,
+                "animation": !isNativeScrollAnimating(sv)]
+            if let g, let sv {
+                checks.merge([
+                    "finiteOffset": g.contentOffset.y.isFinite,
+                    "finiteHeight": g.contentSize.height.isFinite,
+                    "finiteViewport": g.containerSize.height.isFinite && g.containerSize.height > 0,
+                    "finiteInsets": g.contentInsets.top.isFinite && g.contentInsets.bottom.isFinite,
+                    "insetTop": abs(g.contentInsets.top - sv.adjustedContentInset.top) <= 0.5,
+                    "insetBottom": abs(g.contentInsets.bottom - sv.adjustedContentInset.bottom) <= 0.5,
+                    "offset": abs(g.contentOffset.y - sv.contentOffset.y) <= 2,
+                    "height": abs(g.contentSize.height - sv.contentSize.height) <= 2,
+                    "width": abs(g.containerSize.width - sv.bounds.width) <= 0.5,
+                    "viewport": abs(g.containerSize.height - sv.bounds.height) <= 2],
+                    uniquingKeysWith: { _, new in new })
+            }
+            FullMotionLandingProbe.record(["stage": "currentGeometry", "checks": checks,
+                "rejected": checks.filter { !$0.value }.map(\.key).sorted(),
+                "offset": g?.contentOffset.y ?? -999, "height": g?.contentSize.height ?? -999,
+                "native": nativeTranscriptDriver.landingProbe()])
+        }
+        #endif
         guard currentConversationBottomAnchorID == anchorID,
-              let geometry = nativeTranscriptDriver.latestGeometry,
+              let geometry = observedGeometry,
               geometry.sessionID == AnyHashable(model.selectedConversationID),
               geometry.publicationID == AnyHashable(NativeChatPublicationID(
                 anchorID: anchorID,
@@ -8562,8 +8652,32 @@ private struct ChatView: View {
     ) -> Bool {
         guard !model.hasLaterMessages,
               anchorID.messageIDs.last == tailMessageID,
-              let geometry = nativeNavigationLandingGeometry(request, anchorID: anchorID) else { return false }
-        return hasNativeConcreteBottomLanding(geometry, tailMessageID: tailMessageID)
+              let geometry = nativeNavigationLandingGeometry(request, anchorID: anchorID,
+                readsCurrentNativeGeometry: NativeStreamMotionConfiguration.readsCurrentNavigationGeometry) else { return false }
+        let accepted = hasNativeConcreteBottomLanding(geometry, tailMessageID: tailMessageID)
+        #if DEBUG
+        let tail = geometry.frames[tailMessageID]
+        let bottom = max(-geometry.contentInsets.top,
+            geometry.contentSize.height - geometry.containerSize.height + geometry.contentInsets.bottom)
+        let measuredEnd = max(geometry.bottomSpacerFrame.maxY + geometry.contentOffset.y,
+            geometry.minimumContentHeight)
+        var checks: [String: Bool] = ["tailExists": tail != nil,
+            "finiteSpacer": geometry.bottomSpacerFrame.maxY.isFinite,
+            "bottomOffset": abs(geometry.contentOffset.y - bottom) <= 2,
+            "measuredEnd": abs(measuredEnd - geometry.contentSize.height) <= 2]
+        if let tail {
+            checks["tailFinite"] = tail.minY.isFinite && tail.maxY.isFinite && tail.width.isFinite && tail.height.isFinite
+            checks["tailPositive"] = tail.width > 0 && tail.height > 0
+            checks["tailAboveBottom"] = tail.maxY <= geometry.containerSize.height - geometry.contentInsets.bottom + 2
+            checks["tailBelowTop"] = tail.maxY > geometry.contentInsets.top
+        }
+        FullMotionLandingProbe.record(["stage": "concreteLanding", "accepted": accepted,
+            "rejected": checks.filter { !$0.value }.map(\.key).sorted(), "checks": checks,
+            "tail": String(describing: tail), "offset": geometry.contentOffset.y,
+            "bottom": bottom, "height": geometry.contentSize.height, "measuredEnd": measuredEnd,
+            "viewport": geometry.containerSize.height, "insetBottom": geometry.contentInsets.bottom])
+        #endif
+        return accepted
     }
 
     private func hasNativeConcreteBottomLanding(
@@ -8694,6 +8808,8 @@ private struct ChatView: View {
                   navigationRequest == request,
                   currentConversationPositionRequest == request.positionRequest,
                   !hasConcreteNativeUserScrollOwnership else { return }
+            let validationID = nativeTranscriptDriver.beginBottomLandingValidation()
+            defer { nativeTranscriptDriver.endBottomLandingValidation(validationID) }
             nativeTranscriptDriver.releasePosition()
             // Offscreen rows have valid native semantic destinations. Only a
             // genuinely historical model window needs replacement at this edge.
@@ -8715,6 +8831,32 @@ private struct ChatView: View {
                     source: "navigation.bottom", target: "bottomSentinel", animation: "system"
                 )
                 let completed = await scrollProxy.navigate(anchorID, anchor: .bottom)
+                #if DEBUG
+                if completed, let mode = FullMotionLandingProbe.boundaryMode() {
+                    FullMotionLandingProbe.record(["stage": "boundaryInjection", "mode": mode,
+                        "completed": completed, "sequence": request.sequence])
+                    if mode == "cancel" {
+                        cancelMessageNavigationForUserInteraction(reason: "lab-completion-boundary")
+                    } else if mode == "replaceTop" {
+                        requestMessageNavigation(.top)
+                    }
+                }
+                #endif
+                #if DEBUG
+                let g = nativeTranscriptDriver.latestGeometry
+                let sv = chatScrollViewBox.scrollView
+                ChatBottomTrace.log("MOTION_NAV_RETURN completed=\(completed) cancelled=\(Task.isCancelled)"
+                    + " requestMatches=\(navigationRequest == request) anchorMatches=\(currentConversationBottomAnchorID == anchorID)"
+                    + " geometryCurrent=\(currentNativeLandingGeometry(anchorID: anchorID) != nil)"
+                    + " landed=\(isNativeEdgeBottomLanding(request, anchorID: anchorID, tailMessageID: tailMessageID))"
+                    + " gOffset=\(g?.contentOffset.y ?? -999) gHeight=\(g?.contentSize.height ?? -999)"
+                    + " svOffset=\(sv?.contentOffset.y ?? -999) svHeight=\(sv?.contentSize.height ?? -999)"
+                    + " tail=\(String(describing: g?.frames[tailMessageID]))"
+                    + " spacer=\(String(describing: g?.bottomSpacerFrame))"
+                    + " viewport=\(g?.containerSize.height ?? -999) insetBottom=\(g?.contentInsets.bottom ?? -999)"
+                    + " animating=\(isNativeScrollAnimating(sv)) pinned=\(nativeTranscriptDriver.positionIsBottomPinned) "
+                    + chatBottomTraceState)
+                #endif
                 guard completed, !Task.isCancelled,
                       isNativeEdgeBottomLanding(request, anchorID: anchorID, tailMessageID: tailMessageID) else { return }
             }
@@ -13321,6 +13463,9 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             )
             return
         }
+        // The current tail's admitted native animation owns this in-flight
+        // distance. Touch, commands and viewport changes revoke that same owner.
+        if nativeDriver.ownsStreamingViewportMotion { return }
         // Hosted text can settle over several layout passes.
         // React to the measured geometry instead of guessing a delay.
         pinToBottom(source: "geometryCorrection")
@@ -13730,6 +13875,9 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         // dismissal tap; an actual drag or deceleration still preempts it.
         let wasAnimating = Date() < keyboardViewportAnimationDeadline
             && bottomDistanceMeasurement.keyboardMotionScrollView === scrollView
+        let continuesOwnedSend = wasAnimating
+            && preservingSendRequestID != nil
+            && preservingSendRequestID == bottomDistanceMeasurement.preservedSendRequestID
         // Once UIKit owns the motion, use its current geometry for both ends.
         // SwiftUI can publish an intermediate offset/inset pair during a
         // reversal; recombining that pair would move past the actual bottom.
@@ -13755,7 +13903,11 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         let viewportDuration = keyboardMotionSource.viewportAnimationDuration(
             synchronousLayout: synchronousLayout, fallback: keyboardAnimationDuration
         )
-        if viewportDuration == 0 {
+        // Keyboard timing can still be zero when a new send first needs a
+        // viewport clamp. An admitted send owns its placement duration from
+        // this first layout, even before it has an animator to continue.
+        // Immediate keyboard changes without a send keep their own timing.
+        if viewportDuration == 0, preservingSendRequestID == nil {
             keyboardViewportCompletionTask?.cancel()
             keyboardViewportCompletionTask = nil
             keyboardViewportAnimationDeadline = .distantPast
@@ -13800,18 +13952,33 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             if let preservingSendRequestID, !wasAnimating {
                 bottomDistanceMeasurement.keyboardMotionScrollView = scrollView
                 bottomDistanceMeasurement.preservedSendRequestID = preservingSendRequestID
+                bottomDistanceMeasurement.keyboardMotionTargetY = targetOffsetY
                 // This reserves a possible retarget, but nothing is moving
                 // yet. Do not hold the send's concrete landing behind it.
                 releaseSemanticPosition(userOwned: true)
-                keyboardViewportAnimationDeadline = Date().addingTimeInterval(viewportDuration + 0.06)
-                scheduleKeyboardViewportCompletion(after: viewportDuration)
+                // A zero-duration keyboard event must not expire this new
+                // send's reservation before its measured clamp can arrive.
+                let holdDuration = viewportDuration > 0 ? viewportDuration : chatSendPlacementDuration
+                keyboardViewportAnimationDeadline = Date().addingTimeInterval(holdDuration + 0.06)
+                scheduleKeyboardViewportCompletion(after: holdDuration)
                 ChatBottomTrace.log("KEYBOARD_VIEWPORT_HOLD_SEND " + chatBottomTracePosition)
             }
             return true
         }
+        let previousTargetY = bottomDistanceMeasurement.keyboardMotionTargetY
+        let remainingDuration = max(0.01, keyboardViewportAnimationDeadline.timeIntervalSinceNow - 0.06)
+        let extendsLateSend = continuesOwnedSend
+            && remainingDuration < 0.10
+            && targetOffsetY < (previousTargetY ?? startOffsetY) - 0.5
         let duration: TimeInterval
-        if isRetargeting, wasAnimating {
-            duration = max(0.01, keyboardViewportAnimationDeadline.timeIntervalSinceNow - 0.06)
+        if extendsLateSend {
+            // Do not compress a late measured-height correction into the last
+            // one or two frames. Only this exceptional tail gets more time;
+            // the normal send retains its original ease-out and completion.
+            duration = min(chatSendPlacementDuration, max(0.10, abs(targetOffsetY - startOffsetY) / 250))
+            keyboardViewportAnimationDeadline = Date().addingTimeInterval(duration + 0.06)
+        } else if isRetargeting, wasAnimating {
+            duration = remainingDuration
         } else {
             duration = max(0.01, preservingSendRequestID != nil
                 ? chatSendPlacementDuration : viewportDuration)
@@ -13875,18 +14042,60 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             scrollView.setContentOffset(target, animated: false)
         }
         if preservingSendRequestID != nil {
-            // Sending owns one ease-out from the first viewport change to the
-            // final measured bottom. Updating its destination keeps UIKit's
-            // current trajectory and scroll-edge compensation in the same group.
+            // Ordinary retargets keep the existing ease-out and UIKit edge
+            // compensation. Only an additional downward correction in the
+            // final 100 ms needs a bounded continuation from the visible frame.
             if wasAnimating,
                bottomDistanceMeasurement.keyboardAnimatorScrollView === scrollView,
                let animator = bottomDistanceMeasurement.keyboardMotionAnimator,
                animator.state == .active {
-                animator.addAnimations(animations)
-                ChatBottomTrace.log("SEND_VIEWPORT_ANIMATION_RETARGET " + chatBottomTracePosition)
+                if extendsLateSend {
+                    let pendingRelease = sendPositionAnimationAckID
+                    sendPositionAnimationAckID = nil
+                    removeContentOffsetAnimations(from: scrollView)
+                    UIView.performWithoutAnimation {
+                        scrollView.setContentOffset(start, animated: false)
+                    }
+                    // Approximate the outgoing ease-out's tail velocity from
+                    // its remaining travel. A monotone cubic carries it into
+                    // the corrected destination and ends at rest, without a
+                    // spring or an overshoot. Never carry velocity away from
+                    // the newly measured destination.
+                    let travel = targetOffsetY - startOffsetY
+                    let priorTravel = (previousTargetY ?? startOffsetY) - startOffsetY
+                    let velocity = priorTravel * travel > 0
+                        ? 2 * priorTravel / remainingDuration : 0
+                    let initialSlope = abs(travel) > 0.5
+                        ? max(0, min(3, velocity * duration / travel)) : 0
+                    let timing = UICubicTimingParameters(
+                        controlPoint1: CGPoint(x: 1.0 / 3.0, y: initialSlope / 3),
+                        controlPoint2: CGPoint(x: 2.0 / 3.0, y: 1)
+                    )
+                    let continuation = UIViewPropertyAnimator(duration: duration, timingParameters: timing)
+                    bottomDistanceMeasurement.keyboardAnimatorScrollView = scrollView
+                    bottomDistanceMeasurement.keyboardMotionAnimator = continuation
+                    continuation.addAnimations(animations)
+                    continuation.startAnimation()
+                    // A release already waiting on the replaced animator must
+                    // now wait for this same send's actual landing instead.
+                    if let pendingRelease { acknowledgeSendPositionAfterMotion(for: pendingRelease) }
+                    ChatBottomTrace.log("SEND_VIEWPORT_ANIMATION_CONTINUE_LATE " + chatBottomTracePosition)
+                } else {
+                    animator.addAnimations(animations)
+                    ChatBottomTrace.log("SEND_VIEWPORT_ANIMATION_RETARGET " + chatBottomTracePosition)
+                }
             } else {
                 finishKeyboardMotionAnimator(in: scrollView)
-                let animator = UIViewPropertyAnimator(duration: duration, curve: .easeOut)
+                // Settle most of the visible travel earlier while retaining the
+                // completion window for late composer/row measurements. Merely
+                // shortening that window can release a send before its retarget.
+                let timing = UICubicTimingParameters(
+                    controlPoint1: CGPoint(x: 0.20, y: 0.65),
+                    controlPoint2: CGPoint(x: 0.30, y: 1)
+                )
+                let animator = extendsLateSend
+                    ? UIViewPropertyAnimator(duration: duration, curve: .easeOut)
+                    : UIViewPropertyAnimator(duration: duration, timingParameters: timing)
                 bottomDistanceMeasurement.keyboardAnimatorScrollView = scrollView
                 bottomDistanceMeasurement.keyboardMotionAnimator = animator
                 animator.addAnimations(animations)
@@ -14582,6 +14791,7 @@ private struct UserBubbleFloatUpSendAnimationModifier: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPresented: Bool
     @State private var latchedRequestID: UUID?
+    @State private var beginsEmptyTranscript: Bool
 
     let isEnabled: Bool
     let onStarted: (UUID) -> Void
@@ -14596,6 +14806,9 @@ private struct UserBubbleFloatUpSendAnimationModifier: ViewModifier {
         self.onStarted = onStarted
         _isPresented = State(initialValue: requestID == nil || !isEnabled)
         _latchedRequestID = State(initialValue: requestID)
+        _beginsEmptyTranscript = State(
+            initialValue: requestID != nil && request?.beginsEmptyTranscript == true
+        )
     }
 
     private var effectivePresented: Bool {
@@ -14611,15 +14824,17 @@ private struct UserBubbleFloatUpSendAnimationModifier: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content
-            .environment(\.userBubbleFloatUpPresented, effectivePresented)
-            .environment(
-                \.userBubbleFloatUpFadeAnimationEnabled,
-                isEnabled && !reduceMotion
-            )
-            .offset(y: effectivePresented ? 0 : 18)
-            .task(id: taskKey) {
-                await startIfNeeded()
+        Group {
+            if beginsEmptyTranscript {
+                initialSendContent(content)
+            } else {
+                ordinarySendContent(content)
+            }
+        }
+            .onAppear {
+                guard beginsEmptyTranscript, !isEnabled || reduceMotion,
+                      let requestID = latchedRequestID else { return }
+                revealAndConsume(requestID)
             }
             .onChange(of: isEnabled) { _, enabled in
                 guard !enabled, let requestID = latchedRequestID else { return }
@@ -14631,12 +14846,53 @@ private struct UserBubbleFloatUpSendAnimationModifier: ViewModifier {
             }
             .onDisappear {
                 guard let requestID = latchedRequestID else { return }
-                // Cell reuse may temporarily remove the newly inserted row
-                // before the delayed launch task presents it. Consuming the
-                // request while `isPresented` is still false leaves preserved
-                // local state permanently translucent when the row returns.
-                // Fail open visually before clearing the one-shot request.
+                // A retired/reused row must never return partially presented.
                 revealAndConsume(requestID)
+            }
+    }
+
+    private func initialSendContent(_ content: Content) -> some View {
+        // The empty transcript now stays mounted to preserve its system top
+        // edge. Give only the new user row its own first appearance, independent
+        // of collection insertion and keyboard transactions. One timeline owns
+        // movement, fade and completion; the ordinary 18-point entrance is not
+        // layered underneath. 64 points approximates the old phone reference's
+        // visible first-send travel; it is not a viewport compensation value.
+        content
+            .environment(\.userBubbleFloatUpPresented, true)
+            .environment(\.userBubbleFloatUpFadeAnimationEnabled, false)
+            .offset(y: effectivePresented ? 0 : 64)
+            .opacity(effectivePresented ? 1 : 0)
+            .onAppear {
+                guard let requestID = latchedRequestID, !isPresented else { return }
+                // Finish the host's initial update before changing its state.
+                // Starting synchronously in onAppear can coalesce both states
+                // into the insertion and report an immediate completion.
+                DispatchQueue.main.async {
+                    guard latchedRequestID == requestID, !isPresented else { return }
+                    guard isEnabled, !reduceMotion else {
+                        revealAndConsume(requestID)
+                        return
+                    }
+                    withAnimation(.smooth(duration: 0.32), completionCriteria: .removed) {
+                        isPresented = true
+                    } completion: {
+                        consume(requestID)
+                    }
+                }
+            }
+    }
+
+    private func ordinarySendContent(_ content: Content) -> some View {
+        content
+            .environment(\.userBubbleFloatUpPresented, effectivePresented)
+            .environment(
+                \.userBubbleFloatUpFadeAnimationEnabled,
+                isEnabled && !reduceMotion
+            )
+            .offset(y: effectivePresented ? 0 : 18)
+            .task(id: taskKey) {
+                await startIfNeeded()
             }
     }
 
@@ -15191,6 +15447,14 @@ private struct MessageRow: View {
             }
             }
             .frame(maxWidth: .infinity)
+
+            if message.role == .assistant,
+               message.status == .interrupted || message.status == .failed {
+                Text(L10n.lookup("回复已中断"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
+            }
 
             if message.role != .user, hasVisibleReaction {
                 HStack(spacing: 0) {
@@ -17581,6 +17845,8 @@ private struct ToolEventRow: View {
         case "delete_memory": return L10n.lookup("删除了记忆")
         case "read_assistant_file": return L10n.lookup("读取助手文件")
         case "edit_assistant_file": return L10n.lookup("编辑助手文件")
+        case "read_user_notes": return L10n.lookup("读取便签")
+        case "edit_user_notes": return L10n.lookup("编辑便签")
         case "get_time_info": return L10n.lookup("查询了时间")
         case "clipboard_tool": return L10n.lookup("使用了剪贴板")
         case "calculate": return L10n.lookup("进行了计算")
@@ -17636,6 +17902,8 @@ private struct ToolEventRow: View {
             return "brain.head.profile"
         case "read_assistant_file", "edit_assistant_file":
             return "doc.text"
+        case "read_user_notes", "edit_user_notes":
+            return "note.text"
         case "get_time_info":
             return "clock"
         case "clipboard_tool":
@@ -18190,7 +18458,7 @@ private struct DrawerBottomActionsPalette {
         let selectedARGB: Int
         switch theme {
         case .defaultPalette:
-            selectedARGB = 0xff000000
+            selectedARGB = 0xff242426
         case .custom:
             selectedARGB = customARGB
         default:
@@ -18220,9 +18488,9 @@ private struct DrawerBottomActionsSurface: View {
     var body: some View {
         if #available(iOS 26.0, *) {
             Capsule()
-                .fill(background)
+                .fill(.clear)
                 .glassEffect(
-                    .regular.tint(background.opacity(0.72)),
+                    .regular.tint(background.opacity(0.88)),
                     in: Capsule()
                 )
         } else {
@@ -18665,27 +18933,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                 .animation(nil, value: groupChatMode)
 
                 HStack(spacing: 0) {
-                    Button {
-                        guard !isDrawerTapSuppressed else { return }
-                        model.performListItemHaptic()
-                        model.isUserProfilePresented = true
-                    } label: {
-                        SponsorWearableAvatar(target: .user, badgeSize: 19) {
-                            UserProfileAvatarView(profile: model.userProfile, size: 44)
-                        }
-                            .shadow(
-                                color: Color.black.opacity(0.16),
-                                radius: 10,
-                                x: 0,
-                                y: 4
-                            )
-                            .frame(width: 52, height: 52)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(L10n.lookup("用户资料"))
-
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 0)
 
                     HStack(spacing: 2) {
                         Button {

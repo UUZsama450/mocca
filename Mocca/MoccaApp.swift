@@ -25,9 +25,11 @@ struct MoccaApp: App {
                 .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
                 .appFontEnvironment(model.preferences.appFontPostScriptName)
                 .onChange(of: scenePhase) { _, phase in
+                    if phase == .background { model.flushStreamingProgress() }
                     guard phase == .active else { return }
                     AppLocalization.shared.refreshSystemLanguage()
                     model.retryConversationStoreLoadIfNeeded()
+                    model.flushStreamingProgress()
                     if shouldRunStartupServices { model.handleAppBecameActive() }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSLocale.currentLocaleDidChangeNotification)) { _ in
@@ -35,10 +37,18 @@ struct MoccaApp: App {
                 }
                 .onReceive(
                     NotificationCenter.default.publisher(
+                        for: UIApplication.protectedDataWillBecomeUnavailableNotification
+                    )
+                ) { _ in
+                    model.flushStreamingProgress()
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(
                         for: UIApplication.protectedDataDidBecomeAvailableNotification
                     )
                 ) { _ in
                     model.retryConversationStoreLoadIfNeeded()
+                    model.flushStreamingProgress()
                     if shouldRunStartupServices { model.handleAppBecameActive() }
                 }
                 .task {

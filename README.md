@@ -6,8 +6,8 @@ English · [简体中文](README.zh-CN.md)
 
 Bring your own models, organize conversations with assistants, and keep your chat history on your device.
 
-> Current source: **1.0.1 (5157)**, prepared from the installed 5156 baseline. See [changes and verification](docs/SNAPSHOT_1.0.1.md), [build configuration](docs/BUILD_CONFIGURATION.md), and [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
-> App Store **1.0.1 (5157)** was submitted for review on 2026-10-04 and is awaiting review; it is not released yet. The [1.0 (5135) unsigned IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135) is an older download and requires your own signing.
+> Current source: **1.0.2 (5173)**, based on the tested 5172 phone build. See the [changelog](CHANGELOG.md), [source verification](docs/SNAPSHOT_1.0.2.md), and [build configuration](docs/BUILD_CONFIGURATION.md).
+> This is a source update; an App Store release is tracked separately. The [1.0 (5135) unsigned IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135) is an older download and requires your own signing.
 
 ## Features
 

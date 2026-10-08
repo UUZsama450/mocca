@@ -59,6 +59,15 @@ extension EnvironmentValues {
     }
 }
 
+/// Structured content can keep its growing bottom edge attached to the
+/// viewport in the same self-sizing transaction. Prose retains stream easing.
+struct NativeChatStableStreamingBottomKey: PreferenceKey {
+    static var defaultValue: Bool { false }
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = nextValue() || value
+    }
+}
+
 struct NativeChatRow {
     let id: UUID
     let revision: AnyHashable
@@ -73,6 +82,8 @@ struct NativeChatLayoutConfiguration: Equatable {
     var viewportInsets: UIEdgeInsets = .zero
     var minimumIncludesTopInset = true
     var alignShortContentToBottom = false
+    // Space between a bottom-pinned message and the composer's upper edge.
+    var bottomFollowClearance: CGFloat = 0
 }
 
 struct NativeChatDebugWindow {
@@ -201,6 +212,10 @@ fileprivate final class NativeChatCollectionView: UICollectionView {
     }
     override func layoutSubviews() {
         defer { onContentLayoutCompleted?() }
+        #if DEBUG
+        if FullMotionCostProbe.enabled { FullMotionCostProbe.layouts += 1 }
+        #endif
+        StreamLayoutWorkProbe.hit("collection.layout")
         let previous = lastLayoutMetrics
         let presentedOffset = layer.presentation()?.bounds.origin.y
         super.layoutSubviews()
@@ -243,6 +258,39 @@ final class NativeChatScrollDriver {
     var isPinnedToBottom: Bool { positionIsBottomPinned }
     var positionHasExplicitTarget: Bool { target != nil }
     var hasActiveScrollCommand: Bool { controller?.hasActiveScrollCommand == true }
+    // Navigation owns the measured landing through its outer await/validation.
+    // A completed native command alone does not transfer that ownership.
+    fileprivate private(set) var bottomLandingValidationID: UUID?
+    func beginBottomLandingValidation() -> UUID {
+        let id = UUID()
+        #if DEBUG
+        if !ProcessInfo.processInfo.arguments.contains("-fullMotionDisableLandingHandoff") {
+            bottomLandingValidationID = id
+        }
+        #else
+        bottomLandingValidationID = id
+        #endif
+        #if DEBUG
+        FullMotionLandingProbe.record(["stage": "handoffBegin", "id": id.uuidString,
+            "held": bottomLandingValidationID == id])
+        #endif
+        return id
+    }
+    func endBottomLandingValidation(_ id: UUID) {
+        let owns = bottomLandingValidationID == id
+        if owns { bottomLandingValidationID = nil }
+        #if DEBUG
+        FullMotionLandingProbe.record(["stage": "handoffEnd", "id": id.uuidString,
+            "owned": owns, "remaining": bottomLandingValidationID?.uuidString ?? ""])
+        #endif
+    }
+    var ownsStreamingViewportMotion: Bool { controller?.ownsStreamingViewportMotion == true }
+    #if DEBUG
+    func landingProbe() -> [String: Any] { controller?.landingProbe() ?? ["controller": false] }
+    #endif
+    func currentGeometrySnapshot() -> NativeChatScrollGeometry? {
+        controller?.currentGeometrySnapshot()
+    }
 
     func releasePosition(userOwned: Bool = false) {
         initialPositionAvailable = false
@@ -412,6 +460,7 @@ struct NativeChatTranscript: UIViewControllerRepresentable {
     var hasLater: Bool
     var initialBottom = true
     var holdsAutomaticBottomFollow = false
+    var streamingTailID: UUID? = nil
     var mutationLanding: NativeChatMutationLanding?
     var disclosureOperation: UUID?
     var debugWindow: NativeChatDebugWindow? = nil
@@ -552,6 +601,7 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
     private(set) var applyingChange = false
     var externalViewportMotion: () -> Bool = { false }
     var semanticTarget: () -> NativeChatScrollTarget? = { nil }
+    var streamMeasurementAdjustment: (UUID, CGFloat, Bool) -> CGFloat? = { _, _, _ in nil }
     var onInvalidated: () -> Void = {}
 
     init(keys: [NativeChatRowKey], configuration: NativeChatLayoutConfiguration) {
@@ -814,6 +864,15 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
                     delta = (newY ?? oldY ?? 0) - (oldY ?? newY ?? 0)
                 }
             }
+            if absoluteTarget == nil, !context.structural, context.viewportHeight == nil,
+               context.width == nil, !changedMetrics, measuredContentChanged, abs(newHeight - oldHeight) > 0.5,
+               case .bottom? = target, let sample = context.measurement,
+               let destination = offset(for: .bottom),
+               let adjustment = streamMeasurementAdjustment(
+                    sample.key.id, destination,
+                    measurementHosts[sample.key.id]?.cell?.prefersStableStreamingBottom == true) {
+                delta = adjustment
+            }
             context.contentOffsetAdjustment = CGPoint(x: 0, y: delta)
             context.contentSizeAdjustment = CGSize(width: 0, height: newHeight - oldHeight)
             if let changedFrom, !context.structural {
@@ -870,12 +929,16 @@ private final class NativeChatCell: UICollectionViewCell {
         return super.action(for: layer, forKey: event)
     }
 
+    var prefersStableStreamingBottom = false
     var configuredKey: NativeChatRowKey?
     var configuredPublication: AnyHashable?
     var messageLocalFrame: CGRect?
     var textFramePublication: AnyHashable?
     var refreshedTextPlacement: NativeChatTextPlacement?
     private(set) var measurementHostID = UUID()
+    private var probeIntrinsicGeneration = 0
+    private var probeLastFit: (key: NativeChatRowKey, width: CGFloat, height: CGFloat, intrinsic: Int)?
+
     var disclosureMotionID: UUID?
     var isDisclosureHostCurrent: () -> Bool = { false }
     var onRetireMeasurementHost: ((UUID, NativeChatRowKey) -> Void)?
@@ -884,6 +947,7 @@ private final class NativeChatCell: UICollectionViewCell {
         onRetireMeasurementHost?(measurementHostID, previous)
         disclosureMotionID = nil
         measurementHostID = UUID()
+        prefersStableStreamingBottom = false
         textFramePublication = nil
         refreshedTextPlacement = nil
     }
@@ -891,11 +955,13 @@ private final class NativeChatCell: UICollectionViewCell {
         disclosureMotionID = nil
         if let key = configuredKey { onRetireMeasurementHost?(measurementHostID, key) }
         measurementHostID = UUID()
+        prefersStableStreamingBottom = false
         configuredKey = nil; configuredPublication = nil; messageLocalFrame = nil
         textFramePublication = nil; refreshedTextPlacement = nil
         super.prepareForReuse()
     }
     override func invalidateIntrinsicContentSize() {
+        if StreamLayoutWorkProbe.enabled { probeIntrinsicGeneration += 1; StreamLayoutWorkProbe.hit("cell.intrinsicInvalidation") }
         if disclosureMotionID != nil, isDisclosureHostCurrent() {
             super.invalidateIntrinsicContentSize()
         } else {
@@ -910,9 +976,22 @@ private final class NativeChatCell: UICollectionViewCell {
             result.key = nil // Do not label a different host's height as this revision.
             return result
         }
+        StreamLayoutWorkProbe.hit("cell.fit")
         let size = contentView.systemLayoutSizeFitting(
             CGSize(width: attributes.size.width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        if StreamLayoutWorkProbe.enabled, let key = configuredKey {
+            if let prior = probeLastFit, prior.key == key, prior.width == attributes.size.width {
+                StreamLayoutWorkProbe.hit("cell.fit.sameKeyWidth")
+                StreamLayoutWorkProbe.hit(abs(prior.height - size.height) <= 0.5
+                    ? "cell.fit.sameKeyWidth.sameHeight" : "cell.fit.sameKeyWidth.changedHeight")
+                if prior.intrinsic == probeIntrinsicGeneration {
+                    StreamLayoutWorkProbe.hit("cell.fit.noIntrinsicInvalidation")
+                    if abs(prior.height - size.height) > 0.5 { StreamLayoutWorkProbe.hit("cell.fit.changedHeightWithoutIntrinsicInvalidation") }
+                }
+            }
+            probeLastFit = (key, attributes.size.width, size.height, probeIntrinsicGeneration)
+        }
         if size.height.isFinite, size.height > 0 {
             result.size.height = size.height
             result.measurementHostID = measurementHostID
@@ -1078,6 +1157,9 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             }
             return self.input.driver.target
         }
+        layout.streamMeasurementAdjustment = { [weak self] tail, destination, stableBottom in
+            self?.prepareStreamMeasurement(tail: tail, destination: destination, stableBottom: stableBottom)
+        }
         layout.onInvalidated = { [weak self] in
             self?.needsTextCoverageCheck = true
             self?.scheduleEmission()
@@ -1109,6 +1191,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                 scrollView: self.collection, publicationID: self.input.publicationID,
                 sessionID: self.input.sessionID, previous: previous, current: current,
                 presentedOffsetBeforeLayout: presentedOffset))
+            self.updateStreamMotion(previous: previous, current: current, presented: presentedOffset)
         }
         collection.register(NativeChatCell.self, forCellWithReuseIdentifier: "native-chat")
         collection.accessibilityIdentifier = "nativeChat.transcript"
@@ -1149,6 +1232,37 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             await Task.yield()
             guard let self, !Task.isCancelled, !self.detached,
                   self.input.driver.controller === self else { return }
+            #if DEBUG
+            FullMotionProbe.shared.tailFrame = { [weak self] in
+                guard let self, let tail = self.rows.last(where: \.isMessage) else { return nil }
+                return self.layout.frame(for: tail.id)
+            }
+            if StreamOcclusionProbe.enabled {
+                FullMotionProbe.shared.occlusionState = { [weak self] in
+                    guard let self, let tail = self.rows.last(where: \.isMessage),
+                          let frame = self.layout.frame(for: tail.id) else { return [:] }
+                    let scroll = self.collection
+                    let shown = scroll.layer.presentation()?.bounds.origin.y ?? scroll.contentOffset.y
+                    let origin = scroll.convert(scroll.bounds.origin, to: nil)
+                    let composer = StreamOcclusionProbe.composerFrame
+                    let tailEnd = origin.y + frame.maxY - shown
+                    return ["wallTime": Date().timeIntervalSince1970,
+                            "composerTop": composer.minY, "composerHeight": composer.height,
+                            "viewportTop": origin.y, "tailEndWindow": tailEnd,
+                            "tailOverComposer": max(0, tailEnd - composer.minY),
+                            "paddingBottom": self.input.configuration.bottom,
+                            "bottomTarget": self.layout.offset(for: .bottom) ?? -999,
+                            "tailMeasured": self.layout.isMeasured(.init(id: tail.id, revision: tail.revision)),
+                            "bottomPinned": self.input.driver.positionIsBottomPinned,
+                            "externalMotion": self.input.driver.externalViewportMotion,
+                            "commandActive": self.command != nil,
+                            "holdsFollow": self.input.holdsAutomaticBottomFollow,
+                            "disclosureActive": self.input.disclosureOperation != nil,
+                            "pendingDestination": self.pendingStreamDestination ?? -999]
+                }
+            }
+            FullMotionProbe.attach(self.collection)
+            #endif
             self.input.onAttach(self.collection)
             self.attachmentReady = true
             self.attachmentTask = nil
@@ -1239,11 +1353,15 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         let oldIDs = oldRows.map(\.id)
         let oldSet = Set(oldIDs)
         let structural = oldIDs != newIDs
+        if structural || next.disclosureOperation != nil {
+            stopStreamMotion(reason: "input-owner-change", preserveVisible: false)
+        }
         let changed = Set(next.rows.compactMap { row -> UUID? in
             rowByID[row.id]?.revision == row.revision ? nil : row.id
         })
         let contextChanged = next.publicationID != input.publicationID
         let metricsChanged = next.configuration != input.configuration
+        StreamLayoutWorkProbe.hit(structural || !changed.isEmpty || contextChanged || metricsChanged ? "controller.changedInput" : "controller.unchangedInput")
         let anchor = layout.viewportAnchor(surviving: newSet)
         let mutationLanding = next.mutationLanding.flatMap { landing -> NativeChatMutationLanding? in
             guard structural, landing.isCurrent(), landing.sourcePublicationID == input.publicationID,
@@ -1292,6 +1410,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                 "structural": structural
             ])
         }
+        #endif
+        #if DEBUG
+        FullMotionProbe.shared.streaming = next.streamingTailID != nil
+        FullMotionCostProbe.input(next.streamingTailID)
         #endif
         input = next
         // Never adopt an unvalidated hint from a later update. Removal of the
@@ -1395,6 +1517,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         }
     }
     private func configure(_ cell: NativeChatCell, row: NativeChatRow) {
+        StreamLayoutWorkProbe.hit("cell.configure")
         cell.isViewportMotionActive = { [weak self] in
             guard let self, !self.detached, self.input.driver.controller === self else { return false }
             return self.input.driver.externalViewportMotion
@@ -1493,6 +1616,14 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                         self.scheduleEmission()
                     }
                 }
+                .onPreferenceChange(NativeChatStableStreamingBottomKey.self) { [weak self, weak cell] stable in
+                    guard let self, let cell, !self.detached,
+                          self.input.driver.controller === self,
+                          cell.measurementHostID == measurementHostID,
+                          cell.configuredKey == key,
+                          cell.configuredPublication == self.input.publicationID else { return }
+                    cell.prefersStableStreamingBottom = stable
+                }
                 .onPreferenceChange(CodeDisclosureLayoutPreferenceKey.self) { [weak self, weak cell] frames in
                     guard let self, let cell, cell.measurementHostID == measurementHostID,
                           cell.configuredKey == key, self.input.publicationID == publication,
@@ -1589,12 +1720,39 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             // Consume before calling into UIKit so a reentrant event cannot
             // repeat this placement or have its new pending work erased.
             cell.refreshedTextPlacement = placement
+            StreamLayoutWorkProbe.hit("text.coveragePlacementRefresh")
             MessageTextViewportDrawing.refreshAfterLayout(in: cell.contentView, visibleOnly: true)
         }
     }
 
+    #if DEBUG
+    fileprivate func landingProbe() -> [String: Any] {
+        var cells: [[String: Any]] = []
+        for case let cell as NativeChatCell in collection.visibleCells {
+            guard let key = cell.configuredKey else { continue }
+            let expected = layout.frame(for: key.id)
+            cells.append(["id": key.id.uuidString,
+                "revisionMatches": rowByID[key.id]?.revision == key.revision,
+                "measured": layout.isMeasured(key),
+                "local": String(describing: cell.messageLocalFrame),
+                "cell": String(describing: cell.frame),
+                "expected": String(describing: expected)])
+        }
+        return ["controller": true, "detached": detached, "attached": attachmentReady,
+            "command": command != nil, "touching": touching, "userGesture": userGesture,
+            "nativeMotion": nativeStreamMotionActive,
+            "pendingDestination": pendingStreamDestination ?? -999,
+            "cells": cells, "tail": rows.last(where: \.isMessage)?.id.uuidString ?? ""]
+    }
+    #endif
+    fileprivate func currentGeometrySnapshot() -> NativeChatScrollGeometry? {
+        guard isViewLoaded, !detached, attachmentReady,
+              input.driver.controller === self else { return nil }
+        return geometry()
+    }
     private func scheduleEmission() {
-        guard !detached, !emissionScheduled else { return }
+        StreamLayoutWorkProbe.hit("geometry.schedule")
+        guard !detached, !emissionScheduled else { StreamLayoutWorkProbe.hit("geometry.coalesced"); return }
         emissionScheduled = true
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -1602,8 +1760,11 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             self.emissionScheduled = false
             guard !self.detached, self.attachmentReady, self.isViewLoaded,
                   self.input.driver.controller === self else { return }
+            let sampledCommandID = self.command?.id
             let geometry = self.geometry()
+            StreamLayoutWorkProbe.hit("geometry.computed")
             if self.input.driver.latestGeometry != geometry {
+                StreamLayoutWorkProbe.hit("geometry.published")
                 self.input.driver.publish(geometry)
                 self.input.onGeometry(geometry)
             }
@@ -1616,8 +1777,19 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                 let frames = self.pendingCodeFrames; self.pendingCodeFrames = [:]
                 self.input.driver.codeLayoutEvents.send(frames); self.input.onCodeLayout(frames)
             }
-            self.completeCommandIfReady(geometry)
+            self.completeCommandIfReady(geometry, sampledCommandID: sampledCommandID)
             self.refreshPendingTextCoverage()
+            #if DEBUG
+            if FullMotionCostProbe.enabled, self.input.streamingTailID == nil,
+               let last = self.rows.last, let tail = self.rows.last(where: \.isMessage) {
+                FullMotionCostProbe.finishIfReady(
+                    self.layout.isMeasured(.init(id: last.id, revision: last.revision))
+                        && geometry.frames[tail.id] != nil,
+                    height: geometry.contentSize.height,
+                    gap: geometry.contentSize.height - geometry.containerSize.height
+                        + geometry.contentInsets.bottom - geometry.contentOffset.y)
+            }
+            #endif
             #if DEBUG
             self.updateAccessibility(geometry)
             #endif
@@ -1668,6 +1840,13 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         refreshPhase()
     }
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        if scrollView === collection, nativeStreamMotionActive {
+            nativeStreamMotionActive = false
+            #if DEBUG
+            FullMotionProbe.shared.nativeViewportMotion = false
+            FullMotionProbe.event("native-finish", scroll: collection)
+            #endif
+        }
         guard scrollView === collection, let id = nativeAnimatedCommandID,
               command?.id == id, input.driver.controller === self else { return }
         nativeAnimatedCommandID = nil
@@ -1678,10 +1857,119 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { userGesture = false; refreshPhase() }
     func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) { scheduleEmission() }
 
+    // Research route: UIKit animates the actual viewport after tail measurement.
+    // Measurement and scrolling share one owner. Commit enough of a height
+    // change in that same layout pass to keep the tail above the composer;
+    // UIKit can animate only the remaining visible clearance.
+    private var streamMotionTailID: UUID?
+    private var pendingStreamDestination: CGFloat?
+    private var nativeStreamMotionActive = false
+
+    private func admitsNativeStreamMotion(tail: UUID) -> Bool {
+        guard NativeStreamMotionConfiguration.enabled, !UIAccessibility.isReduceMotionEnabled,
+              input.driver.controller === self, !detached, attachmentReady,
+              input.streamingTailID == tail || (nativeStreamMotionActive && streamMotionTailID == tail),
+              rows.last(where: \.isMessage)?.id == tail,
+              input.driver.positionIsBottomPinned, !input.holdsAutomaticBottomFollow,
+              !input.hasLater, input.mutationLanding == nil, input.disclosureOperation == nil,
+              !input.driver.externalViewportMotion, command == nil, batchID == nil,
+              input.driver.bottomLandingValidationID == nil,
+              !touching, !userGesture, !collection.isTracking,
+              !collection.isDragging, !collection.isDecelerating else { return false }
+        return !(collection.layer.animationKeys() ?? []).contains { key in
+            guard let motion = collection.layer.animation(forKey: key) as? CAPropertyAnimation else { return false }
+            return ["bounds", "bounds.origin", "bounds.origin.y"].contains(motion.keyPath ?? "")
+        }
+    }
+
+    fileprivate var ownsStreamingViewportMotion: Bool {
+        guard nativeStreamMotionActive || pendingStreamDestination != nil,
+              let tail = streamMotionTailID else { return false }
+        return admitsNativeStreamMotion(tail: tail)
+    }
+
+    private func prepareStreamMeasurement(tail: UUID, destination: CGFloat, stableBottom: Bool) -> CGFloat? {
+        #if DEBUG
+        if input.driver.bottomLandingValidationID != nil, command == nil,
+           input.streamingTailID == tail, input.driver.positionIsBottomPinned {
+            FullMotionProbe.event("navigation-handoff-growth", scroll: collection,
+                extra: ["destination": destination, "tail": tail.uuidString])
+        }
+        #endif
+        guard destination.isFinite, admitsNativeStreamMotion(tail: tail) else { return nil }
+        if stableBottom {
+            // Code height changes discretely with each new line. Leaving an
+            // eased remainder makes its footer repeatedly fall and catch up.
+            // The accepted height and bottom offset commit together instead;
+            // all existing gesture, keyboard and explicit-owner guards apply.
+            stopStreamMotion(reason: "structured-growth", preserveVisible: false)
+            return destination - collection.contentOffset.y
+        }
+        streamMotionTailID = tail
+        pendingStreamDestination = destination
+        let clearance = max(0, input.configuration.bottomFollowClearance)
+        let current = collection.contentOffset.y
+        // A collapse commits its negative adjustment as part of resizing.
+        // Growth may lag only inside the existing composer clearance, even
+        // when another measurement arrives before the animation finishes.
+        let visibleStart = min(destination, max(current, destination - clearance))
+        return visibleStart - current
+    }
+
+    private func updateStreamMotion(previous: NativeChatViewportMetrics,
+                                    current: NativeChatViewportMetrics,
+                                    presented: CGFloat?) {
+        guard previous.size == current.size, previous.insets == current.insets,
+              !input.driver.externalViewportMotion else {
+            stopStreamMotion(reason: "viewport", preserveVisible: false)
+            return
+        }
+        guard let destination = pendingStreamDestination else { return }
+        pendingStreamDestination = nil
+        guard let tail = streamMotionTailID, admitsNativeStreamMotion(tail: tail) else { return }
+        let from = collection.contentOffset.y
+        guard abs(destination - from) > 0.5 else {
+            stopStreamMotion(reason: "measuredAtBottom", preserveVisible: false)
+            return
+        }
+        // Retargeting can synchronously finish the old UIKit scroll. Publish
+        // the replacement owner after that callback, not before it can clear it.
+        collection.setContentOffset(CGPoint(x: collection.contentOffset.x, y: destination), animated: true)
+        nativeStreamMotionActive = true
+        #if DEBUG
+        FullMotionProbe.shared.nativeViewportMotion = true
+        FullMotionProbe.event("start", scroll: collection, extra: [
+            "from": from, "to": destination, "tail": tail.uuidString,
+            "streaming": input.streamingTailID != nil, "route": "native-viewport",
+            "external": input.driver.externalViewportMotion, "command": command != nil,
+            "holdSend": input.holdsAutomaticBottomFollow])
+        #endif
+    }
+
+    private func stopStreamMotion(reason: String, preserveVisible: Bool) {
+        pendingStreamDestination = nil
+        guard nativeStreamMotionActive else { return }
+        nativeStreamMotionActive = false
+        #if DEBUG
+        FullMotionProbe.shared.nativeViewportMotion = false
+        #endif
+        let before = collection.contentOffset.y
+        collection.setContentOffset(collection.contentOffset, animated: false)
+        #if DEBUG
+        FullMotionProbe.event("stop", scroll: collection, extra: [
+            "reason": reason, "before": before, "after": collection.contentOffset.y,
+            "external": input.driver.externalViewportMotion,
+            "pinned": input.driver.positionIsBottomPinned])
+        #endif
+    }
+
     fileprivate func cancelCommand(requestID: UUID? = nil, reason: String = "superseded") {
         // An explicit owner release also cancels the uncommanded mutation
         // handoff. A late cancellation for another UUID must not cancel it.
-        if requestID == nil { input.mutationLanding = nil }
+        if requestID == nil {
+            input.mutationLanding = nil
+            stopStreamMotion(reason: reason, preserveVisible: !input.driver.externalViewportMotion)
+        }
         guard let active = command, requestID == nil || requestID == active.id else { return }
         input.mutationLanding = nil
         // Remove the completion before stopping UIKit: stopping can synchronously
@@ -1812,15 +2100,29 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         recordEvent("commandComplete", commandID: requestID, target: active.target,
                     extra: ["completedSuccessfully": success, "reason": reason])
         #endif
+        #if DEBUG
+        FullMotionProbe.event("native-command-finish", scroll: collection, extra: [
+            "success": success, "reason": reason, "desired": layout.offset(for: active.target) ?? -999,
+            "target": String(describing: active.target)])
+        #endif
         active.completion(success)
     }
 
-    private func completeCommandIfReady(_ geometry: NativeChatScrollGeometry) {
-        guard let command, command.animationFinished else { return }
+    private func completeCommandIfReady(_ geometry: NativeChatScrollGeometry, sampledCommandID: UUID?) {
+        // Geometry callbacks may synchronously start or replace a command.
+        // Its completion must use the next publication, not the snapshot from
+        // before that callback moved the viewport. The command schedules it.
+        guard let command, command.id == sampledCommandID, command.animationFinished else { return }
         guard input.driver.controller === self else {
             finishCommand(command.id, success: false, reason: "ownerChanged")
             return
         }
+        guard geometry.publicationID == input.publicationID,
+              geometry.sessionID == input.sessionID,
+              geometry.contentOffset == collection.contentOffset,
+              geometry.contentSize == collection.contentSize,
+              geometry.containerSize == collection.bounds.size,
+              geometry.contentInsets == collection.adjustedContentInset else { return }
         switch command.target {
         case let .row(id, _), let .rowBottom(id, _), let .rowTop(id, _):
             guard let row = rowByID[id] else {
@@ -1853,7 +2155,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     /// the earlier AppModel mutation or the exact physical send-button event.
     private func recordEvent(_ stage: String, commandID: UUID? = nil,
                              target: NativeChatScrollTarget? = nil, extra: [String: Any] = [:]) {
-        guard input.debugWindow != nil, isViewLoaded else { return }
+        guard !FullMotionCostProbe.enabled, input.debugWindow != nil, isViewLoaded else { return }
         func rect(_ value: CGRect) -> [String: CGFloat] {
             ["x": value.minX, "y": value.minY, "width": value.width, "height": value.height]
         }
@@ -1918,6 +2220,9 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             }
         }
         event.merge(extra, uniquingKeysWith: { _, new in new })
+        if ["commandBefore", "commandComplete", "cancel"].contains(stage) {
+            FullMotionLandingProbe.record(event)
+        }
         sendOriginEvents.append(event)
         if sendOriginEvents.count > 64 {
             droppedEventCount += sendOriginEvents.count - 64
@@ -1929,7 +2234,8 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
 
     #if DEBUG
     private func updateAccessibility(_ geometry: NativeChatScrollGeometry) {
-        guard input.debugWindow != nil else { return }
+        guard input.debugWindow != nil,
+              !FullMotionCostProbe.quiet || FullMotionCostProbe.active == nil else { return }
         func rect(_ frame: CGRect) -> [String: CGFloat] { ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height] }
         let maxY = max(-geometry.contentInsets.top, geometry.contentSize.height - geometry.containerSize.height + geometry.contentInsets.bottom)
         var value: [String: Any] = [
@@ -1945,6 +2251,13 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         ]
         if let window = input.debugWindow { value["start"] = window.start; value["end"] = window.end; value["total"] = window.total }
         if let lastBatch { value["lastBatch"] = lastBatch }
+        value["motion"] = FullMotionProbe.snapshot
+        value["streamingTail"] = input.streamingTailID?.uuidString ?? ""
+        value["bottomPinned"] = input.driver.positionIsBottomPinned
+        value["externalMotion"] = input.driver.externalViewportMotion
+        value["activeCommand"] = command != nil
+        value["bottomLandingValidationPending"] = input.driver.bottomLandingValidationID != nil
+        value["navigationEvents"] = FullMotionLandingProbe.events
         value["sendOriginEvents"] = sendOriginEvents
         value["sendOriginEventsDropped"] = droppedEventCount
         if JSONSerialization.isValidJSONObject(value), let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) {
@@ -1952,4 +2265,198 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         }
     }
     #endif
+}
+
+// The signed phone experiment uses the same route as the simulator candidate,
+// without launch arguments. Ordinary builds keep their established behavior.
+@MainActor enum NativeStreamMotionConfiguration {
+    #if STREAM_HEIGHT_PHONE_CANDIDATE
+    static let enabled = true
+    static let readsCurrentNavigationGeometry = true
+    #elseif DEBUG
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-fullMotionCandidate")
+    static let readsCurrentNavigationGeometry = ProcessInfo.processInfo.arguments.contains("-fullMotionFreshNavigation")
+    #else
+    static let enabled = false
+    static let readsCurrentNavigationGeometry = false
+    #endif
+}
+
+#if DEBUG
+// Read-only attribution of the live tail against the actual composer frame.
+@MainActor enum StreamOcclusionProbe {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-streamOcclusion")
+    static var composerFrame: CGRect = .zero
+}
+
+// Isolated simulator diagnostics, absent from the frozen product source.
+@MainActor private final class FullMotionProbe: NSObject {
+    static let shared = FullMotionProbe()
+    static let candidateEnabled = ProcessInfo.processInfo.arguments.contains("-fullMotionCandidate")
+    static let hideTopEdge = ProcessInfo.processInfo.arguments.contains("-fullMotionHideTopEdge")
+    static var mode: String { candidateEnabled ? "candidate" : "baseline" }
+    static var snapshot: [String: Any] {
+        ["mode": mode, "hideTopEdge": hideTopEdge, "cpuRuns": FullMotionCostProbe.results, "starts": shared.starts, "stops": shared.stops,
+         "samples": shared.samples, "animatedSamples": shared.animatedSamples,
+         "maxLag": shared.maxLag, "maxUncoveredTop": shared.maxUncoveredTop,
+         "events": Array(shared.events.suffix(50))]
+    }
+    var tailFrame: (() -> CGRect?)?
+    var occlusionState: (() -> [String: Any])?
+    var streaming = false
+    var nativeViewportMotion = false
+    weak var scroll: UIScrollView?
+    var link: CADisplayLink?
+    var events: [[String: Any]] = []
+    var frames: [[String: Any]] = []
+    var starts = 0, stops = 0, samples = 0, animatedSamples = 0
+    var maxLag = 0.0, maxUncoveredTop = 0.0
+    static func attach(_ scroll: UIScrollView) {
+        shared.scroll = scroll
+        if #available(iOS 26.0, *), hideTopEdge { scroll.topEdgeEffect.isHidden = true }
+        guard !FullMotionCostProbe.enabled, shared.link == nil else { return }
+        let link = CADisplayLink(target: shared, selector: #selector(tick))
+        shared.link = link; link.add(to: .main, forMode: .common)
+    }
+    static func event(_ name: String, scroll: UIScrollView, extra: [String: Any] = [:]) {
+        shared.scroll = scroll
+        if name == "start" { shared.starts += 1; FullMotionCostProbe.animations += 1 }
+        if name == "stop" { shared.stops += 1 }
+        if FullMotionCostProbe.enabled { return }
+        var value: [String: Any] = ["event": name, "t": ProcessInfo.processInfo.systemUptime,
+            "offset": scroll.contentOffset.y,
+            "shown": scroll.layer.presentation()?.bounds.origin.y ?? scroll.contentOffset.y]
+        value.merge(extra, uniquingKeysWith: { _, new in new })
+        shared.events.append(value)
+        if shared.events.count > 4000 { shared.events.removeFirst(1000) }
+    }
+    @objc func tick() {
+        guard let scroll, scroll.window != nil else { return }
+        samples += 1
+        let animated = nativeViewportMotion
+        let shown = scroll.layer.presentation()?.bounds.origin.y ?? scroll.contentOffset.y
+        let lag = abs(scroll.contentOffset.y - shown)
+        let top = shown + scroll.adjustedContentInset.top
+        let cells = (scroll as? UICollectionView)?.visibleCells ?? []
+        let first = cells.map(\.frame.minY).min() ?? top
+        let hole = max(0, first - top)
+        if animated {
+            animatedSamples += 1; maxLag = max(maxLag, lag)
+            maxUncoveredTop = max(maxUncoveredTop, hole)
+        }
+        let tail = tailFrame?()
+        var frame: [String: Any] = ["streaming": streaming, "tailHeight": tail?.height ?? 0,
+            "tailTop": (tail?.minY ?? 0) - shown, "tailBottom": (tail?.maxY ?? 0) - shown,
+            "t": ProcessInfo.processInfo.systemUptime, "offset": scroll.contentOffset.y,
+            "shown": shown, "height": scroll.contentSize.height, "viewport": scroll.bounds.height,
+            "insetBottom": scroll.adjustedContentInset.bottom, "insetTop": scroll.adjustedContentInset.top,
+            "animated": animated, "tracking": scroll.isTracking, "dragging": scroll.isDragging,
+            "holeTop": hole, "cellCount": cells.count,
+            "keys": scroll.layer.animationKeys() ?? []]
+        if StreamOcclusionProbe.enabled, let state = occlusionState?() {
+            frame.merge(state, uniquingKeysWith: { _, new in new })
+        }
+        frames.append(frame)
+        if frames.count > 20000 { frames.removeFirst(5000) }
+        if samples % 60 == 0 { flush() }
+    }
+    func flush() {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-fullMotionRun"), i + 1 < args.count else { return }
+        let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("full-motion-\(args[i + 1]).json")
+        let value: [String: Any] = ["summary": Self.snapshot, "events": events, "frames": frames]
+        if let data = try? JSONSerialization.data(withJSONObject: value) { try? data.write(to: path, options: .atomic) }
+    }
+}
+
+// Measurement-only. No display link or periodic file write in this mode.
+import Darwin
+@MainActor private enum FullMotionCostProbe {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-fullMotionLean")
+    static let quiet = ProcessInfo.processInfo.arguments.contains("-fullMotionQuietCost")
+    static var inputUpdates = 0, layouts = 0, animations = 0
+    static var active: UUID?
+    static var awaitingFinalGeometry = false
+    static var startCPU = 0.0, started = 0.0
+    static var startUpdates = 0, startLayouts = 0, startAnimations = 0
+    static var results: [[String: Any]] = []
+    static func cpu() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+            + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+    }
+    static func input(_ tail: UUID?) {
+        guard enabled else { return }
+        if let tail, active == nil {
+            active = tail; awaitingFinalGeometry = false
+            StreamLayoutWorkProbe.begin()
+            startCPU = cpu(); started = ProcessInfo.processInfo.systemUptime
+            startUpdates = inputUpdates; startLayouts = layouts; startAnimations = animations
+        }
+        inputUpdates += 1
+        if tail == nil, active != nil { awaitingFinalGeometry = true }
+    }
+    static func finishIfReady(_ ready: Bool, height: CGFloat, gap: CGFloat) {
+        guard enabled, active != nil, awaitingFinalGeometry, ready else { return }
+        let used = cpu() - startCPU
+        results.append(["cpuSeconds": used, "elapsed": ProcessInfo.processInfo.systemUptime - started,
+            "inputUpdates": inputUpdates - startUpdates, "layouts": layouts - startLayouts,
+            "animationStarts": animations - startAnimations, "finalHeight": height, "finalGap": gap,
+            "layoutWork": StreamLayoutWorkProbe.finish(),
+            "scope": "First streaming input to measured EOF native geometry. App process CPU only; no GPU or power measurement."])
+        active = nil; awaitingFinalGeometry = false
+        FullMotionProbe.shared.flush()
+    }
+}
+
+// Bounded simulator-only observation. It never scrolls, lays out, or schedules work.
+@MainActor enum FullMotionLandingProbe {
+    static var events: [[String: Any]] = []
+    static var boundaryUsed = false
+    static func boundaryMode() -> String? {
+        guard !boundaryUsed else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-navigationBoundary"), index + 1 < args.count else { return nil }
+        boundaryUsed = true
+        return args[index + 1]
+    }
+    static func record(_ value: [String: Any]) {
+        guard ProcessInfo.processInfo.arguments.contains("-fullMotionFreshNavigation"),
+              events.count < 100 else { return }
+        var event = value
+        event["uptime"] = ProcessInfo.processInfo.systemUptime
+        events.append(event)
+        if let data = try? JSONSerialization.data(withJSONObject: events, options: [.sortedKeys]),
+           let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            try? data.write(to: documents.appendingPathComponent("full-motion-landing.json"), options: .atomic)
+        }
+    }
+}
+
+#endif
+
+// Local attribution only: enabled explicitly, accumulated during the CPU probe,
+// and written once at EOF. Counters never change layout or scrolling policy.
+@MainActor enum StreamLayoutWorkProbe {
+    #if DEBUG
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-streamLayoutWork")
+    #else
+    static let enabled = false
+    #endif
+    private static var active = false
+    private static var counts: [String: Int] = [:]
+    static func begin() {
+        guard enabled else { return }
+        counts.removeAll(keepingCapacity: true); active = true
+    }
+    static func hit(_ name: String) {
+        guard enabled, active else { return }
+        counts[name, default: 0] += 1
+    }
+    static func finish() -> [String: Int] {
+        active = false
+        return counts
+    }
 }

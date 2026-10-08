@@ -98,7 +98,9 @@ actor CodeSyntaxHighlighter {
         let key = isStreaming ? nil : CacheKey(
             source: Data(text.utf8), language: language, theme: theme
         )
-        if let key, let runs = cache[key] { return runs }
+        if let key, let runs = cache[key] {
+            return runs
+        }
         guard let engine = initializedEngine(),
               supportedLanguages.contains(language), !Task.isCancelled else { return [] }
         if activeTheme != theme {

@@ -44,6 +44,13 @@ final class ConversationMessageStore: Observable {
         return storage
     }
 
+    /// Read the value and its revision through one observable dependency.
+    /// Both belong to the same per-conversation entry and mutate together.
+    func versionedMessages(for id: UUID) -> (messages: [ChatMessage]?, revision: UInt64) {
+        registrar.access(self, keyPath: \.[id])
+        return (storage[id], revisions[id] ?? 0)
+    }
+
     func revision(for id: UUID) -> UInt64 {
         registrar.access(self, keyPath: \.[id])
         return revisions[id] ?? 0
@@ -641,6 +648,7 @@ struct UserBubbleSendAnimationRequest: Identifiable, Equatable, Sendable {
     let conversationID: UUID
     let messageID: UUID
     let style: UserBubbleSendAnimationStyle
+    let beginsEmptyTranscript: Bool
     let expiresAt: Date
 }
 
@@ -666,284 +674,6 @@ struct MessageTargetNavigationRequest: Identifiable, Equatable, Sendable {
     let usesCoveredViewportTransition: Bool
 }
 
-@MainActor
-private enum StreamDeliveryTrace {
-    private struct Session {
-        let conversationID: UUID
-        let messageID: UUID
-        let providerType: String
-        let modelID: String
-        let streamOutput: Bool
-        let startedAt: TimeInterval
-        var lastHeartbeatAt: TimeInterval
-        var lastEventAt: TimeInterval?
-        var lastDisplayAt: TimeInterval?
-        var eventCount = 0
-        var textEventCount = 0
-        var reasoningEventCount = 0
-        var displayPublishCount = 0
-        var rawUTF16 = 0
-        var shownUTF16 = 0
-        var textPipelineSamples = 0
-        var detailBuildTotal: TimeInterval = 0
-        var detailBuildMax: TimeInterval = 0
-        var slowTextPipelineCount = 0
-        var displayCodecTotal: TimeInterval = 0
-        var displayCodecMax: TimeInterval = 0
-        var displayRebuildTotal: TimeInterval = 0
-        var displayRebuildMax: TimeInterval = 0
-        var slowDisplayPipelineCount = 0
-        var filterHoldAttempts = 0
-        var filterDropUTF16 = 0
-    }
-
-    private static let enabled = ProcessInfo.processInfo.arguments.contains("-diagnoseStreaming")
-    private static var sessions: [UUID: Session] = [:]
-    private static var heartbeatTasks: [UUID: Task<Void, Never>] = [:]
-
-    static var isEnabled: Bool { enabled }
-
-    static func begin(
-        conversationID: UUID,
-        messageID: UUID,
-        providerType: ProviderType,
-        modelID: String,
-        streamOutput: Bool
-    ) {
-        guard enabled else { return }
-        finish(messageID: messageID, rawUTF16: nil, shownUTF16: nil, reason: "replaced")
-        let now = ProcessInfo.processInfo.systemUptime
-        sessions[messageID] = Session(
-            conversationID: conversationID,
-            messageID: messageID,
-            providerType: providerType.rawValue,
-            modelID: safeLabel(modelID),
-            streamOutput: streamOutput,
-            startedAt: now,
-            lastHeartbeatAt: now
-        )
-        log(
-            "BEGIN conv=\(shortID(conversationID)) msg=\(shortID(messageID))"
-                + " provider=\(providerType.rawValue) model=\(safeLabel(modelID))"
-                + " streamOutput=\(streamOutput)"
-        )
-        heartbeatTasks[messageID] = Task { @MainActor in
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .milliseconds(500))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                heartbeat(messageID: messageID)
-            }
-        }
-    }
-
-    static func record(event: ChatStreamEvent, messageID: UUID) {
-        guard enabled, var session = sessions[messageID] else { return }
-        let now = ProcessInfo.processInfo.systemUptime
-        let eventGap = now - (session.lastEventAt ?? session.startedAt)
-        session.eventCount &+= 1
-        let kind: String
-        let chunkUTF16: Int
-        switch event {
-        case .text(let chunk):
-            session.textEventCount &+= 1
-            session.rawUTF16 &+= chunk.utf16.count
-            kind = "text"
-            chunkUTF16 = chunk.utf16.count
-        case .reasoning(let chunk):
-            session.reasoningEventCount &+= 1
-            kind = "reasoning"
-            chunkUTF16 = chunk.utf16.count
-        case .usage:
-            kind = "usage"
-            chunkUTF16 = 0
-        case .toolCalls:
-            kind = "tool_calls"
-            chunkUTF16 = 0
-        case .toolResults:
-            kind = "tool_results"
-            chunkUTF16 = 0
-        case .imageGenerationProgress:
-            kind = "image_progress"
-            chunkUTF16 = 0
-        case .generatedImage:
-            kind = "image"
-            chunkUTF16 = 0
-        }
-        session.lastEventAt = now
-        sessions[messageID] = session
-        if session.eventCount == 1 || eventGap >= 0.75 {
-            log(
-                "EVENT conv=\(shortID(session.conversationID)) msg=\(shortID(messageID))"
-                    + " seq=\(session.eventCount) kind=\(kind) chunkUTF16=\(chunkUTF16)"
-                    + " gap=\(format(eventGap))"
-            )
-        }
-    }
-
-    static func recordTextPipeline(
-        messageID: UUID,
-        detailBuild: TimeInterval
-    ) {
-        guard enabled, var session = sessions[messageID] else { return }
-        session.textPipelineSamples &+= 1
-        session.detailBuildTotal += detailBuild
-        session.detailBuildMax = max(session.detailBuildMax, detailBuild)
-        if detailBuild >= 0.008 {
-            session.slowTextPipelineCount &+= 1
-        }
-        sessions[messageID] = session
-        if session.textPipelineSamples == 1 || detailBuild >= 0.008 {
-            log(
-                "TEXT_COST conv=\(shortID(session.conversationID)) msg=\(shortID(messageID))"
-                    + " seq=\(session.textPipelineSamples) rawUTF16=\(session.rawUTF16)"
-                    + " detailMs=\(milliseconds(detailBuild))"
-            )
-        }
-    }
-
-    static func published(
-        messageID: UUID,
-        shownUTF16: Int,
-        codecDuration: TimeInterval,
-        rebuildDuration: TimeInterval
-    ) {
-        guard enabled, var session = sessions[messageID] else { return }
-        let now = ProcessInfo.processInfo.systemUptime
-        let displayGap = now - (session.lastDisplayAt ?? session.startedAt)
-        session.displayPublishCount &+= 1
-        session.shownUTF16 = shownUTF16
-        session.lastDisplayAt = now
-        session.displayCodecTotal += codecDuration
-        session.displayCodecMax = max(session.displayCodecMax, codecDuration)
-        session.displayRebuildTotal += rebuildDuration
-        session.displayRebuildMax = max(session.displayRebuildMax, rebuildDuration)
-        let total = codecDuration + rebuildDuration
-        if total >= 0.008 {
-            session.slowDisplayPipelineCount &+= 1
-        }
-        sessions[messageID] = session
-        if session.displayPublishCount == 1 || displayGap >= 0.75 || total >= 0.008 {
-            log(
-                "DISPLAY conv=\(shortID(session.conversationID)) msg=\(shortID(messageID))"
-                    + " seq=\(session.displayPublishCount) shownUTF16=\(shownUTF16)"
-                    + " rawUTF16=\(session.rawUTF16) gap=\(format(displayGap))"
-                    + " codecMs=\(milliseconds(codecDuration)) rebuildMs=\(milliseconds(rebuildDuration))"
-            )
-        }
-    }
-
-    static func recordDisplayFilter(
-        messageID: UUID,
-        inputUTF16: Int,
-        outputUTF16: Int
-    ) {
-        guard enabled, var session = sessions[messageID] else { return }
-        let previousDrop = session.filterDropUTF16
-        let currentDrop = max(0, inputUTF16 - outputUTF16)
-        if currentDrop > 0 {
-            session.filterHoldAttempts &+= 1
-        }
-        session.filterDropUTF16 = currentDrop
-        sessions[messageID] = session
-        if currentDrop > 0, previousDrop == 0 {
-            log(
-                "FILTER_HOLD conv=\(shortID(session.conversationID)) msg=\(shortID(messageID))"
-                    + " inputUTF16=\(inputUTF16) outputUTF16=\(outputUTF16)"
-                    + " dropUTF16=\(currentDrop)"
-            )
-        } else if currentDrop == 0, previousDrop > 0 {
-            log(
-                "FILTER_RELEASE conv=\(shortID(session.conversationID)) msg=\(shortID(messageID))"
-                    + " previousDropUTF16=\(previousDrop)"
-            )
-        }
-    }
-
-    static func finish(
-        messageID: UUID,
-        rawUTF16: Int?,
-        shownUTF16: Int?,
-        reason: String
-    ) {
-        guard enabled, var session = sessions.removeValue(forKey: messageID) else { return }
-        heartbeatTasks.removeValue(forKey: messageID)?.cancel()
-        if let rawUTF16 { session.rawUTF16 = rawUTF16 }
-        if let shownUTF16 { session.shownUTF16 = shownUTF16 }
-        let now = ProcessInfo.processInfo.systemUptime
-        log(
-            "FINISH conv=\(shortID(session.conversationID)) msg=\(shortID(messageID))"
-                + " reason=\(reason) elapsed=\(format(now - session.startedAt))"
-                + " events=\(session.eventCount) textEvents=\(session.textEventCount)"
-                + " reasoningEvents=\(session.reasoningEventCount)"
-                + " displays=\(session.displayPublishCount) rawUTF16=\(session.rawUTF16)"
-                + " shownUTF16=\(session.shownUTF16) lag=\(session.rawUTF16 - session.shownUTF16)"
-                + " mainGap=\(format(now - session.lastHeartbeatAt))"
-                + " eventGap=\(formatGap(since: session.lastEventAt, now: now))"
-                + " displayGap=\(formatGap(since: session.lastDisplayAt, now: now))"
-                + " textCostSamples=\(session.textPipelineSamples)"
-                + " detailTotalMs=\(milliseconds(session.detailBuildTotal))"
-                + " detailMaxMs=\(milliseconds(session.detailBuildMax))"
-                + " slowText=\(session.slowTextPipelineCount)"
-                + " displayCodecTotalMs=\(milliseconds(session.displayCodecTotal))"
-                + " displayCodecMaxMs=\(milliseconds(session.displayCodecMax))"
-                + " displayRebuildTotalMs=\(milliseconds(session.displayRebuildTotal))"
-                + " displayRebuildMaxMs=\(milliseconds(session.displayRebuildMax))"
-                + " slowDisplay=\(session.slowDisplayPipelineCount)"
-                + " filterHolds=\(session.filterHoldAttempts)"
-                + " filterDropUTF16=\(session.filterDropUTF16)"
-        )
-    }
-
-    private static func heartbeat(messageID: UUID) {
-        guard enabled, var session = sessions[messageID] else { return }
-        let now = ProcessInfo.processInfo.systemUptime
-        let heartbeatGap = now - session.lastHeartbeatAt
-        session.lastHeartbeatAt = now
-        sessions[messageID] = session
-        log(
-            "TICK conv=\(shortID(session.conversationID)) msg=\(shortID(messageID))"
-                + " mainGap=\(format(heartbeatGap)) events=\(session.eventCount)"
-                + " textEvents=\(session.textEventCount) reasoningEvents=\(session.reasoningEventCount)"
-                + " displays=\(session.displayPublishCount) rawUTF16=\(session.rawUTF16)"
-                + " shownUTF16=\(session.shownUTF16) lag=\(session.rawUTF16 - session.shownUTF16)"
-                + " eventGap=\(formatGap(since: session.lastEventAt, now: now))"
-                + " displayGap=\(formatGap(since: session.lastDisplayAt, now: now))"
-        )
-    }
-
-    private static func log(_ message: String) {
-        let uptime = ProcessInfo.processInfo.systemUptime
-        NSLog("[stream-trace] %@", "t=\(format(uptime)) \(message)")
-    }
-
-    private static func formatGap(since date: TimeInterval?, now: TimeInterval) -> String {
-        guard let date else { return "nil" }
-        return format(now - date)
-    }
-
-    private static func format(_ value: TimeInterval) -> String {
-        String(format: "%.3f", value)
-    }
-
-    private static func milliseconds(_ value: TimeInterval) -> String {
-        String(format: "%.3f", value * 1_000)
-    }
-
-    private static func shortID(_ id: UUID) -> String {
-        String(id.uuidString.prefix(5))
-    }
-
-    private static func safeLabel(_ value: String) -> String {
-        String(value.prefix(80))
-            .replacingOccurrences(of: "\n", with: "_")
-            .replacingOccurrences(of: "\r", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
-    }
-}
 
 @MainActor
 @Observable
@@ -1044,7 +774,6 @@ final class AppModel {
     var isModelSetupTriggeredBySend = false
     var isAssistantSelectorPresented = false
     var isSettingsPresented = false
-    var isUserProfilePresented = false
     var isFavoritesPresented = false
     var isCalendarPresented = false
     var appearanceMode: AppearanceMode
@@ -1085,6 +814,13 @@ final class AppModel {
     // still observe the array and validate the current identity at that slot.
     @ObservationIgnored private var conversationLookupCache: (id: UUID, index: Int)?
     @ObservationIgnored private var rawStreamingTextByMessageID: [UUID: String] = [:]
+    @ObservationIgnored private var streamingRevisions: [UUID: UInt64] = [:]
+    @ObservationIgnored private var checkpointedStreamingRevisions: [UUID: UInt64] = [:]
+    @ObservationIgnored private var preparedStreamingPayloads:
+        [UUID: (revision: UInt64, text: String, parts: [MessagePart])] = [:]
+    // With stream output disabled, reasoning/tools/usage remain unpublished
+    // until completion, but still participate in recovery checkpoints.
+    @ObservationIgnored private var bufferedStreamingMetadataByMessageID: [UUID: ChatMessage] = [:]
     @ObservationIgnored private var streamDisplayTasksByMessageID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var streamDisplayBatchCharactersByMessageID: [UUID: Int] = [:]
     // Provider delivery and the authoritative raw buffer stay live while an
@@ -1107,7 +843,12 @@ final class AppModel {
         [RecentMemoryRefreshQueueEntry] = []
     @ObservationIgnored private var activeRecentMemoryRefreshRunID: UUID?
     @ObservationIgnored private var userProfileRecentMemoryRefreshTask: Task<Void, Never>?
-    @ObservationIgnored private var persistenceTask: Task<Void, Never>?
+    @ObservationIgnored private var checkpointBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    @ObservationIgnored private var checkpointBackgroundTaskGeneration: UInt64 = 0
+    @ObservationIgnored private lazy var streamingCheckpoints = StreamingCheckpointScheduler(
+        didFinishBatch: { [weak self] in self?.endCheckpointBackgroundTask() },
+        write: { [weak self] ids in await self?.writeStreamingCheckpoints(ids) }
+    )
     @ObservationIgnored private var interactionPersistenceTask: Task<Void, Never>?
     @ObservationIgnored private var mcpRefreshRequestIDs: [UUID: UUID] = [:]
     @ObservationIgnored private var pendingToolApprovalContinuation: CheckedContinuation<ToolApprovalDecision, Never>?
@@ -1126,7 +867,6 @@ final class AppModel {
     @ObservationIgnored private var conversationPersistenceEpoch: UInt64 = 0
     @ObservationIgnored private var conversationSaveSequence: UInt64 = 0
     @ObservationIgnored private var lastAppliedConversationSaveSequence: UInt64 = 0
-    @ObservationIgnored private let streamPersistenceDelay: Duration = .milliseconds(900)
 
     init() {
         let launchCountKey = "app_launch_count_v1"
@@ -1530,8 +1270,6 @@ final class AppModel {
 
     private func blockConversationPersistence(_ reason: String) {
         conversationPersistenceState = .blocked(reason: reason)
-        persistenceTask?.cancel()
-        persistenceTask = nil
         interactionPersistenceTask?.cancel()
         interactionPersistenceTask = nil
     }
@@ -1603,20 +1341,44 @@ final class AppModel {
                 """
             }
 
-            let pendingCompletionRecovery =
+            var pendingCompletionRecovery =
                 PendingGenerationCompletionJournal.mergeRecoverableCompletions(
                     into: &loadedSnapshot
                 )
+            let previousOwners = Dictionary(conversations.map { ($0.id, $0) },
+                                            uniquingKeysWith: { first, _ in first })
+            // A failed main-store save must not make a reload discard newer
+            // received content still owned by this process. Merge only into the
+            // exact surviving conversation/message, never resurrect history.
+            for loadedOwner in loadedSnapshot.conversations {
+                guard let oldOwner = previousOwners[loadedOwner.id],
+                      oldOwner.assistantID == loadedOwner.assistantID,
+                      oldOwner.groupAssistantIDs == loadedOwner.groupAssistantIDs else { continue }
+                let unfinished = (loadedSnapshot.messagesByConversation[loadedOwner.id] ?? [])
+                    .filter { $0.status == .streaming || $0.status == .interrupted }
+                for previous in unfinished {
+                    // A preceding recovery may itself have failed to commit.
+                    // Its retained in-memory interruption is still newer than
+                    // disk, even though that attempt already stopped the run.
+                    guard let message = streamingPersistenceMessage(previous.id)
+                        ?? conversationMessageStore[loadedOwner.id]?.first(where: { $0.id == previous.id }),
+                        StreamingMessageRecovery.merge(message, into: &loadedSnapshot) else { continue }
+                    pendingCompletionRecovery.recoveredMessageIDs.append(message.id)
+                    var journaledRecovery = message
+                    if journaledRecovery.status == .streaming { journaledRecovery.interruptUnfinishedGeneration() }
+                    IOSBackgroundGenerationManager.shared.stageCompletedMessage(
+                        runID: message.id, message: journaledRecovery
+                    )
+                }
+            }
             let sortedConversations = Self.sortedConversations(
                 loadedSnapshot.conversations
             )
             // Reload only the authoritative transcript. Unsent input is a
             // separate user-owned packet, not a replacement chat snapshot.
             let previousSelectedID = selectedConversationID
-            let previousOwners = Dictionary(conversations.map { ($0.id, $0) },
-                                            uniquingKeysWith: { first, _ in first })
             let packets = composerPacketsByConversation
-            stopAllStreaming()
+            stopStreamingForStoreRecovery()
             composerPacketsByConversation = [:]
             unsavedDraftConversationIDs = []
             messageWindowsByConversation = [:]
@@ -2230,14 +1992,15 @@ final class AppModel {
         for conversationID: UUID,
         rawMessages suppliedMessages: [ChatMessage]? = nil
     ) -> [SelectedMessageProjection] {
-        let rawMessages = suppliedMessages ?? conversationMessageStore[conversationID] ?? []
+        let stored = suppliedMessages == nil
+            ? conversationMessageStore.versionedMessages(for: conversationID) : nil
+        let rawMessages = suppliedMessages ?? stored?.messages ?? []
         guard !rawMessages.isEmpty else {
             if suppliedMessages == nil { selectedMessageProjectionCache = nil }
             return []
         }
         let selections = conversation(for: conversationID)?.versionSelections ?? [:]
-        let messageRevision = suppliedMessages == nil
-            ? conversationMessageStore.revision(for: conversationID) : 0
+        let messageRevision = stored?.revision ?? 0
 
         // Read the canonical observable inputs above even on a cache hit so a
         // view that uses this projection remains subscribed to their changes.
@@ -2487,7 +2250,7 @@ final class AppModel {
             providers = [ProviderConfiguration(
                 id: providerID, enabled: true, name: "本机试用验收",
                 type: .openAI, apiKey: "fixture-only",
-                baseURL: "http://127.0.0.1:18437/v1", chatPath: "/chat/completions",
+                baseURL: "http://127.0.0.1:18547/v1", chatPath: "/chat/completions",
                 models: [ModelConfiguration(id: modelID)]
             )]
             selectedModel = ModelSelection(providerID: providerID, modelID: modelID)
@@ -3123,18 +2886,7 @@ final class AppModel {
     private static func effectiveUserProfileMemoryContents(
         _ profile: UserProfile
     ) -> [String] {
-        guard profile.isEnabled else { return [] }
-        var contents: [String] = []
-        func append(_ label: String, _ value: String) {
-            let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty else { return }
-            contents.append("\(label): \(cleaned)")
-        }
-        append("Nickname", profile.nickname)
-        append("Interests and preferences", profile.interests)
-        append("Avoid topics", profile.avoidTopics)
-        append("Additional notes", profile.additionalNotes)
-        return contents
+        profile.memoryContents
     }
 
     private static func effectiveStableMemoryContents(
@@ -4165,36 +3917,40 @@ final class AppModel {
 
     // MARK: - 个人资料
 
-    func setUserProfileText(_ keyPath: WritableKeyPath<UserProfile, String>, value: String) {
-        userProfile[keyPath: keyPath] = value
-        saveUserProfile()
+    func commitUserProfileDraft(_ draft: UserProfile, baseline: UserProfile) throws {
+        let candidate = try UserProfileDraft.merge(baseline: baseline, draft: draft, current: userProfile)
+        try saveUserProfile(candidate)
     }
 
-    func setUserProfileBool(_ keyPath: WritableKeyPath<UserProfile, Bool>, value: Bool) {
-        userProfile[keyPath: keyPath] = value
-        saveUserProfile()
-    }
-
-    func setUserProfileAvatar(_ image: UIImage) {
-        guard let data = UserProfile.jpegData(from: image) else {
-            presentError(L10n.lookup("头像保存失败"))
-            return
+    func executeUserNotesTool(
+        _ request: UserNotesToolRequest,
+        authorizedAtRequest: Bool,
+        assistantID: UUID,
+        context: ToolInvocationContext
+    ) -> String {
+        guard authorizedAtRequest, isToolInvocationCurrent(context),
+              assistants.contains(where: { $0.id == assistantID }) else {
+            return ToolCallExecutor.toolError(error: "request_expired", message: "This run no longer has access to user notes.", tool: "user_notes")
         }
-        userProfile.avatarJPEGData = data
-        saveUserProfile()
+        do {
+            let previous = userProfile
+            let candidate = try UserNotesTools.applying(request, to: previous)
+            if candidate != previous { try saveUserProfile(candidate) }
+            switch request {
+            case .read: return UserNotesTools.snapshot(userProfile)
+            case .edit: return UserNotesTools.editResult(before: previous, after: userProfile)
+            }
+        } catch let failure as UserNotesTools.Failure {
+            return ToolCallExecutor.toolError(error: failure.rawValue, message: "No notes were changed. Check permissions and read_user_notes again before retrying.", tool: "user_notes")
+        } catch {
+            return ToolCallExecutor.toolError(error: "save_failed", message: "The notes could not be saved.", tool: "user_notes")
+        }
     }
 
-    func clearUserProfileAvatar() {
-        userProfile.avatarJPEGData = nil
-        saveUserProfile()
-    }
-
-    private func saveUserProfile() {
-        let previousMemoryContents =
-            Self.effectiveUserProfileMemoryContents(
-                UserProfilePersistence.load()
-            )
-        UserProfilePersistence.save(userProfile)
+    private func saveUserProfile(_ candidate: UserProfile) throws {
+        let previousMemoryContents = Self.effectiveUserProfileMemoryContents(userProfile)
+        guard UserProfilePersistence.save(candidate) else { throw UserProfileEditError.saveFailed }
+        userProfile = candidate
         let currentMemoryContents =
             Self.effectiveUserProfileMemoryContents(userProfile)
         guard previousMemoryContents != currentMemoryContents else { return }
@@ -6035,7 +5791,7 @@ final class AppModel {
         guard prepareForBackupRestore() else { throw BackupServiceError.conversationStoreUnavailable }
         stopAllStreaming()
         cancelAllMemoryBackgroundWork()
-        persistenceTask?.cancel()
+        streamingCheckpoints.cancelPending()
         interactionPersistenceTask?.cancel()
         // Drain the existing save lane before taking the rollback boundary.
         guard saveImmediately() else { throw ConversationStoreError.persistenceBlocked }
@@ -7453,6 +7209,7 @@ final class AppModel {
     private func armUserBubbleSendAnimation(
         for message: ChatMessage,
         conversationID: UUID,
+        beginsEmptyTranscript: Bool,
         now: Date
     ) {
         guard preferences.userBubbleSendAnimationEnabled else {
@@ -7465,6 +7222,7 @@ final class AppModel {
             conversationID: conversationID,
             messageID: message.id,
             style: preferences.userBubbleSendAnimationStyle,
+            beginsEmptyTranscript: beginsEmptyTranscript,
             expiresAt: now.addingTimeInterval(1.0)
         )
         pendingUserBubbleSendAnimation = request
@@ -7548,8 +7306,8 @@ final class AppModel {
 
         // Persist the user row and the first assistant placeholder together.
         // On a crash after this commit but before activation, cold-start
-        // normalization removes the empty placeholder while retaining the user
-        // message. This also eliminates one full-store save from every send.
+        // normalization retains the placeholder as interrupted alongside the
+        // user message. This also eliminates one full-store save from every send.
         let preparedInitialAssistantMessage = stageAssistantStreamMessage(
             conversationID: conversationID,
             provider: context.provider,
@@ -7573,6 +7331,7 @@ final class AppModel {
         armUserBubbleSendAnimation(
             for: userMessage,
             conversationID: conversationID,
+            beginsEmptyTranscript: wasTranscriptEmptyBeforeSend,
             now: Date()
         )
         // A send is not a conversation selection. Give the transcript the
@@ -8132,19 +7891,23 @@ final class AppModel {
     ) {
         IOSBackgroundGenerationManager.shared.start(
             runID: assistantMessage.id,
-            assistantName: assistant.name,
+            assistant: assistant,
+            accentColor: themeAccentUIColor,
             conversationID: conversationID
         )
         rawStreamingTextByMessageID[assistantMessage.id] = ""
-        StreamDeliveryTrace.begin(
-            conversationID: conversationID,
-            messageID: assistantMessage.id,
-            providerType: provider.type,
-            modelID: selection.modelID,
-            streamOutput: assistant.streamOutput
-        )
+        streamingRevisions[assistantMessage.id] = max(1, assistantMessage.streamingRevision ?? 0)
+        IOSBackgroundGenerationManager.shared.checkpointProgress = { [weak self] in
+            self?.flushStreamingProgress()
+        }
         streamingConversationIDs.insert(conversationID)
         activeStreamingMessageIDsByConversation[conversationID] = assistantMessage.id
+        if !assistant.streamOutput {
+            setStreamingTextDisplaySuspended(
+                conversationID: conversationID, messageID: assistantMessage.id,
+                owner: .nonStreamingReply, suspended: true
+            )
+        }
         if isDrawerPresented, selectedConversationID == conversationID {
             setDrawerStreamingTextDisplaySuspended(true)
         }
@@ -8601,10 +8364,6 @@ final class AppModel {
         if let memoryPrompt = assistant.longTermMemoryPrompt() {
             effectiveSystemPrompt = effectiveSystemPrompt.map { $0 + "\n\n" + memoryPrompt } ?? memoryPrompt
         }
-        if let recentChatsPrompt {
-            effectiveSystemPrompt = effectiveSystemPrompt.map { $0 + "\n\n" + recentChatsPrompt }
-                ?? recentChatsPrompt
-        }
         if let imageGenerationPrompt = assistant.imageGenerationPrompt {
             effectiveSystemPrompt = effectiveSystemPrompt.map { $0 + "\n\n" + imageGenerationPrompt }
                 ?? imageGenerationPrompt
@@ -8644,14 +8403,7 @@ final class AppModel {
             instructions: activeInstructions,
             books: activeBooks
         )
-        if let profilePrompt = userProfile.prompt {
-            let insertIndex = assembled.messages.lastIndex(where: { $0.role == "user" })
-                ?? assembled.messages.endIndex
-            assembled.messages.insert(
-                ChatRequestMessage(role: "system", content: profilePrompt),
-                at: insertIndex
-            )
-        }
+        PersonalContextPrompt.insert(userProfile, recentMemory: recentChatsPrompt, into: &assembled.messages)
 
         let hasBuiltInSearch = assistant.searchEnabled && assistant.searchMode.usesBuiltInSearch(providerType: provider.type)
         let needsClientSearch = assistant.searchEnabled && !hasBuiltInSearch
@@ -8673,6 +8425,7 @@ final class AppModel {
             supportsTools: supportsTools,
             includeSearchTool: usesClientSearch,
             includeMoccaCalendar: calendarSettings.assistantAccessEnabled,
+            includeUserNotes: userProfile.canAssistantEditNotes,
             mcpDefinitions: mcpDefinitions
         )
 
@@ -8694,13 +8447,13 @@ final class AppModel {
             thinkingBudget: assistant.thinkingBudget,
             tools: toolDefs.isEmpty ? nil : toolDefs,
             builtInSearch: hasBuiltInSearch,
-            sessionID: conversationID.uuidString,
-            diagnosticRunID: assistantMessage.id
+            sessionID: conversationID.uuidString
         )
 
         let stream: AsyncThrowingStream<ChatStreamEvent, Error>
         if !toolDefs.isEmpty || hasBuiltInSearch {
             let assistantForHandler = fileAwareAssistant
+            let userNotesAuthorized = userProfile.canAssistantEditNotes
             let fileToolRunID = streamingRunIDsByConversation[conversationID]
             let fileToolMessageID = assistantMessage.id
             guard let fileToolRunID else { throw CancellationError() }
@@ -8760,6 +8513,17 @@ final class AppModel {
                 mcpExecutor: { [weak self] name, args in
                     await self?.executeMCPTool(name: name, args: args, assistant: assistantForHandler, context: toolContext)
                 },
+                userNotesExecutor: { [weak self] request in
+                    await MainActor.run {
+                        guard let self else {
+                            return ToolCallExecutor.toolError(error: "unavailable", message: "User notes are unavailable.", tool: "user_notes")
+                        }
+                        return self.executeUserNotesTool(
+                            request, authorizedAtRequest: userNotesAuthorized,
+                            assistantID: assistantForHandler.id, context: toolContext
+                        )
+                    }
+                },
                 assistantFileExecutor: { [weak self] request in
                     await MainActor.run {
                         guard let self, !Task.isCancelled,
@@ -8793,28 +8557,19 @@ final class AppModel {
         }
 
         var receivedContent = false
-        var bufferedEvents: [ChatStreamEvent] = []
         for try await event in stream {
             try Task.checkCancellation()
             receivedContent = receivedContent || event.containsReplyContent
-            StreamDeliveryTrace.record(event: event, messageID: assistantMessage.id)
-            if assistant.streamOutput || event.deliversImmediately {
-                try appendStreamingEvent(event, conversationID: conversationID, messageID: assistantMessage.id)
-            } else {
-                bufferedEvents.append(event)
-            }
+            try appendStreamingEvent(
+                event, conversationID: conversationID, messageID: assistantMessage.id,
+                publishesContent: assistant.streamOutput || event.deliversImmediately
+            )
         }
 
         try Task.checkCancellation()
         if !receivedContent {
             throw AIChatServiceError.emptyResponse
         }
-        if !assistant.streamOutput {
-            for event in bufferedEvents {
-                try appendStreamingEvent(event, conversationID: conversationID, messageID: assistantMessage.id)
-            }
-        }
-
         guard var completed = try await finishSuccessfulStreaming(
             conversationID: conversationID,
             messageID: assistantMessage.id,
@@ -8934,18 +8689,11 @@ final class AppModel {
             assistantMessageID: activeStreamingMessageIDsByConversation[conversationID]
         )
         if let messageID = activeStreamingMessageIDsByConversation[conversationID] {
-            if StreamDeliveryTrace.isEnabled {
-                let rawUTF16 = rawStreamingTextByMessageID[messageID]?.utf16.count
-                let shownUTF16 = conversationMessageStore[conversationID]?
-                    .first(where: { $0.id == messageID })?
-                    .text.utf16.count
-                StreamDeliveryTrace.finish(
-                    messageID: messageID,
-                    rawUTF16: rawUTF16,
-                    shownUTF16: shownUTF16,
-                    reason: "clear_run"
-                )
-            }
+            streamingCheckpoints.remove(messageID)
+            streamingRevisions.removeValue(forKey: messageID)
+            checkpointedStreamingRevisions.removeValue(forKey: messageID)
+            preparedStreamingPayloads.removeValue(forKey: messageID)
+            bufferedStreamingMetadataByMessageID.removeValue(forKey: messageID)
             clearStreamingDisplayState(for: messageID)
             rawStreamingTextByMessageID.removeValue(forKey: messageID)
             pendingImageRequestsByMessageID.removeValue(forKey: messageID)
@@ -9236,27 +8984,18 @@ final class AppModel {
 
     private func filteredStreamingDisplayText(
         _ rawText: String
-    ) -> (text: String, codecDuration: TimeInterval, filterInputUTF16: Int?) {
-        let traceEnabled = StreamDeliveryTrace.isEnabled
-        let codecStartedAt = traceEnabled ? ProcessInfo.processInfo.systemUptime : 0
+    ) -> String {
         let safeRawText = Self.hidingTrailingControlMarkerPrefix(in: rawText)
         let reactionDisplayText = AIMessageReactionCodec.stripForDisplay(safeRawText)
         let generatedImageDisplayText = ExternalImageGenerationCodec.stripForDisplay(reactionDisplayText)
         let displayText = SearchImageSelectionCodec.stripForDisplay(generatedImageDisplayText)
-        let codecFinishedAt = traceEnabled ? ProcessInfo.processInfo.systemUptime : 0
-        return (
-            text: displayText,
-            codecDuration: codecFinishedAt - codecStartedAt,
-            filterInputUTF16: traceEnabled ? reactionDisplayText.utf16.count : nil
-        )
+        return displayText
     }
 
     private func scheduleStreamingTextDisplay(
         conversationID: UUID,
         messageID: UUID,
-        targetDisplayText: String,
-        codecDuration: TimeInterval,
-        filterInputUTF16: Int?
+        targetDisplayText: String
     ) {
         guard activeStreamingMessageIDsByConversation[conversationID] == messageID else {
             return
@@ -9268,13 +9007,6 @@ final class AppModel {
         if !streamDidPublishFirstVisibleTextMessageIDs.contains(messageID) {
             guard Self.hasVisibleStreamingText(targetDisplayText) else { return }
             streamDidPublishFirstVisibleTextMessageIDs.insert(messageID)
-            if let filterInputUTF16 {
-                StreamDeliveryTrace.recordDisplayFilter(
-                    messageID: messageID,
-                    inputUTF16: filterInputUTF16,
-                    outputUTF16: targetDisplayText.utf16.count
-                )
-            }
             let immediateDisplayText = Self.streamingDisplayPrefix(
                 targetDisplayText,
                 maxCharacters: Self.streamDisplayImmediateCharacterCount
@@ -9283,8 +9015,7 @@ final class AppModel {
                 conversationID: conversationID,
                 messageID: messageID,
                 displayText: immediateDisplayText,
-                publishedAt: .now,
-                codecDuration: codecDuration
+                publishedAt: .now
             )
             guard immediateDisplayText != targetDisplayText else { return }
         }
@@ -9344,15 +9075,8 @@ final class AppModel {
         }
 
         let filtered = filteredStreamingDisplayText(rawText)
-        let targetDisplayText = filtered.text
+        let targetDisplayText = filtered
         let currentDisplayText = conversationMessages[index].text
-        if let filterInputUTF16 = filtered.filterInputUTF16 {
-            StreamDeliveryTrace.recordDisplayFilter(
-                messageID: messageID,
-                inputUTF16: filterInputUTF16,
-                outputUTF16: targetDisplayText.utf16.count
-            )
-        }
         guard currentDisplayText != targetDisplayText else { return true }
 
         guard targetDisplayText.hasPrefix(currentDisplayText) else {
@@ -9362,8 +9086,7 @@ final class AppModel {
                 conversationID: conversationID,
                 messageID: messageID,
                 displayText: targetDisplayText,
-                publishedAt: .now,
-                codecDuration: filtered.codecDuration
+                publishedAt: .now
             )
             return true
         }
@@ -9392,8 +9115,7 @@ final class AppModel {
             conversationID: conversationID,
             messageID: messageID,
             displayText: nextDisplayText,
-            publishedAt: .now,
-            codecDuration: filtered.codecDuration
+            publishedAt: .now
         )
         return nextDisplayText == targetDisplayText
     }
@@ -9402,12 +9124,12 @@ final class AppModel {
         conversationID: UUID,
         messageID: UUID,
         displayText: String,
-        publishedAt: Date,
-        codecDuration: TimeInterval
+        publishedAt: Date
     ) {
         guard activeStreamingMessageIDsByConversation[conversationID] == messageID,
               var conversationMessages = conversationMessageStore[conversationID],
-              let index = conversationMessages.firstIndex(where: { $0.id == messageID }) else {
+              let index = conversationMessages.firstIndex(where: { $0.id == messageID }),
+              conversationMessages[index].status == .streaming else {
             return
         }
 
@@ -9422,21 +9144,9 @@ final class AppModel {
         }
         guard changed else { return }
 
-        let traceEnabled = StreamDeliveryTrace.isEnabled
-        let rebuildStartedAt = traceEnabled ? ProcessInfo.processInfo.systemUptime : 0
         conversationMessages[index].updatedAt = publishedAt
         conversationMessages[index].parts = Self.rebuiltParts(for: conversationMessages[index])
-        let rebuildFinishedAt = traceEnabled ? ProcessInfo.processInfo.systemUptime : 0
         conversationMessageStore[conversationID] = conversationMessages
-        if traceEnabled {
-            StreamDeliveryTrace.published(
-                messageID: messageID,
-                shownUTF16: displayText.utf16.count,
-                codecDuration: codecDuration,
-                rebuildDuration: rebuildFinishedAt - rebuildStartedAt
-            )
-        }
-        scheduleStreamPersistence()
     }
 
     private func clearStreamingDisplayState(for messageID: UUID) {
@@ -9498,9 +9208,7 @@ final class AppModel {
             scheduleStreamingTextDisplay(
                 conversationID: conversationID,
                 messageID: messageID,
-                targetDisplayText: filtered.text,
-                codecDuration: filtered.codecDuration,
-                filterInputUTF16: filtered.filterInputUTF16
+                targetDisplayText: filtered
             )
         case .unchanged:
             break
@@ -9545,10 +9253,14 @@ final class AppModel {
         )
     }
 
-    private func appendStreamingEvent(_ event: ChatStreamEvent, conversationID: UUID, messageID: UUID) throws {
+    private func appendStreamingEvent(
+        _ event: ChatStreamEvent, conversationID: UUID, messageID: UUID,
+        publishesContent: Bool = true
+    ) throws {
         guard activeStreamingMessageIDsByConversation[conversationID] == messageID,
               var conversationMessages = conversationMessageStore[conversationID],
-              let index = conversationMessages.firstIndex(where: { $0.id == messageID }) else {
+              let index = conversationMessages.firstIndex(where: { $0.id == messageID }),
+              conversationMessages[index].status == .streaming else {
             return
         }
 
@@ -9556,13 +9268,16 @@ final class AppModel {
 
         switch event {
         case .text(let chunk):
+            guard !chunk.isEmpty else { return }
             rawStreamingTextByMessageID[
                 messageID,
                 default: conversationMessages[index].text
             ].append(chunk)
+            markStreamingProgressDirty(messageID)
             // Keep receiving raw text while hidden. Resume or finalization will
             // filter it when needed, including before the first visible prefix.
-            guard streamDisplaySuspensionLedgersByMessageID[messageID]?.isSuspended != true else {
+            guard publishesContent,
+                  streamDisplaySuspensionLedgersByMessageID[messageID]?.isSuspended != true else {
                 return
             }
             guard !streamDidPublishFirstVisibleTextMessageIDs.contains(messageID) else {
@@ -9577,23 +9292,15 @@ final class AppModel {
                 return
             }
             let rawText = rawStreamingTextByMessageID[messageID] ?? ""
-            let traceEnabled = StreamDeliveryTrace.isEnabled
-            let detailStartedAt = traceEnabled ? ProcessInfo.processInfo.systemUptime : 0
             let filtered = filteredStreamingDisplayText(rawText)
-            let detailFinishedAt = traceEnabled ? ProcessInfo.processInfo.systemUptime : 0
             scheduleStreamingTextDisplay(
                 conversationID: conversationID,
                 messageID: messageID,
-                targetDisplayText: filtered.text,
-                codecDuration: filtered.codecDuration,
-                filterInputUTF16: filtered.filterInputUTF16
-            )
-            StreamDeliveryTrace.recordTextPipeline(
-                messageID: messageID,
-                detailBuild: detailFinishedAt - detailStartedAt
+                targetDisplayText: filtered
             )
             return
         case .reasoning(let chunk):
+            mergeBufferedStreamingMetadata(into: &conversationMessages[index])
             if let lastSegment = conversationMessages[index].reasoningSegments.indices.last,
                conversationMessages[index].reasoningSegments[lastSegment].finishedAt == nil {
                 conversationMessages[index].reasoningSegments[lastSegment].text.append(chunk)
@@ -9603,6 +9310,7 @@ final class AppModel {
                 )
             }
         case .usage(let streamUsage):
+            mergeBufferedStreamingMetadata(into: &conversationMessages[index])
             var usage = conversationMessages[index].tokenUsage ?? TokenUsage()
             if let value = streamUsage.promptTokens { usage.promptTokens = value }
             if let value = streamUsage.completionTokens { usage.completionTokens = value }
@@ -9614,6 +9322,7 @@ final class AppModel {
             }
             conversationMessages[index].tokenUsage = usage
         case .toolCalls(let calls):
+            mergeBufferedStreamingMetadata(into: &conversationMessages[index])
             for call in calls {
                 let toolEvent = ToolEvent(
                     providerEventID: call.id,
@@ -9631,6 +9340,7 @@ final class AppModel {
                 conversationMessages[index].toolEvents.append(toolEvent)
             }
         case .toolResults(let results):
+            mergeBufferedStreamingMetadata(into: &conversationMessages[index])
             for result in results {
                 if let idx = conversationMessages[index].toolEvents.firstIndex(where: { $0.providerEventID == result.id }) {
                     conversationMessages[index].toolEvents[idx].resultText = result.content
@@ -9650,9 +9360,20 @@ final class AppModel {
         }
 
         conversationMessages[index].updatedAt = .now
-        conversationMessages[index].parts = Self.rebuiltParts(for: conversationMessages[index])
-        conversationMessageStore[conversationID] = conversationMessages
-        scheduleStreamPersistence()
+        if publishesContent {
+            conversationMessages[index].parts = Self.rebuiltParts(for: conversationMessages[index])
+            conversationMessageStore[conversationID] = conversationMessages
+        } else {
+            bufferedStreamingMetadataByMessageID[messageID] = conversationMessages[index]
+        }
+        markStreamingProgressDirty(messageID)
+    }
+
+    private func mergeBufferedStreamingMetadata(into message: inout ChatMessage) {
+        guard let buffered = bufferedStreamingMetadataByMessageID[message.id] else { return }
+        message.reasoningSegments = buffered.reasoningSegments
+        message.toolEvents = buffered.toolEvents
+        message.tokenUsage = buffered.tokenUsage
     }
 
     private func registerSearchImageCandidates(
@@ -9668,6 +9389,7 @@ final class AppModel {
             existing.append(candidate)
         }
         searchImageCandidatesByMessageID[messageID] = existing
+        preparedStreamingPayloads.removeValue(forKey: messageID)
     }
 
     private func processSearchImageRequests(
@@ -11881,11 +11603,16 @@ final class AppModel {
         // Completion, failure, and cancellation all bypass the display buffer. Cancel its
         // cadence first, then publish the parsed final text in this same MainActor turn.
         if let messageID = resolvedMessageID {
+            streamingCheckpoints.remove(messageID)
             clearStreamingDisplayState(for: messageID)
         }
         defer {
             if let messageID = resolvedMessageID {
                 rawStreamingTextByMessageID.removeValue(forKey: messageID)
+                streamingRevisions.removeValue(forKey: messageID)
+                checkpointedStreamingRevisions.removeValue(forKey: messageID)
+                preparedStreamingPayloads.removeValue(forKey: messageID)
+                bufferedStreamingMetadataByMessageID.removeValue(forKey: messageID)
             }
             if !defersPersistence,
                let messageID = resolvedMessageID,
@@ -11899,6 +11626,7 @@ final class AppModel {
             return nil
         }
         let rawText = rawStreamingTextByMessageID[messageID] ?? conversationMessages[index].text
+        mergeBufferedStreamingMetadata(into: &conversationMessages[index])
         // Partial control-marker suppression is display-only. Final persistence keeps
         // the 4582 parsing contract so literal trailing "<" text is never discarded.
         let reactionResult = AIMessageReactionCodec.parse(rawText)
@@ -11913,14 +11641,6 @@ final class AppModel {
             ? searchImageCandidates.prefix(4).map { SearchImageRequest(candidate: $0) }
             : searchImageResult.requests
         conversationMessages[index].text = searchImageResult.displayText
-        if StreamDeliveryTrace.isEnabled {
-            StreamDeliveryTrace.finish(
-                messageID: messageID,
-                rawUTF16: rawText.utf16.count,
-                shownUTF16: searchImageResult.displayText.utf16.count,
-                reason: cancelled ? "cancelled" : "complete"
-            )
-        }
         if !cancelled, !imageResult.requests.isEmpty {
             pendingImageRequestsByMessageID[messageID] = imageResult.requests
         } else {
@@ -11935,12 +11655,13 @@ final class AppModel {
             &conversationMessages[index],
             failureDescription: cancelled ? "已停止图片回复" : failureDescription
         )
-        if removeIfEmpty && Self.isEmptyAssistantResponse(conversationMessages[index]) {
+        conversationMessages[index].streamingRevision = (streamingRevisions[messageID] ?? 0) + 1
+        if removeIfEmpty && failureDescription == nil && Self.isEmptyAssistantResponse(conversationMessages[index]) {
             removedVersionGroupKey = conversationMessages[index].versionGroupKey
             conversationMessages.remove(at: index)
         } else {
             conversationMessages[index].updatedAt = .now
-            conversationMessages[index].status = cancelled ? .cancelled : .complete
+            conversationMessages[index].status = cancelled ? .cancelled : (failureDescription == nil ? .complete : .failed)
             if let lastSegment = conversationMessages[index].reasoningSegments.indices.last,
                conversationMessages[index].reasoningSegments[lastSegment].finishedAt == nil {
                 conversationMessages[index].reasoningSegments[lastSegment].finishedAt = .now
@@ -11966,14 +11687,12 @@ final class AppModel {
             )
         }
         touchConversation(conversationID)
-        if !cancelled, !defersPersistence, let completedMessage {
+        if !defersPersistence, let completedMessage {
             IOSBackgroundGenerationManager.shared.stageCompletedMessage(
                 runID: messageID,
                 message: completedMessage
             )
         }
-        persistenceTask?.cancel()
-        persistenceTask = nil
         if defersPersistence {
             return completedMessage
         }
@@ -11997,12 +11716,12 @@ final class AppModel {
         completedMessage: ChatMessage?,
         conversationID: UUID
     ) {
-        if didSave, !cancelled, let completedMessage {
+        if didSave, let completedMessage {
             IOSBackgroundGenerationManager.shared.markConversationStoreCommitted(
                 runID: messageID,
                 message: completedMessage
             )
-            if preferences.ttsAutoPlayAssistantReplies {
+            if !cancelled, completedMessage.status == .complete, preferences.ttsAutoPlayAssistantReplies {
                 DeviceTTSService.speak(
                     text: completedMessage.text,
                     messageID: completedMessage.id,
@@ -12010,7 +11729,7 @@ final class AppModel {
                 )
             }
         }
-        if !cancelled, completedMessage != nil {
+        if !cancelled, completedMessage?.status == .complete {
             performGenerateHaptic()
             maybeGenerateTitle(conversationID: conversationID)
         }
@@ -12206,17 +11925,95 @@ final class AppModel {
         }
     }
 
-    private func scheduleStreamPersistence() {
-        let delay = streamPersistenceDelay
-        persistenceTask?.cancel()
-        persistenceTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: delay)
-            } catch {
-                return
+    private func markStreamingProgressDirty(_ messageID: UUID) {
+        streamingRevisions[messageID, default: 0] += 1
+        streamingCheckpoints.markDirty(messageID)
+    }
+
+    /// Read the received payload, independently of a paused/lagging text reveal.
+    /// This value is never published back to the visible message store.
+    private func streamingPersistenceMessage(_ messageID: UUID) -> ChatMessage? {
+        guard let conversationID = activeStreamingMessageIDsByConversation.first(where: { $0.value == messageID })?.key,
+              var message = conversationMessageStore[conversationID]?.first(where: { $0.id == messageID }) else { return nil }
+        guard message.status == .streaming else { return message }
+        mergeBufferedStreamingMetadata(into: &message)
+        let revision = max(1, streamingRevisions[messageID] ?? 0)
+        if let prepared = preparedStreamingPayloads[messageID], prepared.revision == revision {
+            message.text = prepared.text
+            message.parts = prepared.parts
+        } else {
+            let rawText = rawStreamingTextByMessageID[messageID] ?? message.text
+            // Every supported control marker requires a literal '<'. Plain
+            // prose can keep the same whitespace normalization without three
+            // separate marker scans over an unrelated active reply on send.
+            if (rawText as NSString).range(of: "<", options: .literal).location == NSNotFound {
+                message.text = ExternalImageGenerationCodec.cleanedDisplayText(rawText)
+            } else {
+                let reaction = AIMessageReactionCodec.parse(rawText)
+                let image = ExternalImageGenerationCodec.parse(reaction.content)
+                message.text = SearchImageSelectionCodec.parse(
+                    image.displayText, candidates: searchImageCandidatesByMessageID[messageID] ?? []
+                ).displayText
             }
-            guard let self else { return }
-            _ = await self.saveWithoutBlockingMain()
+            message.parts = Self.rebuiltParts(for: message)
+            // Reuse the unchanged payload, including part identities, across
+            // journal and user-action saves. Otherwise another chat's long
+            // reply would be re-parsed and rewritten despite no new content.
+            preparedStreamingPayloads[messageID] = (revision, message.text, message.parts)
+        }
+        message.streamingRevision = revision
+        return message
+    }
+
+    private func writeStreamingCheckpoints(_ messageIDs: Set<UUID>) async {
+        for id in messageIDs {
+            // Re-evaluate ownership after every await: another reply may have
+            // finished, been deleted or been replaced while this lane waited.
+            guard let message = streamingPersistenceMessage(id), message.status == .streaming else { continue }
+            let saved = await IOSBackgroundGenerationManager.shared.stageCheckpointWithoutBlockingMain(
+                runID: id, message: message
+            )
+            if saved, streamingRevisions[id] != nil, let revision = message.streamingRevision {
+                checkpointedStreamingRevisions[id] = max(checkpointedStreamingRevisions[id] ?? 0, revision)
+            }
+        }
+    }
+
+    func flushStreamingProgress() {
+        // A failed attempt remains dirty by revision, even if no more tokens
+        // arrive. Retry on a lifecycle event, without an idle retry timer.
+        for (id, revision) in streamingRevisions
+        where revision > (checkpointedStreamingRevisions[id] ?? 0) {
+            streamingCheckpoints.markDirty(id)
+        }
+        guard streamingCheckpoints.hasWork else { return }
+        if UIApplication.shared.applicationState != .active, checkpointBackgroundTask == .invalid {
+            checkpointBackgroundTaskGeneration &+= 1
+            let generation = checkpointBackgroundTaskGeneration
+            checkpointBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "MoccaCheckpoint") { [weak self] in
+                Task { @MainActor in
+                    guard let self, self.checkpointBackgroundTaskGeneration == generation else { return }
+                    self.endCheckpointBackgroundTask()
+                }
+            }
+        }
+        streamingCheckpoints.flush()
+    }
+
+    private func endCheckpointBackgroundTask() {
+        guard checkpointBackgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(checkpointBackgroundTask)
+        checkpointBackgroundTask = .invalid
+    }
+
+    private func stopStreamingForStoreRecovery() {
+        streamingCheckpoints.cancelPending()
+        for conversationID in Array(streamingConversationIDs) {
+            streamingTasksByConversation[conversationID]?.cancel()
+            if let id = activeStreamingMessageIDsByConversation[conversationID] {
+                IOSBackgroundGenerationManager.shared.abandonForStoreRecovery(runID: id)
+            }
+            clearStreamingRun(for: conversationID)
         }
     }
 
@@ -12353,6 +12150,12 @@ final class AppModel {
     }
 
     func persistableConversationSnapshot() -> ConversationSnapshot {
+        var messagesByConversation = self.messagesByConversation
+        for id in activeStreamingMessageIDsByConversation.values {
+            guard let message = streamingPersistenceMessage(id),
+                  let index = messagesByConversation[message.conversationID]?.firstIndex(where: { $0.id == id }) else { continue }
+            messagesByConversation[message.conversationID]?[index] = message
+        }
         let omittedDraftIDs = Set(
             unsavedDraftConversationIDs.filter {
                 (conversationMessageStore[$0] ?? []).isEmpty
@@ -12391,7 +12194,7 @@ final class AppModel {
 /// Synthetic in-memory messages for the real Mocca MessageRow. No provider,
 /// attachment, URL, or remote citation is needed by these rendering fixtures.
 enum NativeReadingFixtures {
-    static let testBundleID = "com.mocca.local.history-native-reading5075"
+    static let testBundleID = "com.mocca.lab.streamheight5157"
     static let launchFlag = "-previewNativeReadingFixture"
 
     enum Name: String, CaseIterable {
