@@ -1,6 +1,7 @@
 import ActivityKit
 import BackgroundTasks
 import Foundation
+import Intents
 import UIKit
 import UserNotifications
 
@@ -73,7 +74,12 @@ enum ExternalImageGenerationCodec {
         return cleanedDisplayText(String(parsed[..<markerStart]))
     }
 
-    private static func cleanedDisplayText(_ text: String) -> String {
+    static func cleanedDisplayText(_ text: String) -> String {
+        // A single line only needs the final trim. Use the same newline set
+        // as components below, including Unicode line/paragraph separators.
+        if (text as NSString).rangeOfCharacter(from: .newlines).location == NSNotFound {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let lines = text.components(separatedBy: .newlines)
         var result: [String] = []
         var previousBlank = false
@@ -408,6 +414,97 @@ private final class IOS26ContinuedGenerationLease: ContinuedGenerationLease {
     }
 }
 
+/// Captured when this reply starts, independently of the selected conversation.
+/// Keep the small image bytes in memory so a later avatar edit or device lock
+/// cannot change the sender of a reply that is already being generated.
+struct AssistantNotificationSender: Sendable {
+    let identifier: String
+    let name: String
+    let imageData: Data?
+
+    @MainActor
+    init(profile: AssistantProfile, accentColor: UIColor) {
+        identifier = "mocca-assistant:\(profile.id.uuidString)"
+        name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? L10n.lookup("助手") : profile.name
+        imageData = Self.avatar(profile: profile, accentColor: accentColor).pngData()
+    }
+
+    @MainActor
+    private static func avatar(profile: AssistantProfile, accentColor: UIColor) -> UIImage {
+        let size: CGFloat = 128
+        let rect = CGRect(x: 0, y: 0, width: size, height: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: rect.size, format: format).image { context in
+            UIBezierPath(ovalIn: rect).addClip()
+            UIColor.systemBackground.setFill()
+            context.fill(rect)
+            if let image = AssistantMediaStore.image(for: profile.avatar)
+                ?? profile.assetAvatarName.flatMap({ UIImage(named: $0) }),
+               image.size.width > 0, image.size.height > 0 {
+                let scale = max(size / image.size.width, size / image.size.height)
+                let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+                image.draw(in: CGRect(x: (size - target.width) / 2, y: (size - target.height) / 2,
+                                      width: target.width, height: target.height))
+            } else {
+                accentColor.withAlphaComponent(profile.emojiAvatar == nil ? 0.12 : 0.11).setFill()
+                context.fill(rect)
+                if let emoji = profile.emojiAvatar {
+                    let text = emoji as NSString
+                    let attributes: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: size * 0.5)]
+                    let textSize = text.size(withAttributes: attributes)
+                    text.draw(at: CGPoint(x: (size - textSize.width) / 2, y: (size - textSize.height) / 2),
+                              withAttributes: attributes)
+                } else {
+                    UIImage(named: "DefaultAssistantAvatar")?
+                        .withTintColor(accentColor, renderingMode: .alwaysOriginal)
+                        .draw(in: rect.insetBy(dx: size * 0.16, dy: size * 0.16))
+                }
+            }
+        }
+    }
+}
+
+@MainActor
+enum AssistantReplyNotification {
+    static func intent(sender: AssistantNotificationSender, conversationID: UUID, body: String) -> INSendMessageIntent {
+        let person = INPerson(
+            personHandle: INPersonHandle(value: sender.identifier, type: .unknown),
+            nameComponents: nil, displayName: sender.name,
+            image: sender.imageData.map { INImage(imageData: $0) },
+            contactIdentifier: nil, customIdentifier: sender.identifier
+        )
+        return INSendMessageIntent(
+            recipients: nil, outgoingMessageType: .outgoingMessageText, content: body,
+            speakableGroupName: nil, conversationIdentifier: conversationID.uuidString,
+            serviceName: nil, sender: person, attachments: nil
+        )
+    }
+
+    static func content(sender: AssistantNotificationSender?, title: String, body: String,
+                        conversationID: UUID, notificationID: UUID) async -> UNNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        guard let sender else { return content }
+        let intent = intent(sender: sender, conversationID: conversationID, body: body)
+        let interaction = INInteraction(intent: intent, response: nil)
+        interaction.identifier = notificationID.uuidString
+        interaction.direction = .incoming
+        do {
+            try await interaction.donate()
+            // Return the system-decorated content directly, without rebuilding
+            // it and losing the communication avatar metadata.
+            return try content.updating(from: intent)
+        } catch {
+            // Decoration is optional; it must never suppress the reply alert.
+            return content
+        }
+    }
+}
+
 @MainActor
 final class IOSBackgroundGenerationManager {
     static let shared = IOSBackgroundGenerationManager()
@@ -424,6 +521,7 @@ final class IOSBackgroundGenerationManager {
 
     private struct Run {
         let assistantName: String
+        let notificationSender: AssistantNotificationSender?
         let conversationID: UUID
         let detail: String
         var activityID: String?
@@ -435,7 +533,9 @@ final class IOSBackgroundGenerationManager {
     }
 
     private var runs: [UUID: Run] = [:]
+    private var pendingNotificationCount = 0
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    var checkpointProgress: (() -> Void)?
 
     private init() {}
 
@@ -448,14 +548,15 @@ final class IOSBackgroundGenerationManager {
         }
     }
 
-    func start(runID: UUID, assistantName: String, conversationID: UUID) {
+    func start(runID: UUID, assistant: AssistantProfile, accentColor: UIColor, conversationID: UUID) {
         let settings = IOSBackgroundGenerationPersistence.load()
-        guard settings.enabled else { return }
         guard runs[runID] == nil else { return }
         var run = Run(
-            assistantName: assistantName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            assistantName: assistant.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? L10n.lookup("助手")
-                : assistantName,
+                : assistant.name,
+            notificationSender: settings.enabled && settings.notificationsEnabled
+                ? AssistantNotificationSender(profile: assistant, accentColor: accentColor) : nil,
             conversationID: conversationID,
             detail: L10n.lookup("正在生成回复…"),
             activityID: nil,
@@ -466,7 +567,7 @@ final class IOSBackgroundGenerationManager {
             continuedGenerationLease: nil
         )
         do {
-            run.completionWriter = try PendingGenerationCompletionJournal.makeWriter(
+            run.completionWriter = try PendingGenerationCompletionJournal.makeDeferredWriter(
                 runID: runID,
                 conversationID: conversationID
             )
@@ -477,6 +578,9 @@ final class IOSBackgroundGenerationManager {
             )
         }
         runs[runID] = run
+        // Recovery records protect foreground streams too. Optional background
+        // execution, live activities and notifications retain their own gate.
+        guard settings.enabled else { return }
         beginBackgroundTaskIfNeeded()
         if settings.taskRecoveryEnabled { scheduleBackgroundTasks() }
         if settings.liveActivityEnabled { startLiveActivity(runID: runID) }
@@ -487,6 +591,31 @@ final class IOSBackgroundGenerationManager {
 
     func recordProgress(runID: UUID) {
         runs[runID]?.continuedGenerationLease?.recordProgress()
+    }
+
+    func stageCheckpointWithoutBlockingMain(runID: UUID, message: ChatMessage) async -> Bool {
+        guard let run = runs[runID], message.id == runID,
+              message.conversationID == run.conversationID,
+              let writer = run.completionWriter else { return false }
+        let result = await withCheckedContinuation { continuation in
+            writer.enqueueCheckpoint(message) { continuation.resume(returning: $0) }
+        }
+        guard var current = runs[runID], current.completionWriter === writer else { return false }
+        switch result {
+        case .success:
+            // Completion may have passed this suspended caller. Never replace
+            // its durable terminal evidence with an older progress snapshot.
+            if current.journaledMessage == nil
+                || (current.journaledMessage?.status == .streaming
+                    && (message.streamingRevision ?? 0) > (current.journaledMessage?.streamingRevision ?? 0)) {
+                current.journaledMessage = message
+                runs[runID] = current
+            }
+            return true
+        case .failure(let error):
+            NSLog("[generation-journal] checkpoint failed: %@", error.localizedDescription)
+            return false
+        }
     }
 
     @discardableResult
@@ -553,7 +682,7 @@ final class IOSBackgroundGenerationManager {
     ) {
         guard let run = runs.removeValue(forKey: runID) else { return }
         let settings = IOSBackgroundGenerationPersistence.load()
-        let body = run.activityID != nil || settings.notificationsEnabled
+        let body = run.activityID != nil || (settings.enabled && settings.notificationsEnabled)
             ? Self.notificationText(notificationMessage, limit: 120) : ""
         let storeContainsFinalMessage =
             run.committedMessage == completedMessage
@@ -566,14 +695,14 @@ final class IOSBackgroundGenerationManager {
         )
         if completionIsDurable {
             finishLiveActivity(run: run, detail: body.isEmpty ? L10n.lookup("回复已完成") : body)
-            if settings.notificationsEnabled, !body.isEmpty {
-                sendNotification(title: run.assistantName, body: body)
+            if settings.enabled, settings.notificationsEnabled, !body.isEmpty {
+                sendNotification(run: run, body: body)
             }
         } else {
             let warning = L10n.lookup("回复已生成，但尚未安全保存，请解锁后返回 App")
             finishLiveActivity(run: run, detail: warning)
-            if settings.notificationsEnabled {
-                sendNotification(title: run.assistantName, body: warning)
+            if settings.enabled, settings.notificationsEnabled {
+                sendNotification(run: run, body: warning)
             }
         }
         completeContinuedProcessing(for: run, success: completionIsDurable)
@@ -583,10 +712,11 @@ final class IOSBackgroundGenerationManager {
     func fail(runID: UUID, partialMessage: String) {
         guard let run = runs.removeValue(forKey: runID) else { return }
         let settings = IOSBackgroundGenerationPersistence.load()
-        let body = run.activityID != nil || settings.notificationsEnabled
+        let body = run.activityID != nil || (settings.enabled && settings.notificationsEnabled)
             ? Self.notificationText(partialMessage, limit: 120) : ""
         let completionIsDurable =
-            run.journaledMessage != nil || run.committedMessage != nil
+            run.journaledMessage.map { $0.status != .streaming } == true
+            || run.committedMessage != nil
         finalizePersistenceArtifacts(
             for: run,
             storeContainsFinalMessage:
@@ -598,17 +728,17 @@ final class IOSBackgroundGenerationManager {
         )
         if completionIsDurable {
             finishLiveActivity(run: run, detail: body.isEmpty ? L10n.lookup("回复已中断") : body)
-            if settings.notificationsEnabled {
+            if settings.enabled, settings.notificationsEnabled {
                 sendNotification(
-                    title: run.assistantName,
+                    run: run,
                     body: body.isEmpty ? L10n.lookup("回复已中断") : body
                 )
             }
         } else {
             let warning = L10n.lookup("回复已中断，且未能安全保存，请解锁后返回 App")
             finishLiveActivity(run: run, detail: warning)
-            if settings.notificationsEnabled {
-                sendNotification(title: run.assistantName, body: warning)
+            if settings.enabled, settings.notificationsEnabled {
+                sendNotification(run: run, body: warning)
             }
         }
         completeContinuedProcessing(for: run, success: false)
@@ -617,8 +747,20 @@ final class IOSBackgroundGenerationManager {
 
     func cancel(runID: UUID) {
         guard let run = runs.removeValue(forKey: runID) else { return }
-        run.completionWriter?.closeAndRemoveFile()
+        finalizePersistenceArtifacts(
+            for: run,
+            storeContainsFinalMessage: run.committedMessage != nil
+                && run.committedMessage == run.journaledMessage
+        )
         finishLiveActivity(run: run, detail: L10n.lookup("已停止生成"))
+        completeContinuedProcessing(for: run, success: false)
+        endBackgroundTaskIfIdle()
+    }
+
+    func abandonForStoreRecovery(runID: UUID) {
+        guard let run = runs.removeValue(forKey: runID) else { return }
+        run.completionWriter?.closeKeepingFile()
+        finishLiveActivity(run: run, detail: L10n.lookup("回复已中断"))
         completeContinuedProcessing(for: run, success: false)
         endBackgroundTaskIfIdle()
     }
@@ -655,12 +797,13 @@ final class IOSBackgroundGenerationManager {
 
     private func expireBackgroundTask() {
         guard backgroundTask != .invalid else { return }
+        if !runs.isEmpty { checkpointProgress?() }
         UIApplication.shared.endBackgroundTask(backgroundTask)
         backgroundTask = .invalid
     }
 
     private func endBackgroundTaskIfIdle() {
-        guard runs.isEmpty else { return }
+        guard runs.isEmpty, pendingNotificationCount == 0 else { return }
         expireBackgroundTask()
     }
 
@@ -742,6 +885,7 @@ final class IOSBackgroundGenerationManager {
     private func continuedProcessingExpired(runID: UUID, identifier: String) {
         guard var run = runs[runID],
               run.continuedProcessingIdentifier == identifier else { return }
+        checkpointProgress?()
         run.continuedGenerationLease?.complete(success: false)
         run.continuedGenerationLease = nil
         run.continuedProcessingIdentifier = nil
@@ -771,7 +915,7 @@ final class IOSBackgroundGenerationManager {
     ) {
         guard let writer = run.completionWriter else { return }
 
-        if storeContainsFinalMessage || run.journaledMessage == nil {
+        if storeContainsFinalMessage || !writer.containsRecoveryMessage {
             writer.closeAndRemoveFile()
         } else {
             // The journal contains a newer completion than the main
@@ -791,13 +935,29 @@ final class IOSBackgroundGenerationManager {
         try? BGTaskScheduler.shared.submit(processing)
     }
 
-    private func sendNotification(title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+    private func sendNotification(run: Run, body: String) {
+        let sender = run.notificationSender
+        let title = run.assistantName
+        let conversationID = run.conversationID
+        let notificationID = UUID()
+        pendingNotificationCount += 1
+        beginBackgroundTaskIfNeeded()
+        Task {
+            defer {
+                pendingNotificationCount -= 1
+                endBackgroundTaskIfIdle()
+            }
+            let content = await AssistantReplyNotification.content(
+                sender: sender, title: title, body: body,
+                conversationID: conversationID, notificationID: notificationID
+            )
+            let request = UNNotificationRequest(identifier: notificationID.uuidString, content: content, trigger: nil)
+            do {
+                try await UNUserNotificationCenter.current().add(request)
+            } catch {
+                NSLog("[background-generation] notification delivery failed: %@", error.localizedDescription)
+            }
+        }
     }
 
     private func startLiveActivity(runID: UUID) {

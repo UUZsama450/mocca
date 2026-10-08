@@ -5,37 +5,6 @@ import SwiftUI
 import UIKit
 import WebKit
 
-private enum MessageTextLayoutTrace {
-    static let isEnabled = ProcessInfo.processInfo.arguments.contains(
-        "-diagnoseMessageTextLayout"
-    )
-
-    static func log(_ message: @autoclosure () -> String) {
-        guard isEnabled else { return }
-        NSLog("[message-text-layout] %@", message())
-    }
-
-    static func rect(_ rect: CGRect) -> String {
-        guard !rect.isNull else { return "null" }
-        guard !rect.isInfinite else { return "infinite" }
-        return String(
-            format: "{x=%.1f y=%.1f w=%.1f h=%.1f}",
-            rect.origin.x,
-            rect.origin.y,
-            rect.size.width,
-            rect.size.height
-        )
-    }
-
-    static func range(_ range: NSRange) -> String {
-        "{\(range.location),\(range.length)}"
-    }
-
-    static func objectToken(_ object: AnyObject) -> String {
-        String(describing: ObjectIdentifier(object))
-    }
-}
-
 @MainActor
 private final class UnifiedTextMeasurementCache {
     static let shared = UnifiedTextMeasurementCache(capacity: 256)
@@ -705,18 +674,6 @@ struct MessageMarkdownView: View {
             return nil
         }
         let prose = compactProseForWidthMeasurement
-        if MessageTextLayoutTrace.isEnabled {
-            let tickCount = text.reduce(into: 0) { count, character in
-                if character == "`" { count += 1 }
-            }
-            MessageTextLayoutTrace.log(
-                "USER_BUBBLE_ROUTE compact=\(prose != nil)"
-                    + " utf16=\((text as NSString).length)"
-                    + " markdown=\(rendersMarkdown)"
-                    + " blocks=\(blocks.count)"
-                    + " ticks=\(tickCount)"
-            )
-        }
         guard let prose else { return nil }
         let uiFont = AppFontStore.uiFont(postScriptName: fontName, size: fontSize)
         return UserMessageCompactProseConfiguration(
@@ -1271,7 +1228,6 @@ private struct UserMessageCompactProseLayout: Layout {
         var availableWidth: CGFloat = -1
         var childWidth: CGFloat = 0
         var measuredSize: CGSize = .zero
-        var didLogPlacement = false
     }
 
     let maximumWidth: CGFloat
@@ -1305,16 +1261,6 @@ private struct UserMessageCompactProseLayout: Layout {
         if naturalSize.width <= availableWidth + pixel {
             childWidth = min(availableWidth, naturalSize.width)
             measuredSize = naturalSize
-            if MessageTextLayoutTrace.isEnabled {
-                MessageTextLayoutTrace.log(
-                    "USER_BUBBLE_LAYOUT branch=natural"
-                        + " utf16=\((configuration.text as NSString).length)"
-                        + " proposalW=\(Self.number(proposedWidth))"
-                        + " availableW=\(Self.number(availableWidth))"
-                        + " natural=\(Self.size(naturalSize))"
-                        + " selected=\(Self.size(measuredSize))"
-                )
-            }
         } else {
             let maximumSize = subview.sizeThatFits(
                 ProposedViewSize(width: availableWidth, height: nil)
@@ -1334,30 +1280,12 @@ private struct UserMessageCompactProseLayout: Layout {
                 childWidth = availableWidth
                 measuredSize = CGSize(width: availableWidth, height: maximumSize.height)
             }
-            if MessageTextLayoutTrace.isEnabled {
-                let selection = childWidth == candidateWidth ? "candidate" : "maximum"
-                MessageTextLayoutTrace.log(
-                    "USER_BUBBLE_LAYOUT branch=wrapped"
-                        + " utf16=\((configuration.text as NSString).length)"
-                        + " proposalW=\(Self.number(proposedWidth))"
-                        + " availableW=\(Self.number(availableWidth))"
-                        + " natural=\(Self.size(naturalSize))"
-                        + " maximum=\(Self.size(maximumSize))"
-                        + " candidateSource=swiftUIUsedWidth"
-                        + " candidateW=\(Self.number(candidateWidth))"
-                        + " candidate=\(Self.size(candidateSize))"
-                        + " preservesHeight=\(preservesHeight)"
-                        + " selection=\(selection)"
-                        + " selected=\(Self.size(measuredSize))"
-                )
-            }
         }
 
         cache.signature = signature
         cache.availableWidth = availableWidth
         cache.childWidth = childWidth
         cache.measuredSize = measuredSize
-        cache.didLogPlacement = false
         return measuredSize
     }
 
@@ -1368,15 +1296,6 @@ private struct UserMessageCompactProseLayout: Layout {
         cache: inout Cache
     ) {
         guard let subview = subviews.first else { return }
-        if MessageTextLayoutTrace.isEnabled, !cache.didLogPlacement {
-            MessageTextLayoutTrace.log(
-                "USER_BUBBLE_PLACE"
-                    + " utf16=\((configuration.text as NSString).length)"
-                    + " bounds=\(Self.size(bounds.size))"
-                    + " childW=\(Self.number(cache.childWidth))"
-            )
-            cache.didLogPlacement = true
-        }
         subview.place(
             at: bounds.origin,
             anchor: .topLeading,
@@ -1384,14 +1303,6 @@ private struct UserMessageCompactProseLayout: Layout {
         )
     }
 
-    private static func number(_ value: CGFloat?) -> String {
-        guard let value else { return "nil" }
-        return String(format: "%.2f", value)
-    }
-
-    private static func size(_ value: CGSize) -> String {
-        "\(number(value.width))x\(number(value.height))"
-    }
 }
 
 private enum UnifiedTextWidthPolicy {
@@ -1629,16 +1540,19 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
         width: CGFloat,
         coordinator: Coordinator
     ) -> CGSize {
+        StreamLayoutWorkProbe.hit("text.measure.request")
         updateHorizontalRuleAttachments(in: textView, attachments: coordinator.horizontalRuleAttachments, width: width)
 
         let displayScale = max(1, textView.traitCollection.displayScale)
         let pixelWidth = Int((width * displayScale).rounded())
         let cacheKey = "\(renderSignature)|width:\(pixelWidth)|scale:\(displayScale)"
         if let localSize = coordinator.measuredLayoutSizes[cacheKey] {
+            StreamLayoutWorkProbe.hit("text.measure.localHit")
             return localSize
         }
         if usesSharedMeasurementCache,
            let sharedSize = UnifiedTextMeasurementCache.shared.value(for: cacheKey) {
+            StreamLayoutWorkProbe.hit("text.measure.sharedHit")
             coordinator.measuredLayoutSizes[cacheKey] = sharedSize
             return sharedSize
         }
@@ -1646,6 +1560,7 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
         // Measure on a detached TextKit stack. The represented UITextView belongs
         // to SwiftUI, so sizeThatFits must not mutate its bounds or force its
         // attached layout/drawing tree through a full-document pass.
+        StreamLayoutWorkProbe.hit("text.measure.miss")
         let measurementStartedAt = ProcessInfo.processInfo.systemUptime
         let measurementStorage = NSTextStorage(attributedString: textView.attributedText)
         let measurementLayoutManager = NSLayoutManager()
@@ -1672,17 +1587,6 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
             UnifiedTextMeasurementCache.shared.insert(measuredSize, for: cacheKey)
         }
 
-        if MessageTextLayoutTrace.isEnabled {
-            MessageTextLayoutTrace.log(
-                "MEASURE signature=\(String(renderSignature.prefix(72)))"
-                    + " utf16=\(textView.textStorage.length)"
-                    + " width=\(String(format: "%.1f", width))"
-                    + " usedMaxY=\(String(format: "%.1f", usedRect.maxY))"
-                    + " returnedH=\(String(format: "%.1f", height))"
-                    + " elapsedMs=\(String(format: "%.2f", (ProcessInfo.processInfo.systemUptime - measurementStartedAt) * 1_000))"
-                    + " cache=miss"
-            )
-        }
         return measuredSize
     }
 
@@ -1737,6 +1641,7 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
     }
 
     private func apply(to textView: GlyphSelectableTextView, coordinator: Coordinator) {
+        StreamLayoutWorkProbe.hit("text.apply.request")
         textView.materializeInitialContent = nil
         textView.isSelectable = allowsSelection
         textView.tintColor = selectionTintColor
@@ -1760,7 +1665,8 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
                 utf16Length: attributedText?.length ?? textView.textStorage.length
             )
         }
-        guard let attributedText else { return }
+        guard let attributedText else { StreamLayoutWorkProbe.hit("text.apply.sameSignature"); return }
+        StreamLayoutWorkProbe.hit("text.apply.changedSignature")
         // Configure links while the first settled long-prose view is empty.
         // Applying link attributes after filling it can lay out the text again.
         let preparesInitialLinkStyle = coordinator.appliedSignature == nil && preparationSource != nil
@@ -2002,21 +1908,14 @@ private final class SelectableTextBlankOverlayView: UIView, UIGestureRecognizerD
 private final class MarkdownDecorationLayoutManager: NSLayoutManager {
     var usesDarkAppearance = false
     var permittedDrawingRect: CGRect?
-    var messageTextTraceVisibleRect: CGRect = .null
-    var messageTextTraceTextBounds: CGRect = .null
     var versionFlashHostToken: Int?
     var versionFlashContext: VersionFlashTextContext?
     var versionFlashSegmentIndex: Int?
     var versionFlashGeneration = 0
     var versionFlashUTF16Length = 0
-    private var lastMessageTextDrawTraceKey: String?
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         let visibleGlyphs = viewportLimitedGlyphRange(glyphsToShow)
-        recordMessageTextDrawTrace(
-            proposedGlyphs: glyphsToShow,
-            visibleGlyphs: visibleGlyphs
-        )
         guard visibleGlyphs.length > 0 else { return }
         super.drawGlyphs(forGlyphRange: visibleGlyphs, at: origin)
         if let traceContext = versionFlashContext,
@@ -2063,53 +1962,6 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
             in: textContainer
         )
         return NSIntersectionRange(proposedRange, viewportGlyphs)
-    }
-
-    private func recordMessageTextDrawTrace(
-        proposedGlyphs: NSRange,
-        visibleGlyphs: NSRange
-    ) {
-        guard MessageTextLayoutTrace.isEnabled else { return }
-        let totalGlyphs = numberOfGlyphs
-        let tailGlyph = totalGlyphs > 0 ? totalGlyphs - 1 : nil
-        let proposedContainsTail = tailGlyph.map {
-            NSLocationInRange($0, proposedGlyphs)
-        } ?? false
-        let visibleContainsTail = tailGlyph.map {
-            NSLocationInRange($0, visibleGlyphs)
-        } ?? false
-        let tailShouldBeVisible = !messageTextTraceVisibleRect.isNull
-            && !messageTextTraceTextBounds.isNull
-            && messageTextTraceVisibleRect.maxY >= messageTextTraceTextBounds.maxY - 2
-
-        guard tailShouldBeVisible || proposedContainsTail || visibleContainsTail else {
-            return
-        }
-
-        let permittedRect = permittedDrawingRect ?? .infinite
-        let traceKey = [
-            MessageTextLayoutTrace.range(proposedGlyphs),
-            MessageTextLayoutTrace.range(visibleGlyphs),
-            String(totalGlyphs),
-            MessageTextLayoutTrace.rect(messageTextTraceVisibleRect),
-            MessageTextLayoutTrace.rect(permittedRect),
-        ].joined(separator: "|")
-        guard traceKey != lastMessageTextDrawTraceKey else { return }
-        lastMessageTextDrawTraceKey = traceKey
-
-        MessageTextLayoutTrace.log(
-            "DRAW"
-                + " lm=\(MessageTextLayoutTrace.objectToken(self))"
-                + " totalGlyphs=\(totalGlyphs)"
-                + " proposed=\(MessageTextLayoutTrace.range(proposedGlyphs))"
-                + " limited=\(MessageTextLayoutTrace.range(visibleGlyphs))"
-                + " proposedHasTail=\(proposedContainsTail)"
-                + " limitedHasTail=\(visibleContainsTail)"
-                + " tailShouldBeVisible=\(tailShouldBeVisible)"
-                + " visible=\(MessageTextLayoutTrace.rect(messageTextTraceVisibleRect))"
-                + " textBounds=\(MessageTextLayoutTrace.rect(messageTextTraceTextBounds))"
-                + " permitted=\(MessageTextLayoutTrace.rect(permittedRect))"
-        )
     }
 
     private func drawQuoteBars(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
@@ -2310,7 +2162,6 @@ private final class GlyphSelectableTextView: UITextView {
         }
     }
 
-
     private var didTuneInitialSelectionLongPress = false
     private let decorationLayoutManager: MarkdownDecorationLayoutManager
     private weak var observedOuterScrollView: UIScrollView?
@@ -2318,7 +2169,6 @@ private final class GlyphSelectableTextView: UITextView {
     private var scrollBoundsObservation: NSKeyValueObservation?
     private var coveredViewportRect: CGRect = .null
     private var lastLaidOutSize: CGSize = .zero
-    private var lastMessageTextViewportTraceKey: String?
     private var drawerViewportRefreshKey: DrawerViewportRefreshKey?
     var usesVisibleGlyphHitTesting = false
     var materializeInitialContent: ((GlyphSelectableTextView) -> Void)?
@@ -2519,12 +2369,6 @@ private final class GlyphSelectableTextView: UITextView {
         reason: String
     ) {
         guard window != nil else {
-            recordMessageTextViewportTrace(
-                reason: reason,
-                force: force,
-                visibleRect: .null,
-                decision: "skip-no-window"
-            )
             return
         }
         let freezeKey = currentDrawerViewportRefreshKey()
@@ -2535,26 +2379,10 @@ private final class GlyphSelectableTextView: UITextView {
             return
         }
         let visibleRect = currentClippedVisibleRect()
-        if MessageTextLayoutTrace.isEnabled {
-            decorationLayoutManager.messageTextTraceVisibleRect = visibleRect.offsetBy(
-                dx: -textContainerInset.left,
-                dy: -textContainerInset.top
-            )
-            decorationLayoutManager.messageTextTraceTextBounds = bounds.offsetBy(
-                dx: -textContainerInset.left,
-                dy: -textContainerInset.top
-            )
-        }
         guard !visibleRect.isNull, !visibleRect.isEmpty else {
             drawerViewportRefreshKey = nil
             coveredViewportRect = .null
             decorationLayoutManager.permittedDrawingRect = .null
-            recordMessageTextViewportTrace(
-                reason: reason,
-                force: force,
-                visibleRect: visibleRect,
-                decision: "clear-empty"
-            )
             return
         }
         // Prepare horizontal coverage once before deferring notifications.
@@ -2566,12 +2394,6 @@ private final class GlyphSelectableTextView: UITextView {
         drawerViewportRefreshKey = freezeKey
         if freezeKey != nil { DrawerViewportRefreshFreeze.deferRefresh(self) }
         guard force || !coveredViewportRect.contains(requiredRect) else {
-            recordMessageTextViewportTrace(
-                reason: reason,
-                force: force,
-                visibleRect: visibleRect,
-                decision: "skip-contained"
-            )
             return
         }
 
@@ -2586,58 +2408,6 @@ private final class GlyphSelectableTextView: UITextView {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         decorationLayoutManager.invalidateDisplay(forCharacterRange: fullRange)
         setNeedsDisplay(nextCoverage)
-        recordMessageTextViewportTrace(
-            reason: reason,
-            force: force,
-            visibleRect: visibleRect,
-            decision: "invalidate"
-        )
-    }
-
-    private func recordMessageTextViewportTrace(
-        reason: String,
-        force: Bool,
-        visibleRect: CGRect,
-        decision: String
-    ) {
-        guard MessageTextLayoutTrace.isEnabled else { return }
-        let tailShouldBeVisible = !visibleRect.isNull
-            && !visibleRect.isEmpty
-            && visibleRect.maxY >= bounds.maxY - 2
-        guard force || tailShouldBeVisible || decision != "skip-contained" else {
-            return
-        }
-
-        let outerOffset = observedOuterScrollView?.contentOffset ?? .zero
-        let traceKey = [
-            reason,
-            String(force),
-            decision,
-            MessageTextLayoutTrace.rect(visibleRect),
-            MessageTextLayoutTrace.rect(coveredViewportRect),
-            MessageTextLayoutTrace.rect(
-                decorationLayoutManager.permittedDrawingRect ?? .infinite
-            ),
-        ].joined(separator: "|")
-        guard traceKey != lastMessageTextViewportTraceKey else { return }
-        lastMessageTextViewportTraceKey = traceKey
-
-        MessageTextLayoutTrace.log(
-            "VIEWPORT"
-                + " view=\(MessageTextLayoutTrace.objectToken(self))"
-                + " lm=\(MessageTextLayoutTrace.objectToken(decorationLayoutManager))"
-                + " reason=\(reason)"
-                + " force=\(force)"
-                + " decision=\(decision)"
-                + " utf16=\(textStorage.length)"
-                + " tailShouldBeVisible=\(tailShouldBeVisible)"
-                + " visible=\(MessageTextLayoutTrace.rect(visibleRect))"
-                + " bounds=\(MessageTextLayoutTrace.rect(bounds))"
-                + " covered=\(MessageTextLayoutTrace.rect(coveredViewportRect))"
-                + " permitted=\(MessageTextLayoutTrace.rect(decorationLayoutManager.permittedDrawingRect ?? .infinite))"
-                + " outerOffset={x=\(String(format: "%.1f", outerOffset.x))"
-                + " y=\(String(format: "%.1f", outerOffset.y))}"
-        )
     }
 
     private func currentClippedVisibleRect() -> CGRect {
@@ -4310,6 +4080,10 @@ private struct MarkdownCodeBlock: View {
                 conversationID: htmlRunnerConversationID
             )
         }
+        .preference(
+            key: NativeChatStableStreamingBottomKey.self,
+            value: isStreaming && isEffectivelyExpanded
+        )
     }
 
     @MainActor

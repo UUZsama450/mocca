@@ -62,9 +62,9 @@ Keychain service names, notification names, and legacy backup identifiers remain
 
 Keychain 服务名、通知名与旧备份标识继续保留，它们用于数据兼容，并非签名凭据。本次只使构建身份与后台任务标识可配置，不批量改写这些存储名称。
 
-These portable defaults apply to the source snapshot, currently 1.0 (5135). Building it does not replace an installed app or alter an App Store release. A store archive needs its own source and identity verification.
+These portable defaults apply to the source snapshot, currently 1.0.2 (5173). Building it does not replace an installed app or alter an App Store release. A store archive needs its own source and identity verification.
 
-这些可移植默认值用于当前 1.0（5135）源码快照。构建源码不会替换已安装应用或改变 App Store 发布；正式归档需要单独核对源码与应用身份。
+这些可移植默认值用于当前 1.0.2（5173）源码快照。构建源码不会替换已安装应用或改变 App Store 发布；正式归档需要单独核对源码与应用身份。
 
 Configuration file semantics: [Apple Xcode documentation](https://developer.apple.com/documentation/xcode/adding-a-build-configuration-file-to-your-project).
 
@@ -73,3 +73,13 @@ Configuration file semantics: [Apple Xcode documentation](https://developer.appl
 On macOS with Xcode installed, run `python3 CandidateTests/check_sponsorship_build_gate.py`. It compiles the actual configuration and sponsor store into isolated host bundles, checks five configuration values, and calls disabled commerce entry points. Enabled commerce is not invoked; successful payments and iOS UI still require separate testing.
 
 安装 Xcode 的 macOS 上可运行上述命令：测试会编译实际源码，核对五种配置值和关闭状态下的操作入口。测试不会执行已开启的交易，不代替实际购买或 iOS 界面验收。
+
+## Runtime compilation / 运行行为编译配置
+
+The app target enables `STREAM_HEIGHT_PHONE_CANDIDATE` in Debug and Release to retain the streaming and viewport route used by the accepted phone build. Do not globally replace `SWIFT_ACTIVE_COMPILATION_CONDITIONS`: Swift packages need their own generated conditions, including Highlighter's `SWIFT_PACKAGE` resource lookup.
+
+主应用在 Debug 和 Release 默认开启已验收手机版使用的滚动路径。不要全局覆盖 Swift 编译条件，以免清掉 Highlighter 等 Swift 包所需的资源查找定义。
+
+Communication notifications declare `INSendMessageIntent` and the communication-notifications entitlement. Device builds need a signing profile that supports this capability.
+
+带头像的回复通知声明通信通知权限；真机构建需使用支持该能力的签名描述文件。

@@ -394,110 +394,6 @@ private struct ProviderTypeMenuLabel: View {
     }
 }
 
-/// Intercepts only the sheet containing this probe. It never follows a presented
-/// child sheet, and restores the previous delegate only while it still owns it.
-private struct ProviderDraftDismissObserver: UIViewControllerRepresentable {
-    let hasUnsavedChanges: Bool
-    let onAttempt: () -> Void
-    var onDismiss: () -> Void = {}
-
-    func makeUIViewController(context: Context) -> Controller { Controller() }
-
-    func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.hasUnsavedChanges = hasUnsavedChanges
-        controller.onAttempt = onAttempt
-        controller.onDismiss = onDismiss
-        controller.installIfPossible()
-        // The first update can precede containment in the hosting controller.
-        DispatchQueue.main.async { [weak controller] in controller?.installIfPossible() }
-    }
-
-    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
-        controller.uninstall()
-    }
-
-    final class Controller: UIViewController, UIAdaptivePresentationControllerDelegate {
-        var hasUnsavedChanges = false
-        var onAttempt: () -> Void = {}
-        var onDismiss: () -> Void = {}
-        private weak var observedPresentation: UIPresentationController?
-        private weak var previousDelegate: (any UIAdaptivePresentationControllerDelegate)?
-        private var isDismantled = false
-
-        override func loadView() {
-            view = UIView()
-            view.isUserInteractionEnabled = false
-        }
-
-        override func didMove(toParent parent: UIViewController?) {
-            super.didMove(toParent: parent)
-            installIfPossible()
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            installIfPossible()
-        }
-
-        func installIfPossible() {
-            guard !isDismantled else { return }
-            var ancestor = parent
-            while let controller = ancestor {
-                if controller.presentingViewController != nil,
-                   let presentation = controller.presentationController,
-                   presentation.presentedViewController === controller {
-                    if observedPresentation !== presentation {
-                        restoreDelegate()
-                        observedPresentation = presentation
-                    }
-                    if presentation.delegate !== self {
-                        // SwiftUI may replace its delegate while updating this
-                        // same sheet. Forward to the new delegate, never a stale one.
-                        previousDelegate = presentation.delegate
-                        presentation.delegate = self
-                    }
-                    return
-                }
-                ancestor = controller.parent
-            }
-        }
-
-        func uninstall() {
-            isDismantled = true
-            restoreDelegate()
-            onAttempt = {}
-            onDismiss = {}
-        }
-
-        private func restoreDelegate() {
-            if let presentation = observedPresentation, presentation.delegate === self {
-                presentation.delegate = previousDelegate
-            }
-            observedPresentation = nil
-            previousDelegate = nil
-        }
-
-        func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
-            !hasUnsavedChanges
-                && (previousDelegate?.presentationControllerShouldDismiss?(presentationController) ?? true)
-        }
-
-        func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
-            if hasUnsavedChanges { onAttempt() }
-            previousDelegate?.presentationControllerDidAttemptToDismiss?(presentationController)
-        }
-
-        func presentationControllerWillDismiss(_ presentationController: UIPresentationController) {
-            previousDelegate?.presentationControllerWillDismiss?(presentationController)
-        }
-
-        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-            onDismiss()
-            previousDelegate?.presentationControllerDidDismiss?(presentationController)
-        }
-    }
-}
-
 private enum ProviderEditorTab: String, CaseIterable, Identifiable {
     case configuration
     case models
@@ -578,7 +474,7 @@ struct ProviderEditorView: View {
         }
         .interactiveDismissDisabled(hasUnsavedChanges)
         .background {
-            ProviderDraftDismissObserver(
+            DraftDismissObserver(
                 hasUnsavedChanges: hasUnsavedChanges,
                 onAttempt: requestDismiss,
                 onDismiss: cleanUpAvatarIfNeeded
@@ -2825,7 +2721,7 @@ private struct ModelConfigurationEditorSheet: View {
         .background(Color(uiColor: .systemBackground))
         .interactiveDismissDisabled(hasUnsavedChanges)
         .background {
-            ProviderDraftDismissObserver(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
+            DraftDismissObserver(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
         }
         .alert(L10n.lookup("保存模型修改？"), isPresented: $isLeaveConfirmationPresented) {
             Button(L10n.lookup("保存并离开"), action: save)

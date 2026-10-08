@@ -6,8 +6,8 @@
 
 连接自己的模型，用助手整理对话，把聊天记录保存在自己的设备上。
 
-> 当前源码为 **1.0.1（5157）**，以已安装的 5156 为基线。见[变更与验证](docs/SNAPSHOT_1.0.1.md)、[构建配置](docs/BUILD_CONFIGURATION.md)及[开发维护流程](docs/DEVELOPMENT_WORKFLOW.md)。
-> App Store **1.0.1（5157）** 已于 2026-10-04 提交，目前正在等待审核，尚未发布。[1.0（5135）未签名 IPA 预览包](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135)是较早版本的下载，需要自行签名。
+> 当前源码为 **1.0.2（5173）**，基于已试用的手机 5172 版本。见[更新说明](CHANGELOG.md)、[源码验证](docs/SNAPSHOT_1.0.2.md)和[构建配置](docs/BUILD_CONFIGURATION.md)。
+> 本次更新源码，App Store 发版另行记录。[1.0（5135）未签名 IPA 预览包](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135)是较早版本的下载，需要自行签名。
 
 ## 主要功能
 

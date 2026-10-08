@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		C50580000000000000000012 /* LobeIcons-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000011 /* LobeIcons-LICENSE.txt */; };
 		C50580000000000000000002 /* AppBuildConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000001 /* AppBuildConfiguration.swift */; };
+		C51680000000000000000002 /* DraftEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51680000000000000000004 /* DraftEditing.swift */; };
+		C51680000000000000000001 /* UserProfileNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51680000000000000000003 /* UserProfileNotes.swift */; };
 		BC5091000000000000000001 /* BackgroundImageCropEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC5091000000000000000002 /* BackgroundImageCropEditor.swift */; };
 		C50770000000000000000002 /* NativeChatTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50770000000000000000001 /* NativeChatTranscript.swift */; };
 		0F470D14F2CFC89633A2875E /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 292DE7838791E7B84FB42163 /* Foundation.framework */; };
@@ -102,6 +104,8 @@
 		C50580000000000000000011 /* LobeIcons-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LobeIcons-LICENSE.txt"; sourceTree = "<group>"; };
 		C50580000000000000000001 /* AppBuildConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuildConfiguration.swift; sourceTree = "<group>"; };
 		C50580000000000000000003 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Configuration/Shared.xcconfig; sourceTree = "<group>"; };
+		C51680000000000000000004 /* DraftEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftEditing.swift; sourceTree = "<group>"; };
+		C51680000000000000000003 /* UserProfileNotes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserProfileNotes.swift; sourceTree = "<group>"; };
 		BC5091000000000000000002 /* BackgroundImageCropEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundImageCropEditor.swift; sourceTree = "<group>"; };
 		C50770000000000000000001 /* NativeChatTranscript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeChatTranscript.swift; sourceTree = "<group>"; };
 		174FAD6002EC9DD090C5EBEC /* ProviderModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProviderModels.swift; sourceTree = "<group>"; };
@@ -256,6 +260,8 @@
 				1A57A5D201B7C0DEA114000C /* PromptInjectionViews.swift */,
 				1A57A5D201B7C0DEA114000E /* QuickPhrases.swift */,
 				1A57A5D201B7C0DEA1140010 /* UserProfile.swift */,
+				C51680000000000000000004 /* DraftEditing.swift */,
+				C51680000000000000000003 /* UserProfileNotes.swift */,
 				1A57A5D201B7C0DEA1140012 /* UserProfileView.swift */,
 				1A57A5D201B7C0DEA1140014 /* ToolCalling.swift */,
 				1A57A5D201B7C0DEA114001A /* SearchServices.swift */,
@@ -460,6 +466,8 @@
 				1A57A5D201B7C0DEA114000B /* PromptInjectionViews.swift in Sources */,
 				1A57A5D201B7C0DEA114000D /* QuickPhrases.swift in Sources */,
 				1A57A5D201B7C0DEA114000F /* UserProfile.swift in Sources */,
+				C51680000000000000000002 /* DraftEditing.swift in Sources */,
+				C51680000000000000000001 /* UserProfileNotes.swift in Sources */,
 				1A57A5D201B7C0DEA1140011 /* UserProfileView.swift in Sources */,
 				1A57A5D201B7C0DEA1140013 /* ToolCalling.swift in Sources */,
 				1A57A5D201B7C0DEA1140019 /* SearchServices.swift in Sources */,
@@ -527,7 +535,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5157;
+				CURRENT_PROJECT_VERSION = 5173;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -537,7 +545,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -556,7 +564,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5157;
+				CURRENT_PROJECT_VERSION = 5173;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -566,7 +574,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -650,13 +658,15 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5157;
+				CURRENT_PROJECT_VERSION = 5173;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) STREAM_HEIGHT_PHONE_CANDIDATE";
+				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -732,13 +742,15 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5157;
+				CURRENT_PROJECT_VERSION = 5173;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) STREAM_HEIGHT_PHONE_CANDIDATE";
+				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

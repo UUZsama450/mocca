@@ -1,6 +1,7 @@
 import Foundation
 
 enum StreamingTextDisplaySuspensionOwner: Hashable {
+    case nonStreamingReply
     case drawer
     case detachedTail
     case codeDisclosure(UUID)

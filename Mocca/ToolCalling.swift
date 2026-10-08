@@ -98,6 +98,7 @@ enum ToolDefinitionBuilder {
         supportsTools: Bool,
         includeSearchTool: Bool = false,
         includeMoccaCalendar: Bool = false,
+        includeUserNotes: Bool = false,
         mcpDefinitions: [[String: Any]] = []
     ) -> [[String: Any]] {
         guard supportsTools else { return [] }
@@ -110,6 +111,8 @@ enum ToolDefinitionBuilder {
         if assistant.enableMemory {
             defs.append(contentsOf: memoryToolDefinitions())
         }
+
+        if includeUserNotes { defs.append(contentsOf: UserNotesTools.definitions) }
 
         defs.append(contentsOf: assistantFileToolDefinitions(files: assistant.files))
 
@@ -435,9 +438,20 @@ enum ToolCallExecutor {
         searchExecutor: (@Sendable (String, Bool) async -> String)? = nil,
         calendarExecutor: (@Sendable (String, [String: JSONValue]) async -> String?)? = nil,
         mcpExecutor: (@Sendable (String, [String: JSONValue]) async -> String?)? = nil,
+        userNotesExecutor: (@Sendable (UserNotesToolRequest) async -> String)? = nil,
         assistantFileExecutor: (@Sendable (AssistantFileToolRequest) async -> String)? = nil
     ) -> ToolCallHandler {
         { @Sendable name, args, toolCallId in
+            if UserNotesTools.names.contains(name) {
+                guard let userNotesExecutor else {
+                    return toolError(error: "permission_denied", message: "User note editing is not enabled.", tool: name)
+                }
+                do {
+                    return await userNotesExecutor(try UserNotesTools.parse(name: name, arguments: args))
+                } catch {
+                    return toolError(error: "invalid_arguments", message: "Supply an operation, integer expected_revision and valid topic/note IDs where needed.", tool: name)
+                }
+            }
             if name == "read_assistant_file" || name == "edit_assistant_file" {
                 guard let assistantFileExecutor else {
                     return toolError(error: "unavailable", message: "Assistant files are not available.", tool: name)

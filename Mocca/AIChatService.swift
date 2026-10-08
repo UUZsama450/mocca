@@ -71,10 +71,6 @@ struct ChatRequestOptions: @unchecked Sendable {
     var builtInSearch: Bool
     /// Stable conversation identity for provider-side sticky routing and prompt caching.
     var sessionID: String?
-    /// Local-only diagnostic correlation. Never serialized into a provider request.
-    var diagnosticRunID: UUID?
-    /// Local-only tool-loop round for correlating multiple wire requests to one reply.
-    var diagnosticRound: Int
 
     init(
         systemPrompt: String? = nil,
@@ -84,9 +80,7 @@ struct ChatRequestOptions: @unchecked Sendable {
         thinkingBudget: Int? = nil,
         tools: [[String: Any]]? = nil,
         builtInSearch: Bool = false,
-        sessionID: String? = nil,
-        diagnosticRunID: UUID? = nil,
-        diagnosticRound: Int = 1
+        sessionID: String? = nil
     ) {
         self.systemPrompt = systemPrompt
         self.temperature = temperature
@@ -96,8 +90,6 @@ struct ChatRequestOptions: @unchecked Sendable {
         self.tools = tools
         self.builtInSearch = builtInSearch
         self.sessionID = sessionID
-        self.diagnosticRunID = diagnosticRunID
-        self.diagnosticRound = diagnosticRound
     }
 }
 
@@ -169,150 +161,6 @@ struct StreamUsage: Sendable {
     var completionTokens: Int?
     var cachedTokens: Int? = nil
     var totalTokens: Int?
-}
-
-private enum StreamWireRoute: String, Sendable {
-    case openAIResponses = "openai_responses"
-    case openAIChat = "openai_chat"
-    case claudeMessages = "claude_messages"
-    case googleGenerate = "google_generate"
-    case openAIChatTools = "openai_chat_tools"
-    case claudeMessagesTools = "claude_messages_tools"
-    case googleGenerateTools = "google_generate_tools"
-}
-
-private struct StreamWireTraceContext: Sendable {
-    let runID: UUID
-    let round: Int
-    let route: StreamWireRoute
-
-    init?(options: ChatRequestOptions, route: StreamWireRoute) {
-        guard StreamWireProbe.enabled, let runID = options.diagnosticRunID else { return nil }
-        self.runID = runID
-        self.round = max(options.diagnosticRound, 1)
-        self.route = route
-    }
-}
-
-/// A request-local, serially mutated probe. It stays on the URLSession stream task,
-/// so its timestamps remain independent of MainActor delivery and rendering stalls.
-private struct StreamWireProbe {
-    static let enabled = ProcessInfo.processInfo.arguments.contains("-diagnoseStreaming")
-    private static let sampleInterval: TimeInterval = 0.5
-    private static let notableGap: TimeInterval = 0.75
-
-    private let context: StreamWireTraceContext?
-    private let startedAt: TimeInterval
-    private var lastLineAt: TimeInterval?
-    private var lastSampleAt: TimeInterval
-    private var lineCount = 0
-    private var eventCount = 0
-    private var textEventCount = 0
-    private var reasoningEventCount = 0
-    private var otherEventCount = 0
-    private var textUTF16 = 0
-    private var reasoningUTF16 = 0
-    private var payloadBytes = 0
-    private var isFinished = false
-
-    init(context: StreamWireTraceContext?) {
-        let now = ProcessInfo.processInfo.systemUptime
-        self.context = context
-        self.startedAt = now
-        self.lastSampleAt = now
-    }
-
-    mutating func begin() {
-        guard context != nil else { return }
-        log("BEGIN")
-    }
-
-    mutating func receivedHeaders(_ response: URLResponse) {
-        guard context != nil else { return }
-        let status = (response as? HTTPURLResponse)?.statusCode
-        log(
-            "HEADERS status=\(status.map { String($0) } ?? "nil")"
-                + " ttfb=\(format(ProcessInfo.processInfo.systemUptime - startedAt))"
-        )
-    }
-
-    mutating func receivedDataLine(payloadUTF8Count: Int) {
-        guard context != nil else { return }
-        let now = ProcessInfo.processInfo.systemUptime
-        let gap = now - (lastLineAt ?? startedAt)
-        lineCount &+= 1
-        payloadBytes &+= max(payloadUTF8Count, 0)
-        lastLineAt = now
-
-        let shouldLog = lineCount == 1
-            || gap >= Self.notableGap
-            || now - lastSampleAt >= Self.sampleInterval
-        guard shouldLog else { return }
-        lastSampleAt = now
-        log(
-            "LINE seq=\(lineCount) gap=\(format(gap))"
-                + " payloadBytes=\(payloadUTF8Count) totalBytes=\(payloadBytes)"
-                + " events=\(eventCount) textEvents=\(textEventCount)"
-                + " reasoningEvents=\(reasoningEventCount)"
-        )
-    }
-
-    mutating func emitted(_ event: ChatStreamEvent) {
-        guard context != nil else { return }
-        eventCount &+= 1
-        switch event {
-        case .text(let chunk):
-            textEventCount &+= 1
-            textUTF16 &+= chunk.utf16.count
-        case .reasoning(let chunk):
-            reasoningEventCount &+= 1
-            reasoningUTF16 &+= chunk.utf16.count
-        case .usage, .toolCalls, .toolResults, .generatedImage, .imageGenerationProgress:
-            otherEventCount &+= 1
-        }
-    }
-
-    mutating func finish(reason: String) {
-        guard context != nil, !isFinished else { return }
-        isFinished = true
-        let now = ProcessInfo.processInfo.systemUptime
-        let lastLineGap = lastLineAt.map { now - $0 }
-        log(
-            "END reason=\(reason) elapsed=\(format(now - startedAt))"
-                + " lines=\(lineCount) events=\(eventCount)"
-                + " textEvents=\(textEventCount) reasoningEvents=\(reasoningEventCount)"
-                + " otherEvents=\(otherEventCount) textUTF16=\(textUTF16)"
-                + " reasoningUTF16=\(reasoningUTF16) totalBytes=\(payloadBytes)"
-                + " lastLineGap=\(lastLineGap.map { format($0) } ?? "nil")"
-        )
-    }
-
-    mutating func finish(error: Error) {
-        let label: String
-        if let urlError = error as? URLError {
-            label = "url_\(urlError.code.rawValue)"
-        } else {
-            label = String(describing: type(of: error))
-                .replacingOccurrences(of: " ", with: "_")
-        }
-        finish(reason: "error_\(label)")
-    }
-
-    private func log(_ message: String) {
-        guard let context else { return }
-        let uptime = ProcessInfo.processInfo.systemUptime
-        NSLog(
-            "[stream-wire] %@",
-            "t=\(format(uptime))"
-                + " msg=\(String(context.runID.uuidString.prefix(5)))"
-                + " round=\(context.round) route=\(context.route.rawValue) "
-                + message
-        )
-    }
-
-    private func format(_ value: TimeInterval) -> String {
-        String(format: "%.3f", value)
-    }
 }
 
 enum AIChatServiceError: LocalizedError {
@@ -534,7 +382,6 @@ enum AIChatService {
                         roundCount += 1
                         try Task.checkCancellation()
                         var roundOptions = options
-                        roundOptions.diagnosticRound = roundCount
 
                         let stream: AsyncThrowingStream<ChatStreamEvent, Error>
                         switch provider.type {
@@ -939,11 +786,8 @@ enum AIChatService {
         messages: [ChatRequestMessage],
         options: ChatRequestOptions
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        let traceContext = StreamWireTraceContext(options: options, route: .openAIResponses)
         return AsyncThrowingStream { continuation in
             let task = Task {
-                var wireProbe = StreamWireProbe(context: traceContext)
-                wireProbe.begin()
                 do {
                     let apiKey = normalizedAPIKey(for: provider)
                     guard let url = endpoint(baseURL: provider.baseURL, path: "/responses") else {
@@ -997,7 +841,6 @@ enum AIChatService {
                     )
 
                     let (bytes, response) = try await makeSession(for: provider).bytes(for: request)
-                    wireProbe.receivedHeaders(response)
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var functionCalls: [String: (id: String, name: String, arguments: String)] = [:]
@@ -1025,7 +868,6 @@ enum AIChatService {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard !payload.isEmpty, payload != "[DONE]" else { continue }
-                        wireProbe.receivedDataLine(payloadUTF8Count: payload.utf8.count)
                         guard let data = payload.data(using: .utf8),
                               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                               let type = object["type"] as? String else {
@@ -1043,7 +885,6 @@ enum AIChatService {
                         case "response.output_text.delta":
                             if let delta = object["delta"] as? String, !delta.isEmpty {
                                 let event = ChatStreamEvent.text(delta)
-                                wireProbe.emitted(event)
                                 continuation.yield(event)
                             }
                         case "response.reasoning.delta",
@@ -1051,7 +892,6 @@ enum AIChatService {
                              "response.reasoning_text.delta":
                             if let delta = object["delta"] as? String, !delta.isEmpty {
                                 let event = ChatStreamEvent.reasoning(delta)
-                                wireProbe.emitted(event)
                                 continuation.yield(event)
                             }
                         case "response.image_generation_call.in_progress", "response.image_generation_call.generating":
@@ -1098,7 +938,6 @@ enum AIChatService {
                                 from: item,
                                 emittedKeys: &emittedImageKeys
                             ) {
-                                wireProbe.emitted(event)
                                 continuation.yield(event)
                             }
                         case "response.completed":
@@ -1110,7 +949,6 @@ enum AIChatService {
                                         cachedTokens: cachedPromptTokens(in: usage),
                                         totalTokens: integerValue(usage["total_tokens"])
                                     ))
-                                    wireProbe.emitted(event)
                                     continuation.yield(event)
                                 }
                                 let output = responseObject["output"] as? [[String: Any]] ?? []
@@ -1127,7 +965,6 @@ enum AIChatService {
                                         from: item,
                                         emittedKeys: &emittedImageKeys
                                     ) {
-                                        wireProbe.emitted(event)
                                         continuation.yield(event)
                                     }
                                 }
@@ -1150,16 +987,12 @@ enum AIChatService {
                     }
                     if !calls.isEmpty {
                         let event = ChatStreamEvent.toolCalls(calls)
-                        wireProbe.emitted(event)
                         continuation.yield(event)
                     }
-                    wireProbe.finish(reason: "eof")
                     continuation.finish()
                 } catch is CancellationError {
-                    wireProbe.finish(reason: "cancelled")
                     continuation.finish()
                 } catch {
-                    wireProbe.finish(error: error)
                     continuation.finish(throwing: error)
                 }
             }
@@ -1278,7 +1111,6 @@ enum AIChatService {
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         sseStream(
             provider: provider,
-            traceContext: StreamWireTraceContext(options: options, route: .openAIChat),
             receivesChatImages: true,
             request: tryResult {
                 let apiKey = normalizedAPIKey(for: provider)
@@ -1386,7 +1218,6 @@ enum AIChatService {
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         sseStream(
             provider: provider,
-            traceContext: StreamWireTraceContext(options: options, route: .claudeMessages),
             request: tryResult {
                 let apiKey = normalizedAPIKey(for: provider)
                 guard let url = endpoint(baseURL: provider.baseURL, path: "/messages") else {
@@ -1504,7 +1335,6 @@ enum AIChatService {
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         sseStream(
             provider: provider,
-            traceContext: StreamWireTraceContext(options: options, route: .googleGenerate),
             request: tryResult {
                 let apiKey = normalizedAPIKey(for: provider)
                 let cleanedModelID = modelID.replacingOccurrences(of: "models/", with: "")
@@ -1605,11 +1435,8 @@ enum AIChatService {
         messages: [ChatRequestMessage],
         options: ChatRequestOptions
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        let traceContext = StreamWireTraceContext(options: options, route: .openAIChatTools)
         return AsyncThrowingStream { continuation in
             let task = Task {
-                var wireProbe = StreamWireProbe(context: traceContext)
-                wireProbe.begin()
                 do {
                     let apiKey = normalizedAPIKey(for: provider)
                     let path = provider.chatPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1694,7 +1521,6 @@ enum AIChatService {
 
                     var imageDecoder = ChatImageStreamDecoder()
                     let (bytes, response) = try await makeSession(for: provider).bytes(for: request)
-                    wireProbe.receivedHeaders(response)
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var toolCallAccumulator: [String: (name: String, args: String)] = [:]
@@ -1707,12 +1533,10 @@ enum AIChatService {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard !payload.isEmpty, payload != "[DONE]" else { continue }
-                        wireProbe.receivedDataLine(payloadUTF8Count: payload.utf8.count)
                         guard let data = payload.data(using: .utf8),
                               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
                         for event in try imageDecoder.events(from: object) {
-                            wireProbe.emitted(event)
                             continuation.yield(event)
                         }
                         if let usage = object["usage"] as? [String: Any] {
@@ -1722,7 +1546,6 @@ enum AIChatService {
                                 cachedTokens: cachedPromptTokens(in: usage),
                                 totalTokens: integerValue(usage["total_tokens"])
                             ))
-                            wireProbe.emitted(event)
                             continuation.yield(event)
                         }
                         guard let choices = object["choices"] as? [[String: Any]],
@@ -1741,12 +1564,10 @@ enum AIChatService {
                         }
                         for reasoning in visibleReasoningChunks(in: delta) {
                             let event = ChatStreamEvent.reasoning(reasoning)
-                            wireProbe.emitted(event)
                             continuation.yield(event)
                         }
                         if let content = delta["content"] as? String, !content.isEmpty {
                             let event = ChatStreamEvent.text(content)
-                            wireProbe.emitted(event)
                             continuation.yield(event)
                         }
 
@@ -1811,16 +1632,12 @@ enum AIChatService {
                             )
                         }
                         let event = ChatStreamEvent.toolCalls(calls)
-                        wireProbe.emitted(event)
                         continuation.yield(event)
                     }
-                    wireProbe.finish(reason: "eof")
                     continuation.finish()
                 } catch is CancellationError {
-                    wireProbe.finish(reason: "cancelled")
                     continuation.finish()
                 } catch {
-                    wireProbe.finish(error: error)
                     continuation.finish(throwing: error)
                 }
             }
@@ -1834,11 +1651,8 @@ enum AIChatService {
         messages: [ChatRequestMessage],
         options: ChatRequestOptions
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        let traceContext = StreamWireTraceContext(options: options, route: .claudeMessagesTools)
         return AsyncThrowingStream { continuation in
             let task = Task {
-                var wireProbe = StreamWireProbe(context: traceContext)
-                wireProbe.begin()
                 do {
                     let apiKey = normalizedAPIKey(for: provider)
                     guard let url = endpoint(baseURL: provider.baseURL, path: "/messages") else {
@@ -1909,7 +1723,6 @@ enum AIChatService {
                     )
 
                     let (bytes, response) = try await makeSession(for: provider).bytes(for: request)
-                    wireProbe.receivedHeaders(response)
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var currentBlockType: String?
@@ -1925,7 +1738,6 @@ enum AIChatService {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard !payload.isEmpty, payload != "[DONE]" else { continue }
-                        wireProbe.receivedDataLine(payloadUTF8Count: payload.utf8.count)
                         guard let data = payload.data(using: .utf8),
                               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
@@ -1948,7 +1760,6 @@ enum AIChatService {
                                     promptTokens: usage["input_tokens"] as? Int,
                                     completionTokens: usage["output_tokens"] as? Int
                                 ))
-                                wireProbe.emitted(event)
                                 continuation.yield(event)
                             }
                         case "message_delta":
@@ -1957,7 +1768,6 @@ enum AIChatService {
                                     promptTokens: nil,
                                     completionTokens: usage["output_tokens"] as? Int
                                 ))
-                                wireProbe.emitted(event)
                                 continuation.yield(event)
                             }
                         case "content_block_start":
@@ -1977,13 +1787,11 @@ enum AIChatService {
                                 case "text_delta":
                                     if let text = delta["text"] as? String, !text.isEmpty {
                                         let event = ChatStreamEvent.text(text)
-                                        wireProbe.emitted(event)
                                         continuation.yield(event)
                                     }
                                 case "thinking_delta":
                                     if let thinking = delta["thinking"] as? String, !thinking.isEmpty {
                                         let event = ChatStreamEvent.reasoning(thinking)
-                                        wireProbe.emitted(event)
                                         continuation.yield(event)
                                     }
                                 case "input_json_delta":
@@ -2013,16 +1821,12 @@ enum AIChatService {
 
                     if !pendingToolCalls.isEmpty {
                         let event = ChatStreamEvent.toolCalls(pendingToolCalls)
-                        wireProbe.emitted(event)
                         continuation.yield(event)
                     }
-                    wireProbe.finish(reason: "eof")
                     continuation.finish()
                 } catch is CancellationError {
-                    wireProbe.finish(reason: "cancelled")
                     continuation.finish()
                 } catch {
-                    wireProbe.finish(error: error)
                     continuation.finish(throwing: error)
                 }
             }
@@ -2036,11 +1840,8 @@ enum AIChatService {
         messages: [ChatRequestMessage],
         options: ChatRequestOptions
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        let traceContext = StreamWireTraceContext(options: options, route: .googleGenerateTools)
         return AsyncThrowingStream { continuation in
             let task = Task {
-                var wireProbe = StreamWireProbe(context: traceContext)
-                wireProbe.begin()
                 do {
                     let apiKey = normalizedAPIKey(for: provider)
                     let cleanedModelID = modelID.replacingOccurrences(of: "models/", with: "")
@@ -2129,7 +1930,6 @@ enum AIChatService {
                     )
 
                     let (bytes, response) = try await makeSession(for: provider).bytes(for: request)
-                    wireProbe.receivedHeaders(response)
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var pendingToolCalls: [ToolCallInfo] = []
@@ -2141,7 +1941,6 @@ enum AIChatService {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard !payload.isEmpty, payload != "[DONE]" else { continue }
-                        wireProbe.receivedDataLine(payloadUTF8Count: payload.utf8.count)
                         guard let data = payload.data(using: .utf8),
                               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
@@ -2153,7 +1952,6 @@ enum AIChatService {
                                     let event: ChatStreamEvent = part["thought"] as? Bool == true
                                         ? .reasoning(text)
                                         : .text(text)
-                                    wireProbe.emitted(event)
                                     continuation.yield(event)
                                 }
                                 if let fc = part["functionCall"] as? [String: Any],
@@ -2174,23 +1972,18 @@ enum AIChatService {
                                 completionTokens: usage["candidatesTokenCount"] as? Int,
                                 totalTokens: usage["totalTokenCount"] as? Int
                             ))
-                            wireProbe.emitted(event)
                             continuation.yield(event)
                         }
                     }
 
                     if !pendingToolCalls.isEmpty {
                         let event = ChatStreamEvent.toolCalls(pendingToolCalls)
-                        wireProbe.emitted(event)
                         continuation.yield(event)
                     }
-                    wireProbe.finish(reason: "eof")
                     continuation.finish()
                 } catch is CancellationError {
-                    wireProbe.finish(reason: "cancelled")
                     continuation.finish()
                 } catch {
-                    wireProbe.finish(error: error)
                     continuation.finish(throwing: error)
                 }
             }
@@ -2200,20 +1993,16 @@ enum AIChatService {
 
     private static func sseStream(
         provider: ProviderConfiguration,
-        traceContext: StreamWireTraceContext?,
         receivesChatImages: Bool = false,
         request: Result<URLRequest, Error>,
         parse: @escaping @Sendable ([String: Any]) -> [ChatStreamEvent]
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                var wireProbe = StreamWireProbe(context: traceContext)
-                wireProbe.begin()
                 do {
                     let request = try request.get()
                     var imageDecoder = ChatImageStreamDecoder()
                     let (bytes, response) = try await makeSession(for: provider).bytes(for: request)
-                    wireProbe.receivedHeaders(response)
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     for try await line in bytes.lines {
@@ -2221,24 +2010,19 @@ enum AIChatService {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard !payload.isEmpty, payload != "[DONE]" else { continue }
-                        wireProbe.receivedDataLine(payloadUTF8Count: payload.utf8.count)
                         guard let data = payload.data(using: .utf8),
                               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                             continue
                         }
                         let imageEvents = receivesChatImages ? try imageDecoder.events(from: object) : []
                         for event in parse(object) + imageEvents {
-                            wireProbe.emitted(event)
                             continuation.yield(event)
                         }
                     }
-                    wireProbe.finish(reason: "eof")
                     continuation.finish()
                 } catch is CancellationError {
-                    wireProbe.finish(reason: "cancelled")
                     continuation.finish()
                 } catch {
-                    wireProbe.finish(error: error)
                     continuation.finish(throwing: error)
                 }
             }
