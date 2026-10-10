@@ -4165,6 +4165,22 @@ struct AssistantLocalToolsView: View {
             }
 
             Section(L10n.lookup("本地工具")) {
+                Toggle(isOn: $profile.messageTimeEnabled) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(L10n.lookup("自动附带时间"))
+                                .font(.body)
+                            Text(L10n.lookup("附带消息发送时的日期和时间"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "clock")
+                            .foregroundStyle(profile.messageTimeEnabled ? Color.accentColor : .secondary)
+                    }
+                }
+                .accessibilityIdentifier("assistant.messageTime")
+
                 ForEach(tools) { tool in
                     let isEnabled = profile.localToolIDs.contains(tool.id)
                     Toggle(isOn: Binding(

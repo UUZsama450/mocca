@@ -590,6 +590,8 @@ enum ModelCapabilityRegistry {
 struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var displayName: String
+    /// Preserve a user-entered name verbatim in compact model controls.
+    var isDisplayNameCustomized: Bool
     /// 手动覆盖的能力；nil 表示完全按 ID 推断。
     var capabilityOverride: ModelCapabilities?
     /// 仅覆盖该模型请求的 Header；同名项优先于服务商设置。
@@ -602,6 +604,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
     init(
         id: String,
         displayName: String? = nil,
+        isDisplayNameCustomized: Bool = false,
         capabilityOverride: ModelCapabilities? = nil,
         customHeaders: [KeyValueField] = [],
         customBody: [KeyValueField] = [],
@@ -609,6 +612,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
     ) {
         self.id = id
         self.displayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? id
+        self.isDisplayNameCustomized = isDisplayNameCustomized
         self.capabilityOverride = capabilityOverride
         self.customHeaders = customHeaders
         self.customBody = customBody
@@ -619,6 +623,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? id
+        isDisplayNameCustomized = try container.decodeIfPresent(Bool.self, forKey: .isDisplayNameCustomized) ?? false
         capabilityOverride = try container.decodeIfPresent(ModelCapabilities.self, forKey: .capabilityOverride)
         customHeaders = try container.decodeIfPresent([KeyValueField].self, forKey: .customHeaders) ?? []
         customBody = try container.decodeIfPresent([KeyValueField].self, forKey: .customBody) ?? []
@@ -627,6 +632,18 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
 
     var capabilities: ModelCapabilities {
         ModelCapabilityRegistry.infer(id: id, base: capabilityOverride)
+    }
+
+    var composerDisplayName: String {
+        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return id }
+        // A colon in an API ID (for example :free) is not a vendor prefix.
+        guard !isDisplayNameCustomized, name != id,
+              let separator = name.firstIndex(where: { $0 == ":" || $0 == "：" }) else {
+            return name
+        }
+        let suffix = name[name.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return suffix.isEmpty ? name : suffix
     }
 }
 

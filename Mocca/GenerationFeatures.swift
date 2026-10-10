@@ -51,6 +51,11 @@ enum ExternalImageGenerationCodec {
     /// Hides both completed control blocks and a trailing block that is still
     /// arriving through the stream, so implementation JSON never flashes in chat.
     static func stripForDisplay(_ text: String) -> String {
+        // Every complete or partial marker contains ASCII '<'. Whitespace
+        // cleanup cannot introduce it, so ordinary prose needs no marker scans.
+        guard text.utf8.contains(0x3C) else {
+            return cleanedDisplayText(text)
+        }
         // A complete control block cannot match without its exact opening
         // marker. Ordinary streaming text still goes through the established
         // whitespace cleanup and partial-marker handling, but avoids the full

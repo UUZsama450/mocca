@@ -1310,6 +1310,55 @@ private enum UnifiedTextWidthPolicy {
     case fit(maxWidth: CGFloat)
 }
 
+#if PROSE_MEASUREMENT_REUSE_CANDIDATE
+@MainActor
+private final class StreamingProseMeasurement {
+    @MainActor
+    private final class Layout {
+        let storage: NSTextStorage
+        let manager = NSLayoutManager()
+        let container: NSTextContainer
+
+        init(text: NSAttributedString, width: CGFloat) {
+            StreamLayoutWorkProbe.hit("text.measure.stackCreated")
+            // Preserve the original construction order. Editing an attached empty
+            // storage can fix font attributes differently from this fresh stack.
+            storage = NSTextStorage(attributedString: text)
+            container = NSTextContainer(size: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
+            manager.allowsNonContiguousLayout = false
+            container.lineFragmentPadding = 0
+            container.lineBreakMode = .byWordWrapping
+            container.widthTracksTextView = false
+            storage.addLayoutManager(manager)
+            manager.addTextContainer(container)
+        }
+    }
+
+    private var layout: Layout?
+
+    func usedRect(for text: NSAttributedString, width: CGFloat) -> CGRect {
+        if let layout, layout.container.size.width == width,
+           text.length > layout.storage.length,
+           text.attributedSubstring(from: NSRange(location: 0, length: layout.storage.length)).isEqual(to: layout.storage) {
+            let length = layout.storage.length
+            StreamLayoutWorkProbe.hit("text.measure.prefixAppend")
+            layout.storage.append(text.attributedSubstring(from: NSRange(location: length, length: text.length - length)))
+            // NSTextStorage may normalize fallback fonts during an edit. Reuse
+            // only when the edit leaves the exact requested attributes intact.
+            if layout.storage.isEqual(to: text) {
+                layout.manager.ensureLayout(for: layout.container)
+                return layout.manager.usedRect(for: layout.container)
+            }
+        }
+        StreamLayoutWorkProbe.hit("text.measure.fullReplace")
+        let fresh = Layout(text: text, width: width)
+        layout = fresh
+        fresh.manager.ensureLayout(for: fresh.container)
+        return fresh.manager.usedRect(for: fresh.container)
+    }
+}
+#endif
+
 private struct UnifiedSelectableProseText: UIViewRepresentable {
     let makeAttributedText: () -> NSAttributedString
     let renderSignature: String
@@ -1541,6 +1590,9 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
         coordinator: Coordinator
     ) -> CGSize {
         StreamLayoutWorkProbe.hit("text.measure.request")
+        #if PROSE_MEASUREMENT_REUSE_CANDIDATE
+        if usesSharedMeasurementCache { coordinator.streamingMeasurement = nil }
+        #endif
         updateHorizontalRuleAttachments(in: textView, attachments: coordinator.horizontalRuleAttachments, width: width)
 
         let displayScale = max(1, textView.traitCollection.displayScale)
@@ -1562,6 +1614,16 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
         // attached layout/drawing tree through a full-document pass.
         StreamLayoutWorkProbe.hit("text.measure.miss")
         let measurementStartedAt = ProcessInfo.processInfo.systemUptime
+        #if PROSE_MEASUREMENT_REUSE_CANDIDATE
+        if !usesSharedMeasurementCache, coordinator.horizontalRuleAttachments.isEmpty {
+            let measurement = coordinator.streamingMeasurement ?? StreamingProseMeasurement()
+            coordinator.streamingMeasurement = measurement
+            let usedRect = measurement.usedRect(for: textView.attributedText, width: width)
+            let measuredSize = CGSize(width: width, height: max(1, ceil(usedRect.maxY)) + 1 / displayScale)
+            coordinator.measuredLayoutSizes[cacheKey] = measuredSize
+            return measuredSize
+        }
+        #endif
         let measurementStorage = NSTextStorage(attributedString: textView.attributedText)
         let measurementLayoutManager = NSLayoutManager()
         measurementLayoutManager.allowsNonContiguousLayout = false
@@ -1804,6 +1866,9 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
         var naturalTextWidth: CGFloat?
         var preparedCompactLayoutSignature: String?
         var measuredLayoutSizes: [String: CGSize] = [:]
+        #if PROSE_MEASUREMENT_REUSE_CANDIDATE
+        var streamingMeasurement: StreamingProseMeasurement?
+        #endif
         // References belong to the currently installed text, even on a size-cache hit.
         var horizontalRuleAttachments: [HorizontalRuleTextAttachment] = []
         weak var textView: GlyphSelectableTextView?
@@ -4854,17 +4919,24 @@ private enum MarkdownRenderCache {
 
     static func makeAttributedText(for source: String) -> AttributedString {
         do {
-            let compatibleSource = sourceProtectingLiteralKaomojiDelimiters(source)
-            var parsed = try AttributedString(
+            let compatibleSource = sourceWithInlineCompatibilityRepairs(source)
+            let parsed = try AttributedString(
                 markdown: compatibleSource.markdown,
                 options: AttributedString.MarkdownParsingOptions(
                     interpretedSyntax: .inlineOnlyPreservingWhitespace
                 )
             )
             if let marker = compatibleSource.insertedMarker {
-                while let index = parsed.characters.firstIndex(of: marker) {
-                    parsed.characters.remove(at: index)
+                // Copy attributed slices in one forward pass. Repeatedly
+                // searching from the beginning makes marker-heavy text quadratic.
+                var clean = AttributedString()
+                var start = parsed.startIndex
+                for index in parsed.characters.indices where parsed.characters[index] == marker {
+                    clean.append(AttributedString(parsed[start..<index]))
+                    start = parsed.characters.index(after: index)
                 }
+                clean.append(AttributedString(parsed[start..<parsed.endIndex]))
+                return clean
             }
             return parsed
         } catch {
@@ -4872,302 +4944,169 @@ private enum MarkdownRenderCache {
         }
     }
 
-    private static func sourceProtectingLiteralKaomojiDelimiters(
+    private static func sourceWithInlineCompatibilityRepairs(
         _ source: String
     ) -> (markdown: String, insertedMarker: Character?) {
-        // These repairs only act on asterisks and backticks. Preserve the
-        // original source without allocating repair buffers when neither occurs.
-        guard source.utf8.contains(where: { $0 == 0x2A || $0 == 0x60 }) else {
-            return (source, nil)
-        }
-        // CommonMark does not treat `中文**“强调”**` or `中文**"强调"**` as
-        // strong emphasis: the opening delimiter is between a word character
-        // and opening punctuation. Models emit both forms frequently. Insert a
-        // private-use parsing marker after that opener, then remove it from the
-        // attributed result so display, selection, and copied text stay exact.
+        // Unmatched backticks are already literal in CommonMark. Only asterisks
+        // need compatibility repairs; leave other sources on the native path.
+        guard source.utf8.contains(0x2A) else { return (source, nil) }
+        let characters = Array(source)
+        let code = inlineCodeMask(in: source, characters: characters)
+        let literalStars = kaomojiStarOffsets(in: characters, code: code)
         let markerCandidates: [Character] = ["\u{F0000}", "\u{F0001}", "\u{F0002}"]
-        guard let marker = markerCandidates.first(where: { !source.contains($0) }) else {
-            let protectedSource = source.components(separatedBy: "\n")
-                .map(protectLiteralDelimitersOnLine)
-                .joined(separator: "\n")
-            return (protectedSource, nil)
-        }
+        let marker = markerCandidates.first { !source.contains($0) }
+        let markerOffsets = marker.map {
+            strongRepairOffsets(in: characters, code: code, marker: $0)
+        } ?? []
+        guard !literalStars.isEmpty || !markerOffsets.isEmpty else { return (source, nil) }
 
-        var didInsertMarker = false
-        let lineRepairedMarkdown = source.components(separatedBy: "\n")
-            .map { line in
-                let protectedLine = protectLiteralDelimitersOnLine(line)
-                let repaired = repairCJKStrongEmphasis(
-                    in: protectedLine,
-                    marker: marker
-                )
-                didInsertMarker = didInsertMarker || repaired.didInsertMarker
-                return repaired.markdown
-            }
-            .joined(separator: "\n")
-        let closerRepaired = repairStrongEmphasisClosers(
-            in: lineRepairedMarkdown,
-            marker: marker
-        )
-        didInsertMarker = didInsertMarker || closerRepaired.didInsertMarker
-        return (
-            closerRepaired.markdown,
-            didInsertMarker ? marker : nil
-        )
-    }
-
-    private static func protectLiteralDelimitersOnLine(_ line: String) -> String {
-        let characters = Array(line)
-        var backtickRunsByLength: [Int: [Int]] = [:]
-        var index = 0
-
-        while index < characters.count {
-            guard characters[index] == "`", !isEscaped(characters, at: index) else {
-                index += 1
-                continue
-            }
-            let start = index
-            while index < characters.count, characters[index] == "`" {
-                index += 1
-            }
-            backtickRunsByLength[index - start, default: []].append(start)
-        }
-
-        var literalBacktickRunStarts = Set<Int>()
-        for starts in backtickRunsByLength.values where starts.count.isMultiple(of: 2) == false {
-            if let unmatchedStart = starts.last {
-                literalBacktickRunStarts.insert(unmatchedStart)
-            }
-        }
-
-        var backtickProtected = ""
-        for (offset, character) in characters.enumerated() {
-            if literalBacktickRunStarts.contains(offset) {
-                backtickProtected.append("\\")
-            }
-            backtickProtected.append(character)
-        }
-
-        return protectKaomojiStars(in: backtickProtected)
-    }
-
-    private static func protectKaomojiStars(in line: String) -> String {
-        let characters = Array(line)
-        guard characters.count >= 4 else { return line }
-        var literalStarOffsets = Set<Int>()
-        var open = 0
-
-        while open + 3 < characters.count {
-            guard characters[open] == "(",
-                  characters[open + 1] == "*",
-                  characters[open + 2] != "*" else {
-                open += 1
-                continue
-            }
-
-            var close = open + 3
-            while close + 1 < characters.count {
-                if characters[close] == "*",
-                   characters[close - 1] != "*",
-                   characters[close + 1] == ")" {
-                    let interior = characters[(open + 2)..<close]
-                    if interior.contains(where: containsKaomojiSymbol) {
-                        literalStarOffsets.insert(open + 1)
-                        literalStarOffsets.insert(close)
-                    }
-                    open = close + 2
-                    break
-                }
-                close += 1
-            }
-            if close + 1 >= characters.count {
-                open += 1
-            }
-        }
-
-        guard !literalStarOffsets.isEmpty else { return line }
         var result = ""
+        result.reserveCapacity(source.utf8.count)
         for (offset, character) in characters.enumerated() {
-            if literalStarOffsets.contains(offset), !isEscaped(characters, at: offset) {
+            if markerOffsets.contains(offset), let marker { result.append(marker) }
+            if literalStars.contains(offset), !isEscaped(characters, at: offset) {
                 result.append("\\")
             }
             result.append(character)
         }
-        return result
+        return (result, markerOffsets.isEmpty ? nil : marker)
     }
 
-    private static func repairCJKStrongEmphasis(
-        in line: String,
-        marker: Character
-    ) -> (markdown: String, didInsertMarker: Bool) {
-        let characters = Array(line)
-        guard characters.count >= 7 else { return (line, false) }
-
-        var insertionOffsets = Set<Int>()
-        var codeDelimiterLength: Int?
+    private static func inlineCodeMask(in source: String, characters: [Character]) -> [Bool] {
+        // Delimiters use ASCII bytes, not grapheme clusters: combining marks can
+        // share a Character with a tick without becoming part of its delimiter.
+        var mask = Array(repeating: false, count: characters.count)
+        guard source.utf8.contains(0x60) else { return mask }
+        let bytes = Array(source.utf8)
+        var runs: [(range: Range<Int>, openerStart: Int)] = []
         var index = 0
-
-        while index < characters.count {
-            if characters[index] == "`", !isEscaped(characters, at: index) {
-                let start = index
-                while index < characters.count, characters[index] == "`" {
-                    index += 1
-                }
-                let runLength = index - start
-                if codeDelimiterLength == runLength {
-                    codeDelimiterLength = nil
-                } else if codeDelimiterLength == nil {
-                    codeDelimiterLength = runLength
-                }
-                continue
-            }
-
-            guard codeDelimiterLength == nil,
-                  index > 0,
-                  index + 2 < characters.count,
-                  characters[index] == "*",
-                  characters[index + 1] == "*",
-                  characters[index - 1] != "*",
-                  characters[index + 2] != "*",
-                  !isEscaped(characters, at: index),
-                  !isMarkdownWhitespace(characters[index - 1]),
-                  !isMarkdownPunctuation(characters[index - 1]),
-                  isSupportedStrongOpeningPunctuation(characters[index + 2]),
-                  hasClosingStrongDelimiter(in: characters, after: index + 2) else {
+        var slashCount = 0
+        while index < bytes.count {
+            guard bytes[index] == 0x60 else {
+                slashCount = bytes[index] == 0x5C ? slashCount + 1 : 0
                 index += 1
                 continue
             }
-
-            insertionOffsets.insert(index + 2)
-            index += 2
+            let start = index
+            repeat { index += 1 } while index < bytes.count && bytes[index] == 0x60
+            runs.append((start..<index, start + (slashCount.isMultiple(of: 2) ? 0 : 1)))
+            slashCount = 0
         }
 
-        guard !insertionOffsets.isEmpty else { return (line, false) }
-        var result = ""
+        // Index the next equal-length run once. Inside code, even a backslash
+        // before a closing backtick is literal. Outside code it can escape the
+        // first backtick of a run, leaving the remaining ticks as an opener.
+        var nextRunByLength: [Int: Int] = [:]
+        var closingEnds = Array<Int?>(repeating: nil, count: runs.count)
+        for offset in runs.indices.reversed() {
+            let run = runs[offset]
+            closingEnds[offset] = nextRunByLength[run.range.upperBound - run.openerStart]
+            nextRunByLength[run.range.count] = run.range.upperBound
+        }
+        var spans: [Range<Int>] = []
+        var consumedEnd = 0
+        for (offset, run) in runs.enumerated() where run.range.lowerBound >= consumedEnd {
+            guard let end = closingEnds[offset] else { continue }
+            spans.append(run.openerStart..<end)
+            consumedEnd = end
+        }
+
+        // Map disjoint byte spans back to the shared character repair buffer.
+        var spanIndex = 0
+        var byteOffset = 0
         for (offset, character) in characters.enumerated() {
-            if insertionOffsets.contains(offset) {
-                result.append(marker)
-            }
-            result.append(character)
+            let end = byteOffset + character.utf8.count
+            while spanIndex < spans.count, spans[spanIndex].upperBound <= byteOffset { spanIndex += 1 }
+            mask[offset] = spanIndex < spans.count && spans[spanIndex].lowerBound < end
+            byteOffset = end
         }
-        return (result, true)
+        return mask
     }
 
-    private static func hasClosingStrongDelimiter(
-        in characters: [Character],
-        after start: Int
-    ) -> Bool {
-        guard start + 1 < characters.count else { return false }
-        var index = start
-        var codeDelimiterLength: Int?
-
-        while index + 1 < characters.count {
-            if characters[index] == "`", !isEscaped(characters, at: index) {
-                let runStart = index
-                while index < characters.count, characters[index] == "`" {
-                    index += 1
-                }
-                let runLength = index - runStart
-                if codeDelimiterLength == runLength {
-                    codeDelimiterLength = nil
-                } else if codeDelimiterLength == nil {
-                    codeDelimiterLength = runLength
-                }
-                continue
+    private static func kaomojiStarOffsets(in characters: [Character], code: [Bool]) -> Set<Int> {
+        var offsets = Set<Int>()
+        var open = 0
+        while open + 3 < characters.count {
+            guard !code[open], !code[open + 2], !isLineBreak(characters[open + 2]),
+                  characters[open] == "(", characters[open + 1] == "*",
+                  characters[open + 2] != "*" else { open += 1; continue }
+            var close = open + 3
+            var containsSymbol = containsKaomojiSymbol(characters[open + 2])
+            while close + 1 < characters.count,
+                  !code[close], !isLineBreak(characters[close]),
+                  !(characters[close] == "*" && characters[close - 1] != "*" && characters[close + 1] == ")") {
+                containsSymbol = containsSymbol || containsKaomojiSymbol(characters[close])
+                close += 1
             }
-
-            if codeDelimiterLength == nil,
-               characters[index] == "*",
-               characters[index + 1] == "*",
-               characters[index - 1] != "*",
-               (index + 2 == characters.count || characters[index + 2] != "*"),
-               !isEscaped(characters, at: index),
-               !isMarkdownWhitespace(characters[index - 1]) {
-                return true
+            if close + 1 < characters.count, !code[close], !isLineBreak(characters[close]),
+               characters[close] == "*", characters[close + 1] == ")", containsSymbol {
+                offsets.insert(open + 1)
+                offsets.insert(close)
             }
-            index += 1
+            // Whether matched or stopped at a code/line/end boundary, the
+            // already searched prefix has no closer for any nested opener.
+            open = close + 1
         }
-        return false
+        return offsets
     }
 
-    private static func repairStrongEmphasisClosers(
-        in source: String,
-        marker: Character
-    ) -> (markdown: String, didInsertMarker: Bool) {
-        let characters = Array(source)
-        guard characters.count >= 7 else { return (source, false) }
-
+    private static func strongRepairOffsets(
+        in characters: [Character], code: [Bool], marker: Character
+    ) -> Set<Int> {
+        guard characters.count >= 7 else { return [] }
+        var delimiters: [Int] = []
         var insertionOffsets = Set<Int>()
-        var unmatchedStrongOpeners: [Int] = []
-        var codeDelimiterLength: Int?
-        var index = 0
-
-        while index + 1 < characters.count {
-            if characters[index] == "`", !isEscaped(characters, at: index) {
-                let start = index
-                while index < characters.count, characters[index] == "`" {
-                    index += 1
-                }
-                let runLength = index - start
-                if codeDelimiterLength == runLength {
-                    codeDelimiterLength = nil
-                } else if codeDelimiterLength == nil {
-                    codeDelimiterLength = runLength
-                }
-                continue
-            }
-
-            guard codeDelimiterLength == nil,
-                  characters[index] == "*",
-                  characters[index + 1] == "*",
+        var hasLaterCloserOnLine = false
+        // A reverse pass replaces a separate suffix search for every opener.
+        for index in characters.indices.reversed() {
+            if isLineBreak(characters[index]) { hasLaterCloserOnLine = false }
+            guard !code[index], index + 1 < characters.count,
+                  characters[index] == "*", characters[index + 1] == "*",
                   (index == 0 || characters[index - 1] != "*"),
                   (index + 2 == characters.count || characters[index + 2] != "*"),
-                  !isEscaped(characters, at: index) else {
-                index += 1
-                continue
+                  !isEscaped(characters, at: index) else { continue }
+            delimiters.append(index)
+            if hasLaterCloserOnLine, index > 0, index + 2 < characters.count,
+               !isMarkdownWhitespace(characters[index - 1]),
+               !isMarkdownPunctuation(characters[index - 1]),
+               isSupportedStrongOpeningPunctuation(characters[index + 2]) {
+                // CommonMark leaves 中文**“强调”** literal. A temporary marker
+                // supplies the missing boundary, then is removed after parsing.
+                insertionOffsets.insert(index + 2)
             }
+            if index > 0, !isMarkdownWhitespace(characters[index - 1]) {
+                hasLaterCloserOnLine = true
+            }
+        }
 
+        var unmatchedStrongOpeners: [Int] = []
+        for index in delimiters.reversed() {
             let previous = index > 0 ? characters[index - 1] : nil
-            let next = index + 2 < characters.count ? characters[index + 2] : nil
+            let next = insertionOffsets.contains(index + 2)
+                ? marker : (index + 2 < characters.count ? characters[index + 2] : nil)
             let canOpen = strongDelimiterCanOpen(previous: previous, next: next)
             let canClose = strongDelimiterCanClose(previous: previous, next: next)
-
             if canClose, !unmatchedStrongOpeners.isEmpty {
                 unmatchedStrongOpeners.removeLast()
             } else if canOpen,
-                      (
-                        isLineLeadingDelimiter(in: characters, at: index)
-                            || isCJKPunctuationCloserBoundary(previous: previous, next: next)
-                      ),
+                      (isLineLeadingDelimiter(in: characters, at: index)
+                        || isCJKPunctuationCloserBoundary(previous: previous, next: next)),
                       let opener = unmatchedStrongOpeners.last,
-                      hasNonWhitespaceContent(
-                        in: characters,
-                        between: opener + 2,
-                        and: index,
-                        excluding: marker
-                      ) {
-                // Models sometimes put a closing `**` at the beginning of the
-                // next line, or after CJK closing punctuation immediately
-                // before an emoji/suffix. CommonMark sees that run as another
-                // opener. A temporary marker supplies the missing
-                // right-flanking boundary; it is removed after parsing.
+                      opener + 2 < index {
+                // An opener always has non-whitespace content immediately after
+                // it. Models sometimes put its closer on the next line, or
+                // between CJK closing punctuation and an emoji/suffix.
                 insertionOffsets.insert(index)
                 unmatchedStrongOpeners.removeLast()
             } else if canOpen {
                 unmatchedStrongOpeners.append(index)
             }
-            index += 2
         }
+        return insertionOffsets
+    }
 
-        guard !insertionOffsets.isEmpty else { return (source, false) }
-        var result = ""
-        for (offset, character) in characters.enumerated() {
-            if insertionOffsets.contains(offset) {
-                result.append(marker)
-            }
-            result.append(character)
-        }
-        return (result, true)
+    private static func isLineBreak(_ character: Character) -> Bool {
+        character == "\n" || character == "\r" || character == "\r\n"
     }
 
     private static func strongDelimiterCanOpen(
@@ -5202,7 +5141,7 @@ private enum MarkdownRenderCache {
         var cursor = index - 1
         while true {
             let character = characters[cursor]
-            if character == "\n" || character == "\r" {
+            if isLineBreak(character) {
                 return true
             }
             if character != " " && character != "\t" {
@@ -5223,18 +5162,6 @@ private enum MarkdownRenderCache {
               !isMarkdownWhitespace(next),
               !isMarkdownPunctuation(next) else { return false }
         return true
-    }
-
-    private static func hasNonWhitespaceContent(
-        in characters: [Character],
-        between start: Int,
-        and end: Int,
-        excluding marker: Character
-    ) -> Bool {
-        guard start < end else { return false }
-        return characters[start..<end].contains { character in
-            character != marker && !isMarkdownWhitespace(character)
-        }
     }
 
     private static func isSupportedStrongOpeningPunctuation(

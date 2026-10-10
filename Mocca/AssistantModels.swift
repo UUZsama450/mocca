@@ -110,6 +110,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
     var background: String?
     var searchEnabled: Bool
     var searchMode: AssistantSearchMode
+    var messageTimeEnabled: Bool
     var localToolIDs: Set<String>
     var mcpServerIDs: [UUID]
     var enableMemory: Bool
@@ -156,6 +157,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         background: String? = nil,
         searchEnabled: Bool = false,
         searchMode: AssistantSearchMode = .automatic,
+        messageTimeEnabled: Bool = false,
         localToolIDs: Set<String> = [],
         mcpServerIDs: [UUID] = [],
         enableMemory: Bool = false,
@@ -193,6 +195,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         self.background = background
         self.searchEnabled = searchEnabled
         self.searchMode = searchMode
+        self.messageTimeEnabled = messageTimeEnabled
         self.localToolIDs = localToolIDs
         self.mcpServerIDs = mcpServerIDs
         self.enableMemory = enableMemory
@@ -239,6 +242,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         searchMode = AssistantSearchMode(
             rawValue: try container.decodeIfPresent(String.self, forKey: .searchMode) ?? ""
         ) ?? .automatic
+        messageTimeEnabled = try container.decodeIfPresent(Bool.self, forKey: .messageTimeEnabled) ?? false
         localToolIDs = Set(try container.decodeIfPresent([String].self, forKey: .localToolIDs) ?? [])
         mcpServerIDs = try container.decodeIfPresent([UUID].self, forKey: .mcpServerIDs) ?? []
         enableMemory = try container.decodeIfPresent(Bool.self, forKey: .enableMemory) ?? false

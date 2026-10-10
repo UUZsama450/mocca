@@ -2024,6 +2024,7 @@ struct ModelSelectorView: View {
     @State private var activeProviderID: UUID?
     @State private var editingModelItem: ModelSelectorItem?
     @State private var pressedModelKey: String?
+    @State private var searchCollapsedProviderIDs: Set<UUID> = []
     @FocusState private var searchFocused: Bool
     let context: SettingsPageContext
     let selectedSelection: ModelSelection?
@@ -2137,6 +2138,10 @@ struct ModelSelectorView: View {
             }
         }
         .modifier(ModelSelectorContextModifier(context: context, screenTitle: screenTitle))
+        .onChange(of: normalizedQuery) { _, _ in
+            // Search reveals matches without overwriting the saved browsing state.
+            searchCollapsedProviderIDs = []
+        }
         .sheet(item: $editingModelItem) { item in
             ModelConfigurationEditorSheet(item: item)
                 .presentationDetents([.fraction(0.72), .large])
@@ -2215,8 +2220,10 @@ struct ModelSelectorView: View {
                         if !items.isEmpty {
                             providerSectionHeader(provider)
                                 .id("provider-\(provider.id.uuidString)")
-                            ForEach(items, id: \.providerID) { item in
-                                modelCard(item, showsProvider: false)
+                            if !isProviderCollapsed(provider.id) {
+                                ForEach(items, id: \.providerID) { item in
+                                    modelCard(item, showsProvider: false)
+                                }
                             }
                         }
                     }
@@ -2252,21 +2259,64 @@ struct ModelSelectorView: View {
 
     private func providerSectionHeader(_ provider: ProviderConfiguration) -> some View {
         HStack(spacing: 8) {
-            ProviderGlyph(provider: provider, size: 26)
-            Text(provider.name)
-                .font(.system(size: 17, weight: .semibold))
-                .lineLimit(1)
-            Spacer(minLength: 8)
+            Button {
+                toggleProviderCollapsed(provider.id)
+            } label: {
+                HStack(spacing: 8) {
+                    ProviderGlyph(provider: provider, size: 26)
+                    Text(provider.name)
+                        .font(.system(size: 17, weight: .semibold))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isProviderCollapsed(provider.id) ? 0 : 90))
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(provider.name)
+            .accessibilityValue(isProviderCollapsed(provider.id) ? L10n.lookup("已折叠") : L10n.lookup("已展开"))
+            .accessibilityHint(isProviderCollapsed(provider.id) ? L10n.lookup("展开供应商模型") : L10n.lookup("折叠供应商模型"))
+            .accessibilityIdentifier("modelSelector.provider.\(provider.id.uuidString)")
             if provider.balanceEnabled {
                 ModelSelectorProviderBalance(configuration: provider)
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 42)
+        .frame(minHeight: 44)
         .background(
             Color.primary.opacity(0.035),
             in: RoundedRectangle(cornerRadius: 16, style: .continuous)
         )
+    }
+
+    private func isProviderCollapsed(_ id: UUID) -> Bool {
+        normalizedQuery.isEmpty
+            ? model.preferences.collapsedModelProviderIDs.contains(id)
+            : searchCollapsedProviderIDs.contains(id)
+    }
+
+    private func toggleProviderCollapsed(_ id: UUID) {
+        let collapse = !isProviderCollapsed(id)
+        withAnimation(.snappy(duration: 0.2)) {
+            model.updatePreferences { preferences in
+                if collapse {
+                    preferences.collapsedModelProviderIDs.insert(id)
+                } else {
+                    preferences.collapsedModelProviderIDs.remove(id)
+                }
+            }
+            if !normalizedQuery.isEmpty {
+                if collapse {
+                    searchCollapsedProviderIDs.insert(id)
+                } else {
+                    searchCollapsedProviderIDs.remove(id)
+                }
+            }
+        }
     }
 
     private func modelCard(_ item: ModelSelectorItem, showsProvider: Bool) -> some View {
@@ -3340,6 +3390,9 @@ private struct ModelConfigurationEditorSheet: View {
         let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         var updated = item.model
         updated.displayName = trimmedName.isEmpty ? item.model.id : trimmedName
+        if updated.displayName != item.model.displayName {
+            updated.isDisplayNameCustomized = !trimmedName.isEmpty && trimmedName != item.model.id
+        }
         updated.capabilityOverride = usesAutomaticCapabilities ? nil : normalized(capabilities)
         updated.customHeaders = cleaned(customHeaders)
         updated.customBody = cleaned(customBody)

@@ -27,6 +27,9 @@ enum AttachmentStore {
     private static let maxImageDimension: CGFloat = 2048
     private static let textPreviewCharacterLimit = 60_000
     private static let hashReadChunkSize = 1_048_576
+    private static let imagePreparationQueue = DispatchQueue(
+        label: "com.mocca.image-preparation", qos: .userInitiated
+    )
 
     static func directory() throws -> URL {
         guard let root = FileManager.default.urls(
@@ -64,14 +67,35 @@ enum AttachmentStore {
         return storageName
     }
 
-    static func saveImage(_ image: UIImage, quality: Int = 100) -> MessageAttachment? {
+    static func prepareImage(data: Data, id: UUID, quality: Int) async -> MessageAttachment? {
+        await prepareImage(id: id, quality: quality) { UIImage(data: data) }
+    }
+
+    static func prepareImage(_ image: UIImage, id: UUID, quality: Int) async -> MessageAttachment? {
+        await prepareImage(id: id, quality: quality) { image }
+    }
+
+    private static func prepareImage(
+        id: UUID, quality: Int, makeImage: @escaping @Sendable () -> UIImage?
+    ) async -> MessageAttachment? {
+        guard !Task.isCancelled else { return nil }
+        return await withCheckedContinuation { continuation in
+            imagePreparationQueue.async {
+                let attachment = autoreleasepool {
+                    makeImage().flatMap { saveImage($0, quality: quality, id: id) }
+                }
+                continuation.resume(returning: attachment)
+            }
+        }
+    }
+
+    static func saveImage(_ image: UIImage, quality: Int = 100, id: UUID = UUID()) -> MessageAttachment? {
         let scaled = downscaled(image)
         let compressionQuality = CGFloat(min(max(quality, 1), 100)) / 100
         guard let data = scaled.jpegData(compressionQuality: compressionQuality),
               let directory = try? directory() else {
             return nil
         }
-        let id = UUID()
         let url = directory.appendingPathComponent("\(id.uuidString).jpg")
         guard (try? data.write(to: url, options: .atomic)) != nil else { return nil }
         return MessageAttachment(
@@ -321,10 +345,15 @@ enum AttachmentStore {
         referencedBy messagesByConversation: [UUID: [ChatMessage]],
         retaining unsentAttachments: [MessageAttachment] = []
     ) -> ReclaimResult {
-        let attachments = messagesByConversation.values
-            .flatMap { $0 }.flatMap(\.attachments) + unsentAttachments
-        let referencedStorageNames = Set(
-            attachments.compactMap { persistedLocalReference(for: $0.localURL) }
+        // Collect names directly without copying the whole message/attachment
+        // graph into temporary arrays before the directory sweep.
+        var referencedStorageNames = Set(
+            messagesByConversation.values.lazy
+                .flatMap { $0 }.flatMap(\.attachments)
+                .compactMap { persistedLocalReference(for: $0.localURL) }
+        )
+        referencedStorageNames.formUnion(
+            unsentAttachments.lazy.compactMap { persistedLocalReference(for: $0.localURL) }
         )
         guard let attachmentDirectory = try? directory(),
               let storedURLs = try? FileManager.default.contentsOfDirectory(
@@ -380,8 +409,14 @@ enum AttachmentStore {
             return nil
         }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-        if content.count > textPreviewCharacterLimit {
-            return String(content.prefix(textPreviewCharacterLimit)) + "\n…（内容过长已截断）"
+        // Find the prefix boundary without counting every character in a large
+        // file. The full UTF-8 read still validates the original file, including
+        // its suffix, before the existing character-based truncation is applied.
+        if let end = content.index(
+            content.startIndex, offsetBy: textPreviewCharacterLimit,
+            limitedBy: content.endIndex
+        ), end < content.endIndex {
+            return String(content[..<end]) + "\n…（内容过长已截断）"
         }
         return content
     }
@@ -500,12 +535,12 @@ struct PendingAttachmentsStrip: View {
     @State private var imagePreview: MessageImagePreviewPresentation?
 
     var body: some View {
-        if !model.pendingAttachments.isEmpty {
+        if !model.pendingAttachmentItems.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(model.pendingAttachments) { attachment in
+                    ForEach(model.pendingAttachmentItems) { item in
                         ZStack(alignment: .topTrailing) {
-                            if attachment.kind == .image {
+                            if let attachment = item.attachment, attachment.kind == .image {
                                 Button {
                                     let images = model.pendingAttachments.filter { $0.kind == .image }
                                     guard let index = images.firstIndex(where: { $0.id == attachment.id }) else { return }
@@ -519,11 +554,13 @@ struct PendingAttachmentsStrip: View {
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(L10n.lookup("预览图片"))
                                 .accessibilityValue(attachment.fileName ?? L10n.lookup("图片"))
-                            } else {
+                            } else if let attachment = item.attachment {
                                 AttachmentThumbnail(attachment: attachment, size: 58)
+                            } else {
+                                PendingImagePreparationCard(didFail: item.didFail)
                             }
                             Button {
-                                model.removePendingAttachment(attachment.id)
+                                model.removePendingAttachment(item.id)
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 17))
@@ -549,13 +586,37 @@ struct PendingAttachmentsStrip: View {
     }
 }
 
+private struct PendingImagePreparationCard: View {
+    let didFail: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+            if didFail {
+                Image(systemName: "photo.badge.exclamationmark")
+                    .font(.system(size: 23))
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.secondary)
+            }
+        }
+        .frame(width: 58, height: 58)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.lookup(didFail ? "图片准备失败，请移除后重新选择" : "正在准备图片"))
+        .accessibilityIdentifier(didFail ? "composer.image.failed" : "composer.image.preparing")
+    }
+}
+
 struct AttachmentThumbnail: View {
     let attachment: MessageAttachment
     var size: CGFloat = 58
 
     var body: some View {
         if attachment.kind == .image {
-            MessageImageThumbnail(url: attachment.localURL, size: size, cornerRadius: 12)
+            MessageImageThumbnail(url: attachment.localURL, size: size, cornerRadius: 12, showsLoadingIndicator: true)
         } else {
             VStack(spacing: 4) {
                 Image(systemName: "doc.fill")
@@ -849,6 +910,7 @@ private struct MessageImageThumbnail: View {
     let url: URL?
     let size: CGFloat
     let cornerRadius: CGFloat
+    var showsLoadingIndicator = false
 
     @State private var result: Result?
 
@@ -900,6 +962,10 @@ private struct MessageImageThumbnail: View {
                     Image(systemName: "photo.badge.exclamationmark")
                         .font(.system(size: 24, weight: .medium))
                         .foregroundStyle(.secondary)
+                } else if showsLoadingIndicator {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.secondary)
                 }
             }
             .frame(width: size, height: size)

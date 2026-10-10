@@ -76,9 +76,9 @@ On macOS with Xcode installed, run `python3 CandidateTests/check_sponsorship_bui
 
 ## Runtime compilation / 运行行为编译配置
 
-The app target enables `STREAM_HEIGHT_PHONE_CANDIDATE` in Debug and Release to retain the streaming and viewport route used by the accepted phone build. Do not globally replace `SWIFT_ACTIVE_COMPILATION_CONDITIONS`: Swift packages need their own generated conditions, including Highlighter's `SWIFT_PACKAGE` resource lookup.
+The app target enables `STREAM_HEIGHT_PHONE_CANDIDATE` and `PROSE_MEASUREMENT_REUSE_CANDIDATE` in Debug and Release to retain the streaming, viewport and measurement-reuse behavior used by the installed phone build. Do not globally replace `SWIFT_ACTIVE_COMPILATION_CONDITIONS`: Swift packages need their own generated conditions, including Highlighter's `SWIFT_PACKAGE` resource lookup.
 
-主应用在 Debug 和 Release 默认开启已验收手机版使用的滚动路径。不要全局覆盖 Swift 编译条件，以免清掉 Highlighter 等 Swift 包所需的资源查找定义。
+主应用在 Debug 和 Release 默认开启当前手机版使用的滚动及文本测量复用路径。不要全局覆盖 Swift 编译条件，以免清掉 Highlighter 等 Swift 包所需的资源查找定义。
 
 Communication notifications declare `INSendMessageIntent` and the communication-notifications entitlement. Device builds need a signing profile that supports this capability.
 

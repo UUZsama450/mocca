@@ -2324,17 +2324,18 @@ final class OCRService {
 
         var collected: [String] = []
         for attachment in images {
+            guard !Task.isCancelled else { return nil }
             guard let url = attachment.localURL else { continue }
             let key = url.path
             if let cached = cachedText(for: key) {
                 collected.append(cached)
                 continue
             }
-            guard let data = try? Data(contentsOf: url) else { continue }
-            let image = ChatRequestImage(
-                mimeType: attachment.mimeType ?? "image/jpeg",
-                base64Data: data.base64EncodedString()
+            let prepared = try? await ChatRequestAttachments.prepare(
+                [attachment], imageIDs: [attachment.id]
             )
+            guard !Task.isCancelled else { return nil }
+            guard let image = prepared?.images.first else { continue }
             guard let recognized = await recognize(
                 image: image,
                 provider: provider,
