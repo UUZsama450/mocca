@@ -1,11 +1,13 @@
 {
   "version": "1.0.2",
-  "build": "5189",
+  "build": "5173",
+  "phoneBuild": "5189",
+  "releaseVersionBumped": false,
   "phoneSourceCommit": "fff84ba1138376dd31717855cce0e0363e4d9d5e",
   "installedBaseline": "1.0.2 (5189)",
   "phoneFrozenInputCount": 155,
   "portableInputCount": 147,
-  "note": "Shared application logic matches the installed build. Existing portable defaults, signing, artwork and synthetic wording are preserved. The phone project used a build-number override; this project declares 5189 directly. No send-timing entry or observer is included.",
+  "note": "Shared application logic matches the installed build. Existing portable defaults, signing, artwork and synthetic wording are preserved. Phone build 5189 used a build-number override. This source update retains the previous GitHub version metadata, 1.0.2 (5173), and is recorded as unreleased. No send-timing entry or observer is included.",
   "sharedSwiftPortabilityDifferencesUnchangedFrom5173": true,
   "sharedSwiftFilesCompared": 55,
   "differencesFromDevelopment": [
@@ -24,8 +26,8 @@
     {
       "path": "Mocca.xcodeproj/project.pbxproj",
       "phoneSHA256": "b925220677eea78fa23c83c69afb7bac2dda3fa8f7e3fef037043afb21049084",
-      "portableSHA256": "cdc90783ad82739f5636c5ddab0510b2137d16d5b532ad2c79b43b07137f17e0",
-      "reason": "Build 5189 metadata, established portable signing and reviewed asset selection; both app runtime compilation conditions match the installed build."
+      "portableSHA256": "c0f5525954c7e5152e74cb338c9256c70d1933dd64fa3a4af9d0384f5f020911",
+      "reason": "Version metadata remains 1.0.2 (5173) by user request. Established portable signing and reviewed assets are preserved; runtime conditions match phone build 5189."
     },
     {
       "path": "Mocca.xcodeproj/xcshareddata/xcschemes/Mocca.xcscheme",
@@ -337,7 +339,7 @@
     "Mocca/AppIcon.icon/Assets/background.png": "461fa732930cb2c9eadfeff154b9c0d692fca09e5a5d5296c2b082849a8537c8",
     "Mocca/AppIcon.icon/Assets/eyes.png": "63f1221583ef873f752379c1e302c0dde26d9bb7efb95be126ad64dee6b95c25",
     "Mocca/AppIcon.icon/Assets/cat-face.png": "6011bd8b8fb4eebd2fe80b35f932f6497405b8f399ab005abd53ef21444a2f40",
-    "Mocca.xcodeproj/project.pbxproj": "cdc90783ad82739f5636c5ddab0510b2137d16d5b532ad2c79b43b07137f17e0",
+    "Mocca.xcodeproj/project.pbxproj": "c0f5525954c7e5152e74cb338c9256c70d1933dd64fa3a4af9d0384f5f020911",
     "Mocca.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved": "38d9614dbf9efe7b5f6d7e06c72cba50eff11a7f859e059aa7eb0860e7517dca",
     "Mocca.xcodeproj/xcshareddata/xcschemes/Mocca.xcscheme": "fb6ca73929694ffee92865e9fa60ea0109cd7f024ab9d83b7ab919f9bccef168",
     "GenerationActivityExtension/GenerationActivityExtension.swift": "6a3a548268f1be6a15a4114764e566cc75e3cb304089898f6a5382fce72aba34",

@@ -1,6 +1,6 @@
 # 更新记录 / Changelog
 
-## 1.0.2（5189）— 源码同步 / Source update
+## 未发布 / Unreleased
 
 相较上一份 GitHub 源码 **1.0.2（5173）**，同步到手机 5189 已采用的改动。
 

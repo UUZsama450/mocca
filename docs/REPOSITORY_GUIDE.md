@@ -4,9 +4,9 @@
 
 ## Source snapshot / 源码快照
 
-This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0.2 (5189)**. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
+This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0.2** with unreleased improvements from phone build 5189. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
 
-本仓库从开发版 1.0（5058）的源码快照开始，现已更新至 **1.0.2（5189）**，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
+本仓库从开发版 1.0（5058）的源码快照开始，当前版本标记仍为 **1.0.2**，源码纳入了来自手机 5189 的未发布改动，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
 
 This is a portable source snapshot for the private [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Configurable signing identity, disabled-by-default sponsorship and the reviewed asset set distinguish it from the device build. This update does not create a downloadable app or change App Store releases.
 
