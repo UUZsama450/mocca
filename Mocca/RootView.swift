@@ -2622,15 +2622,20 @@ struct RootView: View {
             ProviderSettingsView()
         }
         .sheet(isPresented: $model.isModelSelectorPresented) {
-            ModelSelectorView(
-                selectedSelection: model.effectiveModelContext?.selection,
-                screenTitle: L10n.lookup("聊天模型"),
-                chatOnly: true,
-                onSelect: { selection in
-                    guard let selection else { return }
-                    model.selectChatModelForCurrentAssistant(selection)
-                }
-            )
+            if model.selectedConversationIsGroupChat,
+               let conversationID = model.selectedConversation?.id {
+                GroupChatMembersView(conversationID: conversationID)
+            } else {
+                ModelSelectorView(
+                    selectedSelection: model.effectiveModelContext?.selection,
+                    screenTitle: L10n.lookup("聊天模型"),
+                    chatOnly: true,
+                    onSelect: { selection in
+                        guard let selection else { return }
+                        model.selectChatModelForCurrentAssistant(selection)
+                    }
+                )
+            }
         }
         .sheet(isPresented: $model.isAssistantSelectorPresented) {
             AssistantSelectorView()
@@ -2770,11 +2775,16 @@ struct RootView: View {
         let conversationID = bottomToolAttachmentDestinationConversationID
             ?? model.selectedConversationID
         bottomToolPhotoSelection = []
+        let ids = model.beginPendingImages(count: items.count, for: conversationID)
         Task { @MainActor in
-            for item in items {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    model.addPendingImage(image, for: conversationID)
+            for (item, id) in zip(items, ids) {
+                // Removing an unstarted card also skips its transfer and encoding.
+                guard model.canPreparePendingImage(id, for: conversationID) else { continue }
+                if !Task.isCancelled,
+                   let data = try? await item.loadTransferable(type: Data.self) {
+                    await model.preparePendingImage(data, id: id, for: conversationID)
+                } else {
+                    model.finishPendingImageFailure(id, for: conversationID)
                 }
             }
             if bottomToolAttachmentDestinationConversationID == conversationID {
@@ -18458,7 +18468,7 @@ private struct DrawerBottomActionsPalette {
         let selectedARGB: Int
         switch theme {
         case .defaultPalette:
-            selectedARGB = 0xff242426
+            selectedARGB = 0xff1a1a1c
         case .custom:
             selectedARGB = customARGB
         default:

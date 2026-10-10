@@ -593,6 +593,20 @@ enum UserBubbleSendAnimationStyle: String, Codable, CaseIterable, Identifiable, 
     }
 }
 
+enum ComposerModelEntryStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+    case name
+    case bubble
+
+    var id: String { rawValue }
+
+    @MainActor var title: String {
+        switch self {
+        case .name: L10n.lookup("模型名称")
+        case .bubble: L10n.lookup("气泡图标")
+        }
+    }
+}
+
 struct UserPreferences: Codable, Hashable, Sendable {
     static let defaultOCRPrompt = """
     Read the supplied image and produce a faithful reference for the conversation.
@@ -633,6 +647,8 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var chatInputBackgroundOpacityDark: Double
     var useLiquidGlassComposer: Bool
     var chatInputPlaceholder: String
+    var composerModelEntryStyle: ComposerModelEntryStyle
+    var collapsedModelProviderIDs: Set<UUID>
     var userImageCompressionQuality: Int
     var resendHistoricalImages: Bool
     var historicalImageResendLimit: Int
@@ -754,6 +770,8 @@ struct UserPreferences: Codable, Hashable, Sendable {
         chatInputBackgroundOpacityDark: Double = 0.7396,
         useLiquidGlassComposer: Bool = false,
         chatInputPlaceholder: String = "",
+        composerModelEntryStyle: ComposerModelEntryStyle = .name,
+        collapsedModelProviderIDs: Set<UUID> = [],
         userImageCompressionQuality: Int = 100,
         resendHistoricalImages: Bool = false,
         historicalImageResendLimit: Int = 5,
@@ -885,6 +903,8 @@ struct UserPreferences: Codable, Hashable, Sendable {
         self.chatInputBackgroundOpacityDark = Self.clamp(chatInputBackgroundOpacityDark, min: 0.0, max: 1.0)
         self.useLiquidGlassComposer = useLiquidGlassComposer
         self.chatInputPlaceholder = Self.cleanedPlaceholder(chatInputPlaceholder)
+        self.composerModelEntryStyle = composerModelEntryStyle
+        self.collapsedModelProviderIDs = collapsedModelProviderIDs
         self.userImageCompressionQuality = min(max(userImageCompressionQuality, 1), 100)
         self.resendHistoricalImages = resendHistoricalImages
         self.historicalImageResendLimit = min(max(historicalImageResendLimit, 1), 10)
@@ -1056,6 +1076,10 @@ struct UserPreferences: Codable, Hashable, Sendable {
         chatInputPlaceholder = Self.cleanedPlaceholder(
             try container.decodeIfPresent(String.self, forKey: .chatInputPlaceholder) ?? ""
         )
+        composerModelEntryStyle = ComposerModelEntryStyle(
+            rawValue: try container.decodeIfPresent(String.self, forKey: .composerModelEntryStyle) ?? ""
+        ) ?? .name
+        collapsedModelProviderIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .collapsedModelProviderIDs) ?? []
         userImageCompressionQuality = min(
             max(try container.decodeIfPresent(Int.self, forKey: .userImageCompressionQuality) ?? 100, 1),
             100

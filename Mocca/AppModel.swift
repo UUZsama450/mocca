@@ -124,12 +124,32 @@ private struct MessageWindowState: Equatable {
     }
 }
 
+struct ComposerAttachmentItem: Identifiable {
+    let id: UUID
+    var attachment: MessageAttachment?
+    var didFail = false
+
+    init(id: UUID = UUID()) {
+        self.id = id
+    }
+
+    init(attachment: MessageAttachment) {
+        id = attachment.id
+        self.attachment = attachment
+    }
+}
+
 private struct ConversationComposerPacket {
     var text = ""
-    var attachments: [MessageAttachment] = []
+    var attachmentItems: [ComposerAttachmentItem] = []
+
+    var attachments: [MessageAttachment] {
+        get { attachmentItems.compactMap(\.attachment) }
+        set { attachmentItems = newValue.map(ComposerAttachmentItem.init(attachment:)) }
+    }
 
     var isEmpty: Bool {
-        text.isEmpty && attachments.isEmpty
+        text.isEmpty && attachmentItems.isEmpty
     }
 }
 
@@ -200,22 +220,6 @@ private struct SelectedMessageProjectionCache {
 private enum ConversationPersistenceState {
     case ready
     case blocked(reason: String)
-}
-
-private struct ConversationSaveIdentity: Sendable {
-    let conversationCount: Int
-    let messageCount: Int
-    let conversationIDs: Set<UUID>
-    let messageIDs: Set<UUID>
-
-    static func capture(_ snapshot: ConversationSnapshot) -> Self {
-        Self(
-            conversationCount: snapshot.conversations.count,
-            messageCount: snapshot.messagesByConversation.values.reduce(0) { $0 + $1.count },
-            conversationIDs: Set(snapshot.conversations.map(\.id)),
-            messageIDs: Set(snapshot.messagesByConversation.values.joined().lazy.map(\.id))
-        )
-    }
 }
 
 private final class ConversationStoreSaveRequest: @unchecked Sendable {
@@ -349,20 +353,21 @@ private final class ConversationStoreSaveExecutor: @unchecked Sendable {
         if let latchedFailureDescription {
             return .failure(latchedFailureDescription)
         }
-        // Snapshot capture/submission stays ordered on MainActor. The full ID
-        // walk and its existing reduction checks belong to this same serial
-        // lane as the durable write, so an awaited stream save frees the UI.
-        let identity = ConversationSaveIdentity.capture(request.snapshot)
-        if let reason = request.validationFailure(for: identity) {
-            latchedFailureDescription = reason
-            return .failure(reason)
-        }
+        // The store derives this snapshot's IDs once, then runs the existing
+        // application checks before any load, recovery, or durable mutation.
+        // Snapshot capture and submission keep their established ordering.
         do {
-            try store.save(
+            let identity = try store.save(
                 request.snapshot,
                 preserveExistingBackup: request.preserveExistingBackup,
                 authorizedDestructiveReduction:
-                    request.authorizedDestructiveReduction
+                    request.authorizedDestructiveReduction,
+                validatingIdentity: { identity in
+                    if let reason = request.validationFailure(for: identity) {
+                        throw NSError(domain: "Mocca.SaveIdentity", code: 1,
+                                      userInfo: [NSLocalizedDescriptionKey: reason])
+                    }
+                }
             )
             return .success(identity)
         } catch {
@@ -797,6 +802,15 @@ final class AppModel {
     var pendingAttachments: [MessageAttachment] {
         get { composerPendingAttachments(for: selectedConversationID) }
         set { setComposerPendingAttachments(newValue, for: selectedConversationID) }
+    }
+
+    var pendingAttachmentItems: [ComposerAttachmentItem] {
+        composerPacketsByConversation[selectedConversationID]?.attachmentItems ?? []
+    }
+
+    func hasUnreadyImages(for conversationID: UUID) -> Bool {
+        composerPacketsByConversation[conversationID]?.attachmentItems
+            .contains(where: { $0.attachment == nil }) == true
     }
 
     private var activeStreamingMessageIDsByConversation: [UUID: UUID] = [:]
@@ -1403,7 +1417,14 @@ final class AppModel {
                     )
                     conversations.insert(recovered, at: 0)
                     conversationMessageStore[recovered.id] = []
-                    composerPacketsByConversation[recovered.id] = packet
+                    var recoveredPacket = packet
+                    // In-flight imports still belong to the old destination.
+                    // Expose their failure instead of leaving a permanent spinner.
+                    for index in recoveredPacket.attachmentItems.indices
+                        where recoveredPacket.attachmentItems[index].attachment == nil {
+                        recoveredPacket.attachmentItems[index].didFail = true
+                    }
+                    composerPacketsByConversation[recovered.id] = recoveredPacket
                     unsavedDraftConversationIDs.insert(recovered.id)
                     if id == previousSelectedID { recoveredSelection = recovered.id }
                     detachedDraftCount += 1
@@ -1505,7 +1526,13 @@ final class AppModel {
                 PendingGenerationCompletionJournal.removeFiles(
                     pendingCompletionRecovery.filesReadyForRemoval
                 )
-                if !didRecoverFromBackup {
+                // A worker may have saved an image whose completion has not
+                // reached the main actor yet. Defer this optional sweep until
+                // a later reload/launch rather than reclaim its new file.
+                let hasPreparingImages = composerPacketsByConversation.values.contains {
+                    $0.attachmentItems.contains { $0.attachment == nil && !$0.didFail }
+                }
+                if !didRecoverFromBackup && !hasPreparingImages {
                     logAttachmentReclaimResult(
                         AttachmentStore.reclaimUnreferencedFiles(
                             referencedBy: messagesByConversation,
@@ -2015,38 +2042,46 @@ final class AppModel {
             }
         }
 
+        func precedes(_ lhs: ChatMessage, _ rhs: ChatMessage) -> Bool {
+            if lhs.version != rhs.version { return lhs.version < rhs.version }
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+
         var order: [String] = []
-        var grouped: [String: [(rawIndex: Int, message: ChatMessage)]] = [:]
+        var entries: [String: (first: Int, selected: Int)] = [:]
         for (rawIndex, message) in rawMessages.enumerated() {
             let groupKey = message.versionGroupKey
-            if grouped[groupKey] == nil {
+            guard let previous = entries[groupKey] else {
                 order.append(groupKey)
-                grouped[groupKey] = []
+                entries[groupKey] = (rawIndex, rawIndex)
+                continue
             }
-            grouped[groupKey, default: []].append((rawIndex, message))
+            let selected = rawMessages[previous.selected]
+            let requestedVersion = selections[groupKey]
+            let shouldReplace: Bool
+            if message.version == requestedVersion {
+                // An explicit version uses its earliest date/ID, matching the
+                // first entry of the old sorted group, including exact ties.
+                shouldReplace = selected.version != requestedVersion
+                    || precedes(message, selected)
+            } else {
+                // Without a matching selection, use the greatest version/date/ID.
+                // Replace equal entries too: the old fallback was sorted.last.
+                shouldReplace = selected.version != requestedVersion
+                    && !precedes(message, selected)
+            }
+            if shouldReplace { entries[groupKey]?.selected = rawIndex }
         }
 
         var selectedRawIndices: [Int] = []
-        let projection: [SelectedMessageProjection] = order.compactMap { groupKey in
-            guard let entries = grouped[groupKey], !entries.isEmpty else { return nil }
-            let sorted = entries.sorted { lhs, rhs in
-                if lhs.message.version != rhs.message.version {
-                    return lhs.message.version < rhs.message.version
-                }
-                if lhs.message.createdAt != rhs.message.createdAt {
-                    return lhs.message.createdAt < rhs.message.createdAt
-                }
-                return lhs.message.id.uuidString < rhs.message.id.uuidString
-            }
-            let selectedVersion = selections[groupKey]
-            let selected = selectedVersion.flatMap { version in
-                sorted.first(where: { $0.message.version == version })
-            } ?? sorted.last!
-            selectedRawIndices.append(selected.rawIndex)
+        let projection: [SelectedMessageProjection] = order.map { groupKey in
+            let entry = entries[groupKey]!
+            selectedRawIndices.append(entry.selected)
             return SelectedMessageProjection(
                 groupKey: groupKey,
-                message: selected.message,
-                firstRawIndex: entries.map { $0.rawIndex }.min() ?? selected.rawIndex
+                message: rawMessages[entry.selected],
+                firstRawIndex: entry.first
             )
         }
         if suppliedMessages == nil {
@@ -2465,8 +2500,8 @@ final class AppModel {
         hasReadyChatModel(for: currentAssistant)
     }
 
-    private func hasReadyChatModel(for assistant: AssistantProfile) -> Bool {
-        guard let context = modelContext(for: assistant),
+    private func hasReadyChatModel(for assistant: AssistantProfile, conversationID: UUID? = nil) -> Bool {
+        guard let context = modelContext(for: assistant, conversationID: conversationID),
               context.provider.hasUsableAPIKey else {
             return false
         }
@@ -2475,7 +2510,12 @@ final class AppModel {
         }
     }
 
-    func modelContext(for assistant: AssistantProfile) -> (selection: ModelSelection, provider: ProviderConfiguration)? {
+    func modelContext(for assistant: AssistantProfile, conversationID: UUID? = nil) -> (selection: ModelSelection, provider: ProviderConfiguration)? {
+        if let conversationID,
+           let selection = groupChatModelSelection(for: assistant.id, conversationID: conversationID),
+           let context = resolvedChatModel(for: selection) {
+            return (context.selection, context.provider)
+        }
         if let bound = assistant.chatModel,
            let provider = providers.first(where: { $0.id == bound.providerID && $0.enabled }),
            provider.models.contains(where: { $0.id == bound.modelID }) {
@@ -2489,10 +2529,41 @@ final class AppModel {
         return nil
     }
 
+    func groupChatModelSelection(for assistantID: UUID, conversationID: UUID) -> ModelSelection? {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }),
+              conversation.groupAssistantIDs.count >= 2,
+              conversation.groupAssistantIDs.contains(assistantID.uuidString) else { return nil }
+        return conversation.groupModelSelections?[assistantID.uuidString]
+    }
+
+    @discardableResult
+    func selectGroupChatModel(_ selection: ModelSelection?, for assistantID: UUID, conversationID: UUID) -> Bool {
+        guard requireConversationPersistence(),
+              let index = conversations.firstIndex(where: { $0.id == conversationID }),
+              conversations[index].groupAssistantIDs.count >= 2,
+              conversations[index].groupAssistantIDs.contains(assistantID.uuidString),
+              selection == nil || resolvedChatModel(for: selection) != nil else { return false }
+        let previous = conversations[index].groupModelSelections
+        var selections = previous ?? [:]
+        selections[assistantID.uuidString] = selection
+        conversations[index].groupModelSelections = selections.isEmpty ? nil : selections
+        guard saveImmediately() else {
+            conversations[index].groupModelSelections = previous
+            return false
+        }
+        return true
+    }
+
     var effectiveModelTitle: String {
         guard let context = effectiveModelContext else { return "选择模型" }
         let configuration = context.provider.models.first { $0.id == context.selection.modelID }
         return configuration?.displayName ?? context.selection.modelID
+    }
+
+    var composerModelTitle: String {
+        guard let context = effectiveModelContext else { return L10n.lookup("选择模型") }
+        return context.provider.models.first { $0.id == context.selection.modelID }?.composerDisplayName
+            ?? context.selection.modelID
     }
 
     func modelTitle(for assistant: AssistantProfile) -> String {
@@ -5339,6 +5410,7 @@ final class AppModel {
         unsavedDraftConversationIDs.subtract(deletedConversationIDs)
         for conversationIndex in conversations.indices where conversations[conversationIndex].groupAssistantIDs.contains(assistantID) {
             conversations[conversationIndex].groupAssistantIDs.removeAll { $0 == assistantID }
+            conversations[conversationIndex].groupModelSelections?.removeValue(forKey: assistantID)
             if conversations[conversationIndex].assistantID == assistantID {
                 conversations[conversationIndex].assistantID = conversations[conversationIndex].groupAssistantIDs.first
             }
@@ -5542,6 +5614,7 @@ final class AppModel {
             updatedAt: now,
             assistantID: sourceConversation.assistantID,
             groupAssistantIDs: sourceConversation.groupAssistantIDs,
+            groupModelSelections: sourceConversation.groupModelSelections,
             providerID: sourceConversation.providerID,
             modelID: sourceConversation.modelID
         )
@@ -5556,6 +5629,7 @@ final class AppModel {
                 role: source.role,
                 text: source.text,
                 createdAt: source.createdAt,
+                sentTimeZoneOffsetSeconds: source.sentTimeZoneOffsetSeconds,
                 updatedAt: source.updatedAt,
                 status: source.status == .streaming ? .interrupted : source.status,
                 parts: source.parts,
@@ -5628,6 +5702,8 @@ final class AppModel {
         let previousOwnerID = conversations[index].assistantID
         let ownerID = previousOwnerID.flatMap { validIDs.contains($0) ? $0 : nil } ?? validIDs.first
         conversations[index].groupAssistantIDs = validIDs
+        conversations[index].groupModelSelections = conversations[index].groupModelSelections?
+            .filter { validIDs.contains($0.key) }
         conversations[index].assistantID = ownerID
         if retainedAutomaticPlaceholder {
             conversations[index].title = defaultGroupConversationTitle(assistantIDs: validIDs)
@@ -6573,6 +6649,7 @@ final class AppModel {
                     groupAssistantIDs: existing.groupAssistantIDs.isEmpty
                         ? importedConversation.groupAssistantIDs
                         : existing.groupAssistantIDs,
+                    groupModelSelections: existing.groupModelSelections ?? importedConversation.groupModelSelections,
                     truncateIndex: existing.truncateIndex,
                     versionSelections: existing.versionSelections,
                     summary: existing.summary,
@@ -7018,19 +7095,70 @@ final class AppModel {
     }
 
     func addPendingImage(_ image: UIImage, for conversationID: UUID) {
-        guard conversations.contains(where: { $0.id == conversationID }) else {
+        guard let id = beginPendingImages(count: 1, for: conversationID).first else { return }
+        let quality = preferences.userImageCompressionQuality
+        Task {
+            guard canPreparePendingImage(id, for: conversationID) else { return }
+            let attachment = await AttachmentStore.prepareImage(image, id: id, quality: quality)
+            finishPendingImage(id, attachment: attachment, for: conversationID)
+        }
+    }
+
+    func beginPendingImages(count: Int, for conversationID: UUID) -> [UUID] {
+        guard count > 0, conversations.contains(where: { $0.id == conversationID }) else { return [] }
+        let items = (0..<count).map { _ in ComposerAttachmentItem() }
+        updateComposerPacket(for: conversationID) { $0.attachmentItems.append(contentsOf: items) }
+        return items.map(\.id)
+    }
+
+    func canPreparePendingImage(_ id: UUID, for conversationID: UUID) -> Bool {
+        conversations.contains(where: { $0.id == conversationID })
+            && composerPacketsByConversation[conversationID]?.attachmentItems.contains {
+                $0.id == id && $0.attachment == nil && !$0.didFail
+            } == true
+    }
+
+    func preparePendingImage(_ data: Data, id: UUID, for conversationID: UUID) async {
+        guard canPreparePendingImage(id, for: conversationID) else { return }
+        guard !Task.isCancelled else {
+            finishPendingImageFailure(id, for: conversationID)
             return
         }
-        guard let attachment = AttachmentStore.saveImage(
-            image,
-            quality: preferences.userImageCompressionQuality
-        ) else {
-            presentError(L10n.lookup("图片保存失败"))
+        let attachment = await AttachmentStore.prepareImage(
+            data: data, id: id, quality: preferences.userImageCompressionQuality
+        )
+        finishPendingImage(id, attachment: attachment, for: conversationID)
+    }
+
+    func finishPendingImage(_ id: UUID, attachment: MessageAttachment?, for conversationID: UUID) {
+        guard canPreparePendingImage(id, for: conversationID),
+              !Task.isCancelled else {
+            if let attachment { AttachmentStore.delete(attachment) }
+            // A cancelled batch must not leave a surviving slot spinning.
+            if canPreparePendingImage(id, for: conversationID) {
+                finishPendingImageFailure(id, for: conversationID)
+            }
             return
         }
-        var attachments = composerPendingAttachments(for: conversationID)
-        attachments.append(attachment)
-        setComposerPendingAttachments(attachments, for: conversationID)
+        updateComposerPacket(for: conversationID) { packet in
+            guard let index = packet.attachmentItems.firstIndex(where: { $0.id == id }) else { return }
+            packet.attachmentItems[index].attachment = attachment
+            packet.attachmentItems[index].didFail = attachment == nil
+        }
+    }
+
+    func finishPendingImageFailure(_ id: UUID, for conversationID: UUID) {
+        guard canPreparePendingImage(id, for: conversationID) else { return }
+        updateComposerPacket(for: conversationID) { packet in
+            guard let index = packet.attachmentItems.firstIndex(where: { $0.id == id }) else { return }
+            packet.attachmentItems[index].didFail = true
+        }
+    }
+
+    private func appendComposerAttachment(_ attachment: MessageAttachment, for conversationID: UUID) {
+        updateComposerPacket(for: conversationID) {
+            $0.attachmentItems.append(ComposerAttachmentItem(attachment: attachment))
+        }
     }
 
     /// A generated TXT belongs to the paste that requested it. Recheck its
@@ -7051,9 +7179,7 @@ final class AppModel {
             AttachmentStore.delete(attachment)
             return false
         }
-        var attachments = composerPendingAttachments(for: conversationID)
-        attachments.append(attachment)
-        setComposerPendingAttachments(attachments, for: conversationID)
+        appendComposerAttachment(attachment, for: conversationID)
         return true
     }
 
@@ -7111,14 +7237,14 @@ final class AppModel {
             presentError(L10n.format("无法读取文件“%@”", [inspection.fileName]))
             return
         }
-        var attachments = composerPendingAttachments(for: conversationID)
-        attachments.append(attachment)
-        setComposerPendingAttachments(attachments, for: conversationID)
+        appendComposerAttachment(attachment, for: conversationID)
     }
 
     func removePendingAttachment(_ id: UUID) {
         let removedAttachment = pendingAttachments.first(where: { $0.id == id })
-        pendingAttachments.removeAll { $0.id == id }
+        updateComposerPacket(for: selectedConversationID) {
+            $0.attachmentItems.removeAll { $0.id == id }
+        }
         if let removedAttachment {
             deleteAttachmentIfUnreferenced(removedAttachment)
         }
@@ -7236,6 +7362,7 @@ final class AppModel {
 
     func sendDraft(for conversationID: UUID) -> Bool {
         guard selectedConversationID == conversationID else { return false }
+        guard !hasUnreadyImages(for: conversationID) else { return false }
         guard requireConversationPersistence(),
               selectedConversationID == conversationID,
               selectedConversation?.id == conversationID else { return false }
@@ -7257,11 +7384,11 @@ final class AppModel {
 
         let replyAssistants = replyAssistantsForCurrentSend()
         guard let replyAssistant = replyAssistants.first else { return false }
-        guard hasReadyChatModel(for: replyAssistant) else {
+        guard hasReadyChatModel(for: replyAssistant, conversationID: conversationID) else {
             presentModelSetupForSend()
             return false
         }
-        guard let context = activeProviderContext(for: replyAssistant) else {
+        guard let context = activeProviderContext(for: replyAssistant, conversationID: conversationID) else {
             return false
         }
 
@@ -7277,6 +7404,7 @@ final class AppModel {
             role: .user,
             text: text,
             createdAt: now,
+            sentTimeZoneOffsetSeconds: TimeZone.current.secondsFromGMT(for: now),
             updatedAt: now,
             attachments: attachments,
             modelID: context.selection.modelID,
@@ -7716,7 +7844,7 @@ final class AppModel {
             message: replySourceMessage,
             conversationID: location.conversationID
         )
-        guard let context = activeProviderContext(for: replyAssistant) else { return }
+        guard let context = activeProviderContext(for: replyAssistant, conversationID: location.conversationID) else { return }
         let previousSummaryInput = conversationSummaryInputSnapshot(
             conversationID: location.conversationID,
             rawMessages: rawMessages
@@ -7795,7 +7923,7 @@ final class AppModel {
             message: targetMessage,
             conversationID: location.conversationID
         )
-        guard let context = activeProviderContext(for: replyAssistant) else { return }
+        guard let context = activeProviderContext(for: replyAssistant, conversationID: location.conversationID) else { return }
         let previousSummaryInput = conversationSummaryInputSnapshot(
             conversationID: location.conversationID,
             rawMessages: rawMessages
@@ -8000,27 +8128,10 @@ final class AppModel {
                     preparedAssistantMessage: preparedInitialAssistantMessage
                 )
                 self.markReplyUnreadIfNeeded(for: conversationID)
-            } catch is CancellationError {
-                guard self.isCurrentStreamingRun(conversationID, runID: runID) else { return }
-                let messageID = self.activeStreamingMessageIDsByConversation[conversationID]
-                self.finishStreaming(conversationID: conversationID, removeIfEmpty: true, cancelled: true)
-                if let messageID {
-                    IOSBackgroundGenerationManager.shared.cancel(runID: messageID)
-                }
             } catch {
-                guard self.isCurrentStreamingRun(conversationID, runID: runID) else { return }
-                let messageID = self.activeStreamingMessageIDsByConversation[conversationID]
-                let partial = self.finishStreaming(conversationID: conversationID, removeIfEmpty: true, failureDescription: error.localizedDescription)
-                if let messageID {
-                    self.pendingImageRequestsByMessageID.removeValue(forKey: messageID)
-                    self.searchImageCandidatesByMessageID.removeValue(forKey: messageID)
-                    self.pendingSearchImageRequestsByMessageID.removeValue(forKey: messageID)
-                    IOSBackgroundGenerationManager.shared.fail(
-                        runID: messageID,
-                        partialMessage: partial?.text ?? ""
-                    )
-                }
-                self.presentError(error.localizedDescription)
+                self.finishUnsuccessfulStreamingRun(
+                    conversationID: conversationID, runID: runID, error: error
+                )
             }
         }
         streamingTasksByConversation[conversationID] = task
@@ -8066,7 +8177,7 @@ final class AppModel {
                 let context: (selection: ModelSelection, provider: ProviderConfiguration)
                 if index == 0 {
                     context = firstContext
-                } else if let resolved = self.activeProviderContext(for: assistant) {
+                } else if let resolved = self.activeProviderContext(for: assistant, conversationID: conversationID) {
                     context = resolved
                 } else {
                     guard self.isCurrentStreamingRun(conversationID, runID: runID) else { return }
@@ -8095,34 +8206,43 @@ final class AppModel {
                             : nil
                     )
                     runningMessages.append(completed)
-                } catch is CancellationError {
-                    guard self.isCurrentStreamingRun(conversationID, runID: runID) else { return }
-                    let messageID = self.activeStreamingMessageIDsByConversation[conversationID]
-                    self.finishStreaming(conversationID: conversationID, removeIfEmpty: true, cancelled: true)
-                    if let messageID {
-                        IOSBackgroundGenerationManager.shared.cancel(runID: messageID)
-                    }
-                    return
                 } catch {
-                    guard self.isCurrentStreamingRun(conversationID, runID: runID) else { return }
-                    let messageID = self.activeStreamingMessageIDsByConversation[conversationID]
-                    let partial = self.finishStreaming(conversationID: conversationID, removeIfEmpty: true, failureDescription: error.localizedDescription)
-                    if let messageID {
-                        self.pendingImageRequestsByMessageID.removeValue(forKey: messageID)
-                        self.searchImageCandidatesByMessageID.removeValue(forKey: messageID)
-                        self.pendingSearchImageRequestsByMessageID.removeValue(forKey: messageID)
-                        IOSBackgroundGenerationManager.shared.fail(
-                            runID: messageID,
-                            partialMessage: partial?.text ?? ""
-                        )
-                    }
-                    self.presentError(error.localizedDescription)
+                    self.finishUnsuccessfulStreamingRun(
+                        conversationID: conversationID, runID: runID, error: error
+                    )
                     return
                 }
             }
             self.markReplyUnreadIfNeeded(for: conversationID)
         }
         streamingTasksByConversation[conversationID] = task
+    }
+
+    private func finishUnsuccessfulStreamingRun(
+        conversationID: UUID, runID: UUID, error: Error
+    ) {
+        guard isCurrentStreamingRun(conversationID, runID: runID) else { return }
+        let messageID = activeStreamingMessageIDsByConversation[conversationID]
+        if error is CancellationError {
+            finishStreaming(conversationID: conversationID, removeIfEmpty: true, cancelled: true)
+            if let messageID {
+                IOSBackgroundGenerationManager.shared.cancel(runID: messageID)
+            }
+        } else {
+            let partial = finishStreaming(
+                conversationID: conversationID, removeIfEmpty: true,
+                failureDescription: error.localizedDescription
+            )
+            if let messageID {
+                pendingImageRequestsByMessageID.removeValue(forKey: messageID)
+                searchImageCandidatesByMessageID.removeValue(forKey: messageID)
+                pendingSearchImageRequestsByMessageID.removeValue(forKey: messageID)
+                IOSBackgroundGenerationManager.shared.fail(
+                    runID: messageID, partialMessage: partial?.text ?? ""
+                )
+            }
+            presentError(error.localizedDescription)
+        }
     }
 
     @discardableResult
@@ -8158,11 +8278,14 @@ final class AppModel {
 
         var contextMessages = requestMessages
         if let continuationPrompt {
+            let now = Date()
             contextMessages.append(
                 ChatMessage(
                     conversationID: conversationID,
                     role: .user,
                     text: continuationPrompt,
+                    createdAt: now,
+                    sentTimeZoneOffsetSeconds: TimeZone.current.secondsFromGMT(for: now),
                     modelID: selection.modelID,
                     providerID: providerID
                 )
@@ -8188,158 +8311,20 @@ final class AppModel {
             return (provider, modelID)
         }()
 
+        var wireMessages = try await ChatRequestPreparation.messages(
+            from: contextMessages,
+            assistant: assistant,
+            provider: provider,
+            preferences: preferences,
+            conversation: conversation,
+            assistants: assistants,
+            ocrContext: ocrContext
+        )
+        try Task.checkCancellation()
+
         let groupConversation = conversation.flatMap {
             $0.groupAssistantIDs.count >= 2 ? $0 : nil
         }
-        // The newest user turn always sends all of its image bytes and does not
-        // consume the historical budget. When history resend is enabled, only the
-        // newest eligible N historical images are uploaded, unless the user chooses
-        // the explicit unlimited option. Collapsed user-image groups stay visible in
-        // the transcript but are excluded from either selection.
-        let newestUserMessageID = contextMessages.last(where: { $0.role == .user })?.id
-        let historicalImageLimit = min(max(preferences.historicalImageResendLimit, 1), 10)
-        let eligibleHistoricalImageIDs = contextMessages.flatMap { message -> [UUID] in
-            let isNewestUserMessage = message.role == .user && message.id == newestUserMessageID
-            guard !isNewestUserMessage, message.historicalImagesCollapsed != true else { return [] }
-            return message.attachments.compactMap { attachment in
-                attachment.kind == .image ? attachment.id : nil
-            }
-        }
-        let transmittedHistoricalImageIDs: Set<UUID> = {
-            guard preferences.resendHistoricalImages else { return [] }
-            if preferences.historicalImageResendUnlimited {
-                return Set(eligibleHistoricalImageIDs)
-            }
-            return Set(eligibleHistoricalImageIDs.suffix(historicalImageLimit))
-        }()
-        var wireMessages: [ChatRequestMessage] = []
-        var lastOriginalUserWireIndex: Int?
-        for (messageIndex, message) in contextMessages.enumerated() {
-            var content = message.text
-            var images: [ChatRequestImage] = []
-            let imageAttachments = message.attachments.filter { $0.kind == .image }
-            let isNewestUserMessage = message.role == .user && message.id == newestUserMessageID
-            let transmittedImageAttachments = isNewestUserMessage
-                ? imageAttachments
-                : imageAttachments.filter { transmittedHistoricalImageIDs.contains($0.id) }
-            let shouldTransmitImages = !transmittedImageAttachments.isEmpty
-            let shouldUseOCR = message.role == .user
-                && shouldTransmitImages
-                && ocrContext != nil
-            var didUseOCR = false
-            if shouldUseOCR, let ocrContext,
-               let ocrText = await OCRService.shared.text(
-                    for: transmittedImageAttachments,
-                    provider: ocrContext.provider,
-                    modelID: ocrContext.modelID,
-                    prompt: preferences.ocrPrompt
-               ) {
-                didUseOCR = true
-                let wrappedOCR = """
-                The image_file_ocr tag contains a description of an image that the user uploaded to you, not the user's prompt.
-                <image_file_ocr>
-                \(ocrText.trimmingCharacters(in: .whitespacesAndNewlines))
-                </image_file_ocr>
-
-                """
-                content = wrappedOCR + content
-            }
-            let omittedHistoricalImageCount = isNewestUserMessage
-                ? 0
-                : max(imageAttachments.count - transmittedImageAttachments.count, 0)
-            if omittedHistoricalImageCount > 0 {
-                let reason: String
-                if message.historicalImagesCollapsed == true {
-                    reason = "已折叠，本轮不上传"
-                } else if !preferences.resendHistoricalImages {
-                    reason = "历史图片发送已关闭，本轮不重复上传"
-                } else if preferences.historicalImageResendUnlimited {
-                    reason = "本轮不重复上传"
-                } else {
-                    reason = "超出最新 \(historicalImageLimit) 张上限，本轮不重复上传"
-                }
-                let imageMarker = "[历史图片附件：\(omittedHistoricalImageCount) 张；\(reason)]"
-                content = content.isEmpty ? imageMarker : content + "\n\n" + imageMarker
-            }
-            for attachment in message.attachments {
-                switch attachment.kind {
-                case .image:
-                    if transmittedImageAttachments.contains(where: { $0.id == attachment.id }),
-                       !didUseOCR,
-                       let url = attachment.localURL,
-                       let data = try? Data(contentsOf: url) {
-                        images.append(ChatRequestImage(
-                            mimeType: attachment.mimeType ?? "image/jpeg",
-                            base64Data: data.base64EncodedString()
-                        ))
-                    }
-                case .file:
-                    let name = attachment.fileName ?? "未命名"
-                    if AttachmentStore.isPastedText(attachment) {
-                        // A paste conversion must preserve the original message
-                        // text. Missing/corrupt generated files stop this request
-                        // instead of silently sending a filename or a prefix.
-                        let fileText = try await AttachmentStore.readPastedTextContent(of: attachment)
-                        content += "\n\n[文件: \(name)]\n\(fileText)"
-                    } else if let fileText = AttachmentStore.readTextContent(of: attachment) {
-                        content += "\n\n[文件: \(name)]\n\(fileText)"
-                    } else {
-                        content += "\n\n[附件文件: \(name)]"
-                    }
-                default:
-                    break
-                }
-            }
-            let wireRole: String
-            if message.role == .assistant,
-               groupConversation != nil {
-                // Provider chat APIs only understand `user` and `assistant`, so turn
-                // another member's reply into a clearly-attributed contribution from
-                // the group.  Keep this assistant's own past replies as `assistant`.
-                if message.groupID == assistant.id.uuidString {
-                    wireRole = "assistant"
-                } else {
-                    let authorName = assistantProfile(id: message.groupID)?.name
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let label = (authorName?.isEmpty == false ? authorName! : "Assistant")
-                    content = "[\(label)]: \(content)"
-                    wireRole = "user"
-                }
-            } else {
-                wireRole = message.role == .assistant ? "assistant" : "user"
-            }
-            if message.role == .assistant,
-               groupConversation == nil || message.groupID == assistant.id.uuidString {
-                wireMessages.append(contentsOf: Self.retainedSearchToolMessages(
-                    for: message,
-                    source: contextMessages,
-                    messageIndex: messageIndex,
-                    retentionTurns: preferences.searchToolResultRetentionTurns,
-                    providerType: provider.type
-                ))
-            }
-            let messageWireIndex = wireMessages.count
-            wireMessages.append(ChatRequestMessage(
-                role: wireRole,
-                content: content,
-                images: images
-            ))
-            if message.role == .user {
-                lastOriginalUserWireIndex = messageWireIndex
-            }
-        }
-        // 消息模板：应用到最后一条用户消息（{{ role }}/{{ message }}/{{ time }}/{{ date }}）。
-        let template = assistant.messageTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !template.isEmpty, template != AssistantProfile.defaultMessageTemplate,
-           let lastUserIndex = lastOriginalUserWireIndex {
-            let original = wireMessages[lastUserIndex]
-            wireMessages[lastUserIndex] = ChatRequestMessage(
-                role: original.role,
-                content: Self.applyMessageTemplate(template, role: "user", message: original.content),
-                images: original.images
-            )
-        }
-
         // 预设消息插到最前面。
         let presets = assistant.presetMessages
             .filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -9557,149 +9542,6 @@ final class AppModel {
         }
     }
 
-    private static func retainedSearchToolMessages(
-        for message: ChatMessage,
-        source: [ChatMessage],
-        messageIndex: Int,
-        retentionTurns: Int,
-        providerType: ProviderType
-    ) -> [ChatRequestMessage] {
-        guard message.role == .assistant else { return [] }
-        if retentionTurns >= 0 {
-            let userTurnsAfter = source.indices
-                .dropFirst(messageIndex + 1)
-                .reduce(into: 0) { count, index in
-                    if source[index].role == .user { count += 1 }
-                }
-            guard userTurnsAfter <= retentionTurns else { return [] }
-        }
-
-        let retained = message.toolEvents.enumerated().compactMap { offset, event -> (
-            id: String,
-            name: String,
-            arguments: [String: Any],
-            result: String
-        )? in
-            guard isSearchToolEvent(event.name),
-                  let rawResult = event.resultText?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !rawResult.isEmpty else { return nil }
-            let rawID = event.providerEventID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let fallbackID = "call_\(message.id.uuidString.prefix(8))_\(offset)"
-            let arguments: [String: Any]
-            if let rawArguments = event.argumentsJSON,
-               let data = rawArguments.data(using: .utf8),
-               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                arguments = object
-            } else {
-                arguments = [:]
-            }
-            return (rawID.isEmpty ? fallbackID : rawID, event.name, arguments, rawResult)
-        }
-        guard !retained.isEmpty else { return [] }
-
-        switch providerType {
-        case .openAI:
-            let calls: [[String: Any]] = retained.map { item in
-                let argumentsJSON: String
-                if let data = try? JSONSerialization.data(
-                    withJSONObject: item.arguments,
-                    options: [.sortedKeys]
-                ), let encoded = String(data: data, encoding: .utf8) {
-                    argumentsJSON = encoded
-                } else {
-                    argumentsJSON = "{}"
-                }
-                return [
-                    "id": item.id,
-                    "type": "function",
-                    "function": ["name": item.name, "arguments": argumentsJSON]
-                ] as [String: Any]
-            }
-            var messages = [ChatRequestMessage(
-                role: "assistant",
-                content: "",
-                toolCallsJSON: calls
-            )]
-            messages.append(contentsOf: retained.map { item in
-                ChatRequestMessage(role: "tool", content: item.result, toolCallID: item.id)
-            })
-            return messages
-
-        case .claude:
-            let calls: [[String: Any]] = retained.map { item in
-                [
-                    "type": "tool_use",
-                    "id": item.id,
-                    "name": item.name,
-                    "input": item.arguments
-                ] as [String: Any]
-            }
-            let results: [[String: Any]] = retained.map { item in
-                [
-                    "type": "tool_result",
-                    "tool_use_id": item.id,
-                    "content": item.result
-                ] as [String: Any]
-            }
-            return [
-                ChatRequestMessage(role: "assistant", content: "", contentBlocks: calls),
-                ChatRequestMessage(role: "user", content: "", contentBlocks: results)
-            ]
-
-        case .google:
-            return [
-                ChatRequestMessage(
-                    role: "assistant",
-                    content: "",
-                    functionCalls: retained.map { ($0.name, $0.arguments) }
-                ),
-                ChatRequestMessage(
-                    role: "tool",
-                    content: "",
-                    functionResponses: retained.map { ($0.name, $0.result) }
-                )
-            ]
-        }
-    }
-
-    private static func isSearchToolEvent(_ rawName: String) -> Bool {
-        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return name == SearchToolConstants.toolName
-            || name == LocalToolName.searchConversations
-            || name == "builtin_search"
-            || name == "web_search"
-            || name == "web_search_preview"
-            || name.hasPrefix("web_search_")
-    }
-
-    private static func applyMessageTemplate(_ template: String, role: String, message: String) -> String {
-        let now = Date()
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
-        let vars = [
-            "role": role,
-            "message": message,
-            "time": timeFormatter.string(from: now),
-            "date": dateFormatter.string(from: now)
-        ]
-        guard let regex = try? NSRegularExpression(pattern: #"\{\{\s*(\w+)\s*\}\}"#) else { return message }
-        var result = ""
-        var lastIndex = template.startIndex
-        let nsTemplate = template as NSString
-        for match in regex.matches(in: template, range: NSRange(location: 0, length: nsTemplate.length)) {
-            guard let range = Range(match.range, in: template),
-                  let keyRange = Range(match.range(at: 1), in: template) else { continue }
-            result += template[lastIndex..<range.lowerBound]
-            let key = String(template[keyRange])
-            result += vars[key] ?? String(template[range])
-            lastIndex = range.upperBound
-        }
-        result += template[lastIndex...]
-        return result
-    }
-
     private static func rebuiltParts(for message: ChatMessage) -> [MessagePart] {
         var parts: [MessagePart] = message.reasoningSegments.map {
             MessagePart(kind: .reasoning, text: $0.text)
@@ -9723,12 +9565,12 @@ final class AppModel {
         activeProviderContext(for: currentAssistant)
     }
 
-    private func activeProviderContext(for assistant: AssistantProfile) -> (selection: ModelSelection, provider: ProviderConfiguration)? {
+    private func activeProviderContext(for assistant: AssistantProfile, conversationID: UUID? = nil) -> (selection: ModelSelection, provider: ProviderConfiguration)? {
         guard !providers.isEmpty else {
             isProviderSettingsPresented = true
             return nil
         }
-        guard let context = modelContext(for: assistant) else {
+        guard let context = modelContext(for: assistant, conversationID: conversationID) else {
             isModelSelectorPresented = true
             return nil
         }

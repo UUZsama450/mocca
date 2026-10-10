@@ -62,9 +62,9 @@ Keychain service names, notification names, and legacy backup identifiers remain
 
 Keychain 服务名、通知名与旧备份标识继续保留，它们用于数据兼容，并非签名凭据。本次只使构建身份与后台任务标识可配置，不批量改写这些存储名称。
 
-These portable defaults apply to the source snapshot, currently 1.0.2 (5173). Building it does not replace an installed app or alter an App Store release. A store archive needs its own source and identity verification.
+These portable defaults apply to the source snapshot, currently 1.0.2 (5189). Building it does not replace an installed app or alter an App Store release. A store archive needs its own source and identity verification.
 
-这些可移植默认值用于当前 1.0.2（5173）源码快照。构建源码不会替换已安装应用或改变 App Store 发布；正式归档需要单独核对源码与应用身份。
+这些可移植默认值用于当前 1.0.2（5189）源码快照。构建源码不会替换已安装应用或改变 App Store 发布；正式归档需要单独核对源码与应用身份。
 
 Configuration file semantics: [Apple Xcode documentation](https://developer.apple.com/documentation/xcode/adding-a-build-configuration-file-to-your-project).
 
@@ -76,9 +76,9 @@ On macOS with Xcode installed, run `python3 CandidateTests/check_sponsorship_bui
 
 ## Runtime compilation / 运行行为编译配置
 
-The app target enables `STREAM_HEIGHT_PHONE_CANDIDATE` in Debug and Release to retain the streaming and viewport route used by the accepted phone build. Do not globally replace `SWIFT_ACTIVE_COMPILATION_CONDITIONS`: Swift packages need their own generated conditions, including Highlighter's `SWIFT_PACKAGE` resource lookup.
+The app target enables `STREAM_HEIGHT_PHONE_CANDIDATE` and `PROSE_MEASUREMENT_REUSE_CANDIDATE` in Debug and Release to retain the streaming, viewport and measurement-reuse behavior used by the installed phone build. Do not globally replace `SWIFT_ACTIVE_COMPILATION_CONDITIONS`: Swift packages need their own generated conditions, including Highlighter's `SWIFT_PACKAGE` resource lookup.
 
-主应用在 Debug 和 Release 默认开启已验收手机版使用的滚动路径。不要全局覆盖 Swift 编译条件，以免清掉 Highlighter 等 Swift 包所需的资源查找定义。
+主应用在 Debug 和 Release 默认开启当前手机版使用的滚动及文本测量复用路径。不要全局覆盖 Swift 编译条件，以免清掉 Highlighter 等 Swift 包所需的资源查找定义。
 
 Communication notifications declare `INSendMessageIntent` and the communication-notifications entitlement. Device builds need a signing profile that supports this capability.
 

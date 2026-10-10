@@ -93,6 +93,10 @@ struct ComposerView: View {
     private let controlVisualHeight: CGFloat = 38
     private let leadingControlsVerticalOffset: CGFloat = 3
 
+    private var showsNamedModelEntry: Bool {
+        model.selectedConversationIsGroupChat || model.preferences.composerModelEntryStyle == .name
+    }
+
     private var promptPlaceholder: String {
         let custom = model.preferences.chatInputPlaceholder.trimmingCharacters(in: .whitespacesAndNewlines)
         if !custom.isEmpty { return custom }
@@ -107,7 +111,8 @@ struct ComposerView: View {
 
     private var canSend: Bool {
         if model.selectedConversationIsStreaming { return true }
-        return convertingPasteID == nil && (
+        return convertingPasteID == nil
+            && !model.hasUnreadyImages(for: model.selectedConversationID) && (
             !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !model.pendingAttachments.isEmpty
         )
@@ -182,7 +187,7 @@ struct ComposerView: View {
                         }
                 )
 
-            HStack(spacing: 10) {
+            HStack(spacing: showsNamedModelEntry ? 6 : 10) {
                 HStack(spacing: 4) {
                     Button {
                         presentBottomToolsAfterDismissingKeyboard()
@@ -194,23 +199,9 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(L10n.lookup("打开工具菜单"))
-
-                    Button {
-                        model.isModelSelectorPresented = true
-                    } label: {
-                        ComposerModelBubbleIcon()
-                            .frame(width: 23, height: 23)
-                            .scaleEffect(0.84)
-                            .frame(width: controlVisualHeight, height: controlVisualHeight)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(L10n.lookup("选择模型"))
-                    .accessibilityValue(model.currentAssistant.name)
                 }
                 .overlay(alignment: .top) {
-                    // Only the strip above the lowered pair focuses the editor.
-                    // It stops at their top edges and never crosses a button.
+                    // The strip ends at the lowered tool button's top edge.
                     Color.clear
                         .frame(height: leadingControlsVerticalOffset)
                         .contentShape(Rectangle())
@@ -246,6 +237,54 @@ struct ComposerView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(L10n.lookup("快捷短语"))
                 }
+
+                Button {
+                    model.isModelSelectorPresented = true
+                } label: {
+                    if showsNamedModelEntry {
+                        ComposerModelEntryLayout(maximumWidth: 220) {
+                            HStack(spacing: 5) {
+                                if model.selectedConversationIsGroupChat {
+                                    Image(systemName: "person.2")
+                                        .font(.system(size: 16, weight: .regular))
+                                        .foregroundStyle(colorScheme == .dark ? Color.white : Color.secondary)
+                                        .fixedSize()
+                                        .accessibilityHidden(true)
+                                } else {
+                                    Text(verbatim: "✦")
+                                        .font(.system(size: 18, weight: .regular))
+                                        .foregroundStyle(colorScheme == .dark ? Color.white : Color.secondary)
+                                        .fixedSize()
+                                        .accessibilityHidden(true)
+                                }
+                                Text(model.selectedConversationIsGroupChat ? L10n.lookup("群聊成员") : model.composerModelTitle)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize()
+                                    .offset(y: 3)
+                            }
+                            .padding(.horizontal, 5)
+                            .offset(y: 2)
+                        }
+                        .frame(height: controlVisualHeight)
+                        .contentShape(Rectangle())
+                    } else {
+                        ComposerModelBubbleIcon()
+                            .frame(width: 23, height: 23)
+                            .scaleEffect(0.84)
+                            .frame(width: controlVisualHeight, height: controlVisualHeight)
+                            .contentShape(Rectangle())
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.lookup(model.selectedConversationIsGroupChat ? "群聊成员" : "选择模型"))
+                .accessibilityValue(model.selectedConversationIsGroupChat ? model.selectedConversationAssistantNames : model.composerModelTitle)
+                .accessibilityIdentifier("composer.modelSelector")
+                .layoutPriority(1)
 
                 Button {
                     if model.selectedConversationIsStreaming {
@@ -457,6 +496,23 @@ struct ComposerView: View {
     }
 }
 
+/// Cap only the model label's proposal, retaining its intrinsic width for short
+/// names. The parent toolbar can still shrink it on narrow screens, and the
+/// resulting bounds are also the button's hit bounds.
+private struct ComposerModelEntryLayout: Layout {
+    var maximumWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let label = subviews.first else { return .zero }
+        let width = min(maximumWidth, proposal.width ?? maximumWidth)
+        return label.sizeThatFits(ProposedViewSize(width: max(0, width), height: proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+    }
+}
+
 private struct ComposerModelBubbleIcon: View {
     var body: some View {
         ZStack {
@@ -517,6 +573,96 @@ private struct StableComposerRenderGroupModifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+struct GroupChatMembersView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var editingAssistant: AssistantProfile?
+    let conversationID: UUID
+
+    private var members: [AssistantProfile] {
+        guard let conversation = model.conversations.first(where: { $0.id == conversationID }) else { return [] }
+        return model.assistantProfiles(for: conversation)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(members) { assistant in
+                        Button {
+                            editingAssistant = assistant
+                        } label: {
+                            memberRow(assistant)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("groupMembers.member.\(assistant.id.uuidString)")
+                    }
+                } footer: {
+                    Text(L10n.lookup("模型设置仅用于本群聊，不影响助手的其他聊天。"))
+                }
+            }
+            .navigationTitle(L10n.lookup("群聊成员"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.lookup("完成")) { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .sheet(item: $editingAssistant) { assistant in
+            ModelSelectorView(
+                selectedSelection: model.groupChatModelSelection(for: assistant.id, conversationID: conversationID),
+                inheritedChoiceTitle: L10n.lookup("跟随助手默认模型"),
+                screenTitle: L10n.format("%@的模型", [assistant.name]),
+                chatOnly: true,
+                onSelect: { selection in
+                    model.selectGroupChatModel(selection, for: assistant.id, conversationID: conversationID)
+                }
+            )
+            .presentationDetents([.large])
+        }
+    }
+
+    private func memberRow(_ assistant: AssistantProfile) -> some View {
+        let context = model.modelContext(for: assistant, conversationID: conversationID)
+        let configuration = context.flatMap { context in
+            context.provider.models.first { $0.id == context.selection.modelID }
+        }
+        let target = model.selectedGroupReplyTargetID(for: conversationID)
+        return HStack(spacing: 10) {
+            AssistantAvatarView(profile: assistant, size: 34)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(assistant.name)
+                    .font(.system(size: 15, weight: .medium))
+                    .lineLimit(1)
+                Text(L10n.lookup(target == nil || target == assistant.id.uuidString ? "参与回复" : "本次不回复"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(configuration?.composerDisplayName ?? L10n.lookup("选择模型"))
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                if let context {
+                    Text(context.provider.name)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .foregroundStyle(.primary)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 }
 

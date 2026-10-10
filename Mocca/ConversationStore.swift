@@ -13,6 +13,9 @@ struct Conversation: Codable, Identifiable, Hashable {
     var isPinned: Bool
     var assistantID: String?
     var groupAssistantIDs: [String]
+    /// Per-member overrides belong to this conversation, not the shared assistant.
+    /// Optional so existing conversation records decode without a migration.
+    var groupModelSelections: [String: ModelSelection]?
     var truncateIndex: Int
     var versionSelections: [String: Int]
     var summary: String?
@@ -38,6 +41,7 @@ struct Conversation: Codable, Identifiable, Hashable {
         isPinned: Bool = false,
         assistantID: String? = nil,
         groupAssistantIDs: [String] = [],
+        groupModelSelections: [String: ModelSelection]? = nil,
         truncateIndex: Int = -1,
         versionSelections: [String: Int] = [:],
         summary: String? = nil,
@@ -57,6 +61,7 @@ struct Conversation: Codable, Identifiable, Hashable {
         self.isPinned = isPinned
         self.assistantID = assistantID
         self.groupAssistantIDs = groupAssistantIDs
+        self.groupModelSelections = groupModelSelections
         self.truncateIndex = truncateIndex
         self.versionSelections = versionSelections
         self.summary = summary
@@ -91,6 +96,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     let role: Role
     var text: String
     let createdAt: Date
+    /// Offset at send time, retained across timezone/DST changes and backups.
+    /// Older messages have no recorded local offset; do not invent one for them.
+    var sentTimeZoneOffsetSeconds: Int?
     var updatedAt: Date
     var status: Status
     /// Orders received generation content independently of presentation frames
@@ -144,6 +152,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         role: Role,
         text: String,
         createdAt: Date = .now,
+        sentTimeZoneOffsetSeconds: Int? = nil,
         updatedAt: Date = .now,
         status: Status = .complete,
         parts: [MessagePart]? = nil,
@@ -167,6 +176,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.role = role
         self.text = text
         self.createdAt = createdAt
+        self.sentTimeZoneOffsetSeconds = sentTimeZoneOffsetSeconds
         self.updatedAt = updatedAt
         self.status = status
         self.parts = parts ?? [MessagePart(kind: .text, text: text)]
@@ -1527,9 +1537,10 @@ struct LegacyConversationStore {
         return snapshot
     }
 
+    @discardableResult
     fileprivate static func validateSnapshotStructure(
         _ snapshot: ConversationSnapshot
-    ) throws {
+    ) throws -> (conversationIDs: Set<UUID>, messageIDs: Set<UUID>) {
         let conversationIDs = snapshot.conversations.map(\.id)
         let uniqueConversationIDs = Set(conversationIDs)
         guard uniqueConversationIDs.count == conversationIDs.count else {
@@ -1581,6 +1592,7 @@ struct LegacyConversationStore {
                 highestSchemaVersion
             )
         }
+        return (uniqueConversationIDs, uniqueMessageIDs)
     }
 
     private func validatedBackupForComparison() throws -> ConversationSnapshot? {
@@ -1926,6 +1938,24 @@ struct LegacyConversationStore {
     }
 }
 
+// Shared by the application guard and the record-store diff.
+struct ConversationSaveIdentity: Sendable {
+    let conversationCount: Int
+    let messageCount: Int
+    let conversationIDs: Set<UUID>
+    let messageIDs: Set<UUID>
+
+    static func capture(_ snapshot: ConversationSnapshot) -> Self {
+        Self(
+            conversationCount: snapshot.conversations.count,
+            messageCount: snapshot.messagesByConversation.values.reduce(0) { $0 + $1.count },
+            conversationIDs: Set(snapshot.conversations.map(\.id)),
+            messageIDs: Set(snapshot.messagesByConversation.values.joined().lazy.map(\.id))
+        )
+    }
+}
+
+
 /// One instance belongs to ConversationStoreSaveExecutor's serial queue.
 /// The legacy JSON reader remains the import/export and schema authority.
 struct ConversationStore {
@@ -1943,9 +1973,12 @@ struct ConversationStore {
     }
 
     func load() throws -> LoadResult { try records.load() }
+    @discardableResult
     func save(_ snapshot: ConversationSnapshot, preserveExistingBackup: Bool = false,
-              authorizedDestructiveReduction: Bool = false) throws {
-        try records.save(snapshot, authorizedReduction: authorizedDestructiveReduction)
+              authorizedDestructiveReduction: Bool = false,
+              validatingIdentity: ((ConversationSaveIdentity) throws -> Void)? = nil) throws -> ConversationSaveIdentity {
+        try records.save(snapshot, authorizedReduction: authorizedDestructiveReduction,
+                         validatingIdentity: validatingIdentity)
     }
     static func decodeValidatedSnapshot(from data: Data) throws -> ConversationSnapshot {
         try LegacyConversationStore.decodeValidatedSnapshot(from: data)
@@ -1966,6 +1999,86 @@ final class ConversationRecordDatabase {
             messages = snapshot.messagesByConversation.mapValues { $0.map(\.id) }
         }
     }
+    private struct SnapshotIndex {
+        let layout: Layout
+        let conversationIDs: Set<UUID>
+        let messageIDs: Set<UUID>
+
+        static func prepare(
+            _ snapshot: ConversationSnapshot,
+            reusing previous: Self? = nil,
+            committed: ConversationSnapshot? = nil
+        ) -> Self {
+            guard let previous, let committed else {
+                return capture(snapshot)
+            }
+
+            var layout = previous.layout
+            layout.schemaVersion = snapshot.schemaVersion
+            layout.conversations = snapshot.conversations.map(\.id)
+            layout.messages = [:]
+            layout.messages.reserveCapacity(snapshot.messagesByConversation.count)
+            var removed: [[UUID]] = []
+            var added: [[UUID]] = []
+
+            for (conversationID, messages) in snapshot.messagesByConversation {
+                let priorMessages = committed.messagesByConversation[conversationID] ?? []
+                let priorIDs = previous.layout.messages[conversationID] ?? []
+                // These are immutable value arrays, retained by the committed
+                // snapshot. Equal live buffers prove every row is unchanged;
+                // no address escapes this comparison or survives a save.
+                if messages.count == priorMessages.count,
+                   messages.withUnsafeBufferPointer({ current in
+                       priorMessages.withUnsafeBufferPointer { prior in
+                           current.baseAddress == prior.baseAddress
+                       }
+                   }) {
+                    layout.messages[conversationID] = priorIDs
+                    continue
+                }
+
+                let ids = messages.map(\.id)
+                layout.messages[conversationID] = ids
+                // Content edits and streaming retain the global identity set.
+                // An append only adds its suffix. Structural edits take the
+                // general path; all removals precede additions so moving a row
+                // between conversations cannot hide it or a duplicate.
+                if ids == priorIDs { continue }
+                if ids.starts(with: priorIDs) {
+                    added.append(Array(ids.dropFirst(priorIDs.count)))
+                } else {
+                    removed.append(priorIDs)
+                    added.append(ids)
+                }
+            }
+            for (conversationID, ids) in previous.layout.messages
+                where snapshot.messagesByConversation[conversationID] == nil {
+                removed.append(ids)
+            }
+            var messageIDs = previous.messageIDs
+            for ids in removed { messageIDs.subtract(ids) }
+            for ids in added { messageIDs.formUnion(ids) }
+            // The caller still checks exact counts, ownership, schema and
+            // reduction authorization before encoding or committing anything.
+            return Self(layout: layout, conversationIDs: Set(layout.conversations),
+                        messageIDs: messageIDs)
+        }
+
+        private static func capture(_ snapshot: ConversationSnapshot) -> Self {
+            let layout = Layout(snapshot)
+            return Self(layout: layout, conversationIDs: Set(layout.conversations),
+                        messageIDs: Set(layout.messages.values.joined()))
+        }
+
+        var identity: ConversationSaveIdentity {
+            ConversationSaveIdentity(
+                conversationCount: layout.conversations.count,
+                messageCount: layout.messages.values.reduce(0) { $0 + $1.count },
+                conversationIDs: conversationIDs, messageIDs: messageIDs
+            )
+        }
+    }
+
     private struct Generation: Codable {
         var id: Int64
         var createdAt: Date
@@ -1987,6 +2100,8 @@ final class ConversationRecordDatabase {
     private let decoder: JSONDecoder
     private var connection: OpaquePointer?
     private var committed: ConversationSnapshot?
+    // Only the current authoritative generation; no per-save history grows.
+    private var committedIndex: SnapshotIndex?
     private var generation: Int64 = 0
     private var didLoad = false
     private(set) var lastChangedRecordCount = 0
@@ -2119,7 +2234,7 @@ final class ConversationRecordDatabase {
         try bind(digest(bytes), to: query, at: 2)
         try check(sqlite3_step(query))
     }
-    private func decodeSnapshot(_ info: Generation) throws -> ConversationSnapshot {
+    private func decodeSnapshot(_ info: Generation) throws -> (snapshot: ConversationSnapshot, index: SnapshotIndex) {
         #if DEBUG
         decodedSnapshotCount += 1
         #endif
@@ -2159,8 +2274,12 @@ final class ConversationRecordDatabase {
             }
         }
         guard values.isEmpty else { throw failure("存在未被索引的记录") }
-        try LegacyConversationStore.validateSnapshotStructure(snapshot)
-        return snapshot
+        let identity = try LegacyConversationStore.validateSnapshotStructure(snapshot)
+        // These values were already built by decoding and validation. Retain
+        // them without adding another history walk during startup.
+        return (snapshot, SnapshotIndex(layout: layout,
+                                        conversationIDs: identity.conversationIDs,
+                                        messageIDs: identity.messageIDs))
     }
 
     func load() throws -> ConversationStore.LoadResult {
@@ -2181,6 +2300,7 @@ final class ConversationRecordDatabase {
             let result = try backup.loadLocal()
             guard case .loaded(let value) = result else { throw error }
             committed = value
+            committedIndex = backup.committedIndex
             replacementRequired = true
             didLoad = true
             var normalized = value
@@ -2213,17 +2333,20 @@ final class ConversationRecordDatabase {
                 guard let imported = try readGeneration(0) else { throw failure("导入提交丢失") }
                 let verified = try decodeSnapshot(imported)
                 let canonical = try decoder.decode(ConversationSnapshot.self, from: encoder.encode(snapshot))
-                guard verified.conversations == canonical.conversations,
-                      verified.messagesByConversation == canonical.messagesByConversation else {
+                guard verified.snapshot.conversations == canonical.conversations,
+                      verified.snapshot.messagesByConversation == canonical.messagesByConversation else {
                     throw failure("旧存档导入核对失败")
                 }
-                committed = verified; generation = imported.id; didLoad = true
+                committed = verified.snapshot; committedIndex = verified.index
+                generation = imported.id; didLoad = true
                 if !isReplica { try prepareInitialBackup(from: imported) }
                 return legacyResult
             }
         }
-        var snapshot = try decodeSnapshot(head)
-        committed = snapshot; generation = head.id; lineage = head.lineage ?? UUID(); didLoad = true
+        let decoded = try decodeSnapshot(head)
+        var snapshot = decoded.snapshot
+        committed = snapshot; committedIndex = decoded.index
+        generation = head.id; lineage = head.lineage ?? UUID(); didLoad = true
         if !isReplica, head.lineage == nil { try prepareInitialBackup(from: head) }
         normalizeLoaded(&snapshot)
         return .loaded(snapshot)
@@ -2255,7 +2378,16 @@ final class ConversationRecordDatabase {
         return error is DecodingError
     }
 
-    func save(_ snapshot: ConversationSnapshot, authorizedReduction: Bool) throws {
+    @discardableResult
+    func save(_ snapshot: ConversationSnapshot, authorizedReduction: Bool,
+              validatingIdentity: ((ConversationSaveIdentity) throws -> Void)? = nil) throws -> ConversationSaveIdentity {
+        let preparedIndex = SnapshotIndex.prepare(
+            snapshot, reusing: committedIndex, committed: committed
+        )
+        let identity = preparedIndex.identity
+        // Reject application-level reductions before even a first load or a
+        // recovery promotion. The immutable index belongs to this exact value.
+        try validatingIdentity?(identity)
         if !didLoad { _ = try load() }
         if replacementRequired, let recovered = committed {
             if let connection { sqlite3_close(connection); self.connection = nil }
@@ -2273,16 +2405,19 @@ final class ConversationRecordDatabase {
                 if fileManager.fileExists(atPath: rejectedJournal.path) { try fileManager.removeItem(at: rejectedJournal) }
                 try fileManager.moveItem(at: journal, to: rejectedJournal)
             }
-            committed = nil; generation = 0; lineage = UUID()
+            committed = nil; committedIndex = nil; generation = 0; lineage = UUID()
             try write(recovered, authorizedReduction: true, importing: true)
             replacementRequired = false
             var normalized = recovered
             normalizeLoaded(&normalized)
         }
-        try write(snapshot, authorizedReduction: authorizedReduction, importing: false)
+        try write(snapshot, authorizedReduction: authorizedReduction, importing: false,
+                  preparedIndex: preparedIndex)
+        return identity
     }
 
-    private func write(_ input: ConversationSnapshot, authorizedReduction: Bool, importing: Bool) throws {
+    private func write(_ input: ConversationSnapshot, authorizedReduction: Bool, importing: Bool,
+                       preparedIndex: SnapshotIndex? = nil) throws {
         #if DEBUG
         let stageStart = CFAbsoluteTimeGetCurrent()
         #endif
@@ -2297,14 +2432,16 @@ final class ConversationRecordDatabase {
         let validationEnd = CFAbsoluteTimeGetCurrent()
         #endif
         var changes: [(String, Data?)]
+        let nextIndex: SnapshotIndex
         do {
             let oldConversations = Dictionary(uniqueKeysWithValues: (committed?.conversations ?? []).map { ($0.id, $0) })
-            let newLayout = Layout(snapshot)
-            let oldLayout = committed.map(Layout.init)
-            let oldConversationIDs = Set(oldConversations.keys)
-            let newConversationIDs = Set(newLayout.conversations)
-            let oldMessageIDs = Set(oldLayout?.messages.values.joined().map { $0 } ?? [])
-            let newMessageIDs = Set(newLayout.messages.values.joined())
+            let oldLayout = committedIndex?.layout ?? committed.map { Layout($0) }
+            let currentIndex = preparedIndex ?? SnapshotIndex.prepare(snapshot)
+            let newLayout = currentIndex.layout
+            let oldConversationIDs = committedIndex?.conversationIDs ?? Set(oldConversations.keys)
+            let newConversationIDs = currentIndex.conversationIDs
+            let oldMessageIDs = committedIndex?.messageIDs ?? Set(oldLayout?.messages.values.joined().map { $0 } ?? [])
+            let newMessageIDs = currentIndex.messageIDs
             // Validate topology while deriving the same identities needed by
             // the diff. Unchanged values came from a fully validated commit;
             // changed values are checked below before encoding.
@@ -2322,6 +2459,7 @@ final class ConversationRecordDatabase {
                 || !oldMessageIDs.isSubset(of: newMessageIDs)) {
                 throw failure("拒绝未授权的聊天或消息减少")
             }
+            nextIndex = currentIndex
             changes = []
             if oldLayout != newLayout {
                 changes.append(("layout", try encoder.encode(newLayout)))
@@ -2409,7 +2547,8 @@ final class ConversationRecordDatabase {
         #endif
         try execute("COMMIT")
         committedTransaction = true
-        committed = snapshot; generation = nextGeneration; didLoad = true
+        committed = snapshot; committedIndex = nextIndex
+        generation = nextGeneration; didLoad = true
         #if DEBUG
         lastStageTimings = ["validation": (validationEnd - stageStart) * 1000,
                             "diff": (diffEnd - validationEnd) * 1000,

@@ -1,12 +1,6 @@
 import Foundation
 import Highlighter
-#if canImport(UIKit)
-import UIKit
-private typealias CodeSyntaxNativeColor = UIColor
-#elseif canImport(AppKit)
-import AppKit
-private typealias CodeSyntaxNativeColor = NSColor
-#endif
+import JavaScriptCore
 
 enum CodeSyntaxTheme: Sendable, Hashable {
     case light
@@ -29,17 +23,13 @@ struct CodeSyntaxColorRun: Sendable, Equatable {
 actor CodeSyntaxHighlighter {
     static let shared = CodeSyntaxHighlighter()
 
-    private static let streamingUTF16Limit = 8 * 1_024
-    private static let settledUTF16Limit = 32 * 1_024
-    private static let runLimit = 3_000
     private static let cacheEntryLimit = 32
     private static let cacheByteLimit = 2 * 1_024 * 1_024
     private static let cacheRunLimit = 24_000
 
-    private var engine: Highlighter?
+    private var engine: CodeSyntaxRunEngine?
     private var attemptedInitialization = false
     private var supportedLanguages: Set<String> = []
-    private var activeTheme: CodeSyntaxTheme?
     private var cache: [CacheKey: [CodeSyntaxColorRun]] = [:]
     private var cacheOrder: [CacheKey] = []
     private var cachedBytes = 0
@@ -90,10 +80,6 @@ actor CodeSyntaxHighlighter {
         guard !Task.isCancelled, !text.isEmpty else { return [] }
         let language = Self.normalizedLanguage(language)
         guard !language.isEmpty else { return [] }
-        let limit = isStreaming ? Self.streamingUTF16Limit : Self.settledUTF16Limit
-        let length = text.utf16.prefix(limit + 1).count
-        // A long source stays readable in its original colour; never truncate it.
-        guard length <= limit, !Task.isCancelled else { return [] }
 
         let key = isStreaming ? nil : CacheKey(
             source: Data(text.utf8), language: language, theme: theme
@@ -103,59 +89,18 @@ actor CodeSyntaxHighlighter {
         }
         guard let engine = initializedEngine(),
               supportedLanguages.contains(language), !Task.isCancelled else { return [] }
-        if activeTheme != theme {
-            guard engine.setTheme(theme.resourceName) else { return [] }
-            activeTheme = theme
-        }
-        guard !Task.isCancelled,
-              let highlighted = engine.highlight(text, as: language, doFastRender: true),
-              !Task.isCancelled,
-              highlighted.length == length,
-              highlighted.string.utf16.elementsEqual(text.utf16) else { return [] }
-
-        var runs: [CodeSyntaxColorRun] = []
-        var invalidResult = false
-        highlighted.enumerateAttribute(
-            .foregroundColor, in: NSRange(location: 0, length: length)
-        ) { value, range, stop in
-            guard !Task.isCancelled,
-                  range.location != NSNotFound, range.location <= length,
-                  range.length <= length - range.location else {
-                invalidResult = true
-                stop.pointee = true
-                return
-            }
-            guard range.length > 0,
-                  let color = value as? CodeSyntaxNativeColor,
-                  let rgb = Self.rgb(color) else { return }
-            if let previous = runs.last, previous.rgb == rgb,
-               NSMaxRange(previous.range) == range.location {
-                runs[runs.count - 1] = CodeSyntaxColorRun(
-                    range: NSRange(location: previous.range.location,
-                                   length: previous.range.length + range.length),
-                    rgb: rgb
-                )
-            } else {
-                guard runs.count < Self.runLimit else {
-                    invalidResult = true
-                    stop.pointee = true
-                    return
-                }
-                runs.append(CodeSyntaxColorRun(range: range, rgb: rgb))
-            }
-        }
-        guard !invalidResult, !Task.isCancelled else { return [] }
+        guard let runs = engine.highlight(text, language: language, theme: theme),
+              !Task.isCancelled else { return [] }
         if let key { insert(runs, for: key) }
         return runs
     }
 
-    private func initializedEngine() -> Highlighter? {
+    private func initializedEngine() -> CodeSyntaxRunEngine? {
         if let engine { return engine }
         guard !attemptedInitialization else { return nil }
         attemptedInitialization = true
-        guard let engine = Highlighter() else { return nil }
-        engine.ignoreIllegals = true
-        supportedLanguages = Set(engine.supportedLanguages())
+        guard let engine = CodeSyntaxRunEngine() else { return nil }
+        supportedLanguages = engine.supportedLanguages
         self.engine = engine
         return engine
     }
@@ -182,21 +127,125 @@ actor CodeSyntaxHighlighter {
         cachedRuns += runs.count
     }
 
-    private static func rgb(_ color: CodeSyntaxNativeColor) -> UInt32? {
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-        #if canImport(UIKit)
-        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return nil }
-        #elseif canImport(AppKit)
-        guard let color = color.usingColorSpace(.deviceRGB) else { return nil }
-        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        #endif
-        guard red.isFinite, green.isFinite, blue.isFinite else { return nil }
-        func byte(_ value: CGFloat) -> UInt32 {
-            UInt32((min(1, max(0, value)) * 255).rounded())
-        }
-        return byte(red) << 16 | byte(green) << 8 | byte(blue)
+}
+
+/// Actor-confined adapter for the pinned HighlighterSwift 3.1.0 resources
+/// (highlight.js 11.11.1). Read token colors directly, avoiding an HTML round trip
+/// and thousands of temporary attributed strings, fonts and paragraph styles.
+private final class CodeSyntaxRunEngine {
+    private let context: JSContext
+    private let render: JSValue
+    private let palettes: [CodeSyntaxTheme: [String: UInt32]]
+    let supportedLanguages: Set<String>
+
+    init?() {
+        // Match the package's resource-bundle locations for apps, frameworks and
+        // command-line tests. No path into a development checkout is used.
+        let roots = [Bundle.main.resourceURL, Bundle(for: Highlighter.self).resourceURL,
+                     Bundle.main.bundleURL]
+        guard let bundle = roots.compactMap({ root in
+            root.flatMap { Bundle(url: $0.appendingPathComponent("Highlighter_Highlighter.bundle")) }
+        }).first,
+              let scriptURL = bundle.url(forResource: "highlight.min", withExtension: "js"),
+              let script = try? String(contentsOf: scriptURL, encoding: .utf8),
+              let light = Self.palette(.light, in: bundle),
+              let dark = Self.palette(.dark, in: bundle),
+              let context = JSContext() else { return nil }
+        context.evaluateScript(script)
+        guard context.exception == nil,
+              let languages = context.objectForKeyedSubscript("hljs")?
+                .invokeMethod("listLanguages", withArguments: [])?.toArray() as? [String] else { return nil }
+        context.evaluateScript(Self.adapter)
+        guard context.exception == nil,
+              let render = context.objectForKeyedSubscript("moccaColorRuns"),
+              !render.isUndefined else { return nil }
+        self.context = context
+        self.render = render
+        self.palettes = [.light: light, .dark: dark]
+        supportedLanguages = Set(languages)
     }
+
+    func highlight(_ text: String, language: String, theme: CodeSyntaxTheme) -> [CodeSyntaxColorRun]? {
+        guard !Task.isCancelled, let palette = palettes[theme] else { return nil }
+        context.exception = nil
+        // User source is a function argument, never evaluated as JavaScript.
+        // Transfer one compact string instead of bridging a JSValue/NSNumber for
+        // every coordinate and color in a large block.
+        guard let encoded = render.call(withArguments: [text, language, palette])?.toString(),
+              context.exception == nil, !Task.isCancelled,
+              let values = try? JSONDecoder().decode([Int].self, from: Data(encoded.utf8)),
+              values.count.isMultiple(of: 3) else { return nil }
+        let length = text.utf16.count
+        var runs: [CodeSyntaxColorRun] = []
+        runs.reserveCapacity(values.count / 3)
+        var end = 0
+        for index in stride(from: 0, to: values.count, by: 3) {
+            let start = values[index], count = values[index + 1], rgb = values[index + 2]
+            guard !Task.isCancelled, start == end, count > 0, start <= length,
+                  count <= length - start, (0...0xFFFFFF).contains(rgb) else { return nil }
+            runs.append(CodeSyntaxColorRun(range: NSRange(location: start, length: count), rgb: UInt32(rgb)))
+            end = start + count
+        }
+        return end == length ? runs : nil
+    }
+
+    private static func palette(_ theme: CodeSyntaxTheme, in bundle: Bundle) -> [String: UInt32]? {
+        guard let url = bundle.url(forResource: theme.resourceName, withExtension: "css"),
+              let rawCSS = try? String(contentsOf: url, encoding: .utf8),
+              let rules = try? NSRegularExpression(pattern: #"([^{}]+)\{([^}]+)\}"#),
+              let color = try? NSRegularExpression(pattern: #"(?:^|;)\s*color\s*:\s*#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b"#)
+        else { return nil }
+        let css = rawCSS.replacingOccurrences(of: #"/\*[\s\S]*?\*/"#, with: "", options: .regularExpression)
+        let source = css as NSString
+        var palette: [String: UInt32] = [:]
+        for rule in rules.matches(in: css, range: NSRange(location: 0, length: source.length)) {
+            let body = source.substring(with: rule.range(at: 2))
+            guard let match = color.firstMatch(in: body, range: NSRange(location: 0, length: (body as NSString).length)) else { continue }
+            var hex = (body as NSString).substring(with: match.range(at: 1))
+            if hex.count == 3 { hex = hex.map { "\($0)\($0)" }.joined() }
+            guard let rgb = UInt32(hex, radix: 16) else { continue }
+            for selector in source.substring(with: rule.range(at: 1)).split(separator: ",") {
+                let name = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Preserve the existing wrapper's first-class scope semantics.
+                // Compound selectors and font/background declarations aren't used.
+                guard name == ".hljs" || (name.hasPrefix(".hljs-")
+                    && name.dropFirst().allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })) else { continue }
+                palette[String(name.dropFirst())] = rgb
+            }
+        }
+        return palette["hljs"] == nil ? nil : palette
+    }
+
+    private static let adapter = #"""
+    // Keep the grammar's complete token tree: splitting long sources into lines
+    // would break multiline strings/comments and embedded languages.
+    const MoccaEmitter = hljs.highlight("", {language: "plaintext"})._emitter.constructor;
+    hljs.configure({__emitter: class extends MoccaEmitter { toHTML() { return ""; } }});
+    function moccaColorRuns(source, language, palette) {
+        const result = hljs.highlight(source, {language: language, ignoreIllegals: true});
+        if (result.errorRaised || !result._emitter) return null;
+        const colors = [palette.hljs], runs = [];
+        let offset = 0, valid = true;
+        result._emitter.walk({
+            openNode(node) {
+                const scope = node.scope || "";
+                const key = "hljs-" + scope.split(".")[0];
+                colors.push(palette[key] ?? colors[colors.length - 1]);
+            },
+            closeNode() { colors.pop(); },
+            addText(text) {
+                if (!text.length) return;
+                if (source.slice(offset, offset + text.length) !== text) valid = false;
+                const rgb = colors[colors.length - 1];
+                if (runs.length && runs[runs.length - 1] === rgb) {
+                    runs[runs.length - 2] += text.length;
+                } else {
+                    runs.push(offset, text.length, rgb);
+                }
+                offset += text.length; // JavaScript offsets are UTF-16, like NSRange.
+            }
+        });
+        return valid && offset === source.length ? JSON.stringify(runs) : null;
+    }
+    """#
 }

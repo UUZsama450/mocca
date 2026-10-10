@@ -149,7 +149,7 @@ struct Failure: Error, CustomStringConvertible { let description: String }
             try check(before == i + 1, "more than one active analysis")
             await done(i, [r(0, 1)])
             try await calls(i + 2)
-            try check(v.textStorage.writes.isEmpty, "old source result applied")
+            try check(v.textStorage.color(0) == 0xff0000 && v.textStorage.color(2) == UIColor.label.rgb, "exact old prefix should color while newest suffix waits")
             let latest = await CodeSyntaxHighlighter.shared.call(i + 1)
             try check(latest.text == "abc", "intermediate request was analyzed")
             await done(i + 1, [r(0, 3)])
@@ -220,7 +220,7 @@ struct Failure: Error, CustomStringConvertible { let description: String }
             update(s, v, "same"); try await calls(i + 1)
             update(s, v, "same", stream: false)
             await done(i, [r(0, 4)]); try await calls(i + 2)
-            try check(v.textStorage.writes.isEmpty, "stream result applied after completion")
+            try check(v.textStorage.color(0) == 0xff0000, "matching stream snapshot should remain colored while settling")
             let settled = await CodeSyntaxHighlighter.shared.call(i + 1)
             try check(!settled.streaming, "settled state not submitted")
             await done(i + 1, [r(0, 4)])
@@ -266,6 +266,73 @@ struct Failure: Error, CustomStringConvertible { let description: String }
             await done(i + 1, [r(0, 99)])
             try check(v.textStorage.writes.isEmpty, "invalid range colored")
             try invariant(v, text: "after"); passed += 1
+        }
+        // Large edits yield between batches and finish with every token colored.
+        do {
+            let text = String(repeating: "ab", count: 2_000)
+            let s = CodeSyntaxTextStyler(), v = UITextView(text)
+            let i = await CodeSyntaxHighlighter.shared.count()
+            let runs = (0..<4_000).map { r($0, 1, $0.isMultiple(of: 2) ? 0xff0000 : 0x0000ff) }
+            var completed = false
+            s.didApplyColors = { completed = true }
+            update(s, v, text); try await calls(i + 1)
+            await CodeSyntaxHighlighter.shared.complete(i, runs)
+            var sawPartial = false
+            for _ in 0..<20_000 {
+                if !v.textStorage.writes.isEmpty && !completed { sawPartial = true }
+                if completed { break }
+                await Task.yield()
+            }
+            try check(completed && sawPartial, "large styling did not yield between batches")
+            for index in 0..<4_000 {
+                try check(v.textStorage.color(index) == runs[index].rgb, "large token color missing")
+            }
+            try invariant(v, text: text); passed += 1
+        }
+        // Replacing the storage during a yielded batch must stop the old painter.
+        do {
+            let text = String(repeating: "a", count: 8_000)
+            let s = CodeSyntaxTextStyler(), v = UITextView(text)
+            let i = await CodeSyntaxHighlighter.shared.count()
+            update(s, v, text); try await calls(i + 1)
+            await CodeSyntaxHighlighter.shared.complete(i, (0..<8_000).map { r($0, 1) })
+            for _ in 0..<20_000 {
+                if !v.textStorage.writes.isEmpty { break }
+                await Task.yield()
+            }
+            try check(v.textStorage.writes.count < 8_000, "replacement did not interrupt a partial batch")
+            v.textStorage.reset("new"); s.resetColors(); update(s, v, "new")
+            try await calls(i + 2)
+            try check(v.textStorage.writes.isEmpty, "old batch wrote into replacement")
+            await done(i + 1, [r(0, 3, 0x0000ff)])
+            try check(v.textStorage.color(0) == 0x0000ff, "replacement not colored")
+            try invariant(v, text: "new"); passed += 1
+        }
+        // Cancellation and theme changes also invalidate partially painted work.
+        for cancel in [true, false] {
+            let text = String(repeating: "a", count: 8_000)
+            let s = CodeSyntaxTextStyler(), v = UITextView(text)
+            let i = await CodeSyntaxHighlighter.shared.count()
+            update(s, v, text); try await calls(i + 1)
+            await CodeSyntaxHighlighter.shared.complete(i, (0..<8_000).map { r($0, 1) })
+            for _ in 0..<20_000 {
+                if !v.textStorage.writes.isEmpty { break }
+                await Task.yield()
+            }
+            try check(v.textStorage.writes.count < 8_000, "no partial batch to cancel")
+            if cancel {
+                s.cancel()
+                let writes = v.textStorage.writes.count
+                await spin()
+                try check(v.textStorage.writes.count == writes, "canceled batch continued")
+            } else {
+                update(s, v, text, theme: .dark)
+                try await calls(i + 2)
+                try check(v.textStorage.color(0) == UIColor.label.rgb, "partial light palette not cleared")
+                await done(i + 1, [r(0, 8_000, 0x0000ff)])
+                try check(v.textStorage.color(7_999) == 0x0000ff, "new dark palette not applied")
+            }
+            try invariant(v, text: text); passed += 1
         }
         let maximum = await CodeSyntaxHighlighter.shared.maximum()
         try check(maximum == 1, "more than one analysis in flight in a host lifecycle")

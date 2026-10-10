@@ -15,6 +15,7 @@ private enum PreferencesSheetRoute: String, Identifiable, Hashable {
     case assistantMarkdownBlockSpacing
     case inputOpacity
     case inputPlaceholder
+    case modelEntryStyle
     case imageQuality
 
     var id: String { rawValue }
@@ -97,6 +98,7 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "Markdown 列表间距", context: "偏好设置", keywords: "列表 行距", systemImage: "list.bullet", destination: .preferenceSheet(.assistantMarkdownListItemSpacing)),
         .init(title: "Markdown 块间距", context: "偏好设置", keywords: "段落 标题 留白", systemImage: "text.alignleft", destination: .preferenceSheet(.assistantMarkdownBlockSpacing)),
         .init(title: "输入框占位文字", context: "偏好设置", keywords: "输入 placeholder", systemImage: "text.cursor", destination: .preferenceSheet(.inputPlaceholder)),
+        .init(title: "模型入口样式", context: "偏好设置 · 输入框", keywords: "模型 名称 气泡 图标 选择", systemImage: "sparkles", destination: .preferenceSheet(.modelEntryStyle)),
         .init(title: "输入框背景透明度", context: "偏好设置", keywords: "输入 透明度 亮 暗", systemImage: "circle.lefthalf.filled", destination: .preferenceSheet(.inputOpacity)),
         .init(title: "图片压缩质量", context: "偏好设置", keywords: "JPEG 图片 质量", systemImage: "photo.on.rectangle", destination: .preferenceSheet(.imageQuality)),
         .init(title: "聊天气泡", context: "偏好设置", keywords: "气泡 样式 颜色 透明度 发送动画 上浮", systemImage: "message.fill", destination: .chatBubbles),
@@ -3618,6 +3620,14 @@ struct PreferencesPage: View {
 
             Section {
                 PreferenceDetailButton(
+                    title: L10n.lookup("模型入口样式"),
+                    systemImage: "sparkles",
+                    detail: model.preferences.composerModelEntryStyle.title
+                ) {
+                    activeSheet = .modelEntryStyle
+                }
+
+                PreferenceDetailButton(
                     title: L10n.lookup("输入框占位文字"),
                     systemImage: "text.cursor",
                     detail: model.preferences.chatInputPlaceholder.isEmpty
@@ -3853,6 +3863,8 @@ struct PreferencesPage: View {
                 ChatInputOpacitySheet()
             case .inputPlaceholder:
                 ChatInputPlaceholderSheet(currentValue: model.preferences.chatInputPlaceholder)
+            case .modelEntryStyle:
+                ComposerModelEntryStyleSheet()
             case .imageQuality:
                 PreferenceSliderSheet(
                     title: L10n.lookup("图片压缩质量"),
@@ -3869,6 +3881,52 @@ struct PreferencesPage: View {
                 )
             }
         }
+    }
+}
+
+private struct ComposerModelEntryStyleSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    ForEach(ComposerModelEntryStyle.allCases) { style in
+                        Button {
+                            model.performListItemHaptic()
+                            model.updatePreferences { $0.composerModelEntryStyle = style }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: style == .name ? "sparkles" : "bubble.left")
+                                    .frame(width: 24)
+                                Text(style.title)
+                                Spacer()
+                                if model.preferences.composerModelEntryStyle == style {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(Color(uiColor: model.themeAccentUIColor))
+                                }
+                            }
+                            .foregroundStyle(.primary)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(model.preferences.composerModelEntryStyle == style ? .isSelected : [])
+                    }
+                } footer: {
+                    Text(L10n.lookup("默认显示模型名称，长名称会在末尾省略。两种样式都打开同一个模型选择面板。"))
+                }
+            }
+            .navigationTitle(L10n.lookup("模型入口样式"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.lookup("完成")) { dismiss() }
+                        .foregroundStyle(.primary)
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 }
 

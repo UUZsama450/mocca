@@ -49,6 +49,7 @@
 		3D4E85D38F41E0D2F3BF4A12 /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F2C0B8B9E5F421EAC3D1041 /* ConversationStore.swift */; };
 		4C8D02CE8AB7C12E7922A4F2 /* MessageMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95E479E3E91C6559F50DA86 /* MessageMarkdownView.swift */; };
 		C49320000000000000000002 /* ChatContentMutation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C49320000000000000000001 /* ChatContentMutation.swift */; };
+		C51810000000000000000002 /* ChatRequestPreparation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51810000000000000000001 /* ChatRequestPreparation.swift */; };
 		C49510000000000000000002 /* OffscreenStreamingDisplayPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C49510000000000000000001 /* OffscreenStreamingDisplayPolicy.swift */; };
 		6D1194B98BA9ED10D06D67C0 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44ECEBD2B5DAA93B6CCB3D53 /* RootView.swift */; };
 		AA103C225507E39B42C51783 /* ProviderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 174FAD6002EC9DD090C5EBEC /* ProviderModels.swift */; };
@@ -155,6 +156,7 @@
 		843BBBB24B7AD150C791BB3F /* AIChatService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIChatService.swift; sourceTree = "<group>"; };
 		B95E479E3E91C6559F50DA86 /* MessageMarkdownView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageMarkdownView.swift; sourceTree = "<group>"; };
 		C49320000000000000000001 /* ChatContentMutation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatContentMutation.swift; sourceTree = "<group>"; };
+		C51810000000000000000001 /* ChatRequestPreparation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatRequestPreparation.swift; sourceTree = "<group>"; };
 		C49510000000000000000001 /* OffscreenStreamingDisplayPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OffscreenStreamingDisplayPolicy.swift; sourceTree = "<group>"; };
 		D65929F043A91AC7F097CC76 /* MoccaApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MoccaApp.swift; sourceTree = "<group>"; };
 		D9C529652339093513C3A838 /* Mocca.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mocca.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -290,6 +292,7 @@
 				C49950000000000000000301 /* CodeHighlighting-LICENSE.txt */,
 				B95E479E3E91C6559F50DA86 /* MessageMarkdownView.swift */,
 				C49320000000000000000001 /* ChatContentMutation.swift */,
+				C51810000000000000000001 /* ChatRequestPreparation.swift */,
 				C49510000000000000000001 /* OffscreenStreamingDisplayPolicy.swift */,
 				5769666635B0E581D7481780 /* ComposerView.swift */,
 				C48290000000000000000002 /* AppIcon.icon */,
@@ -490,6 +493,7 @@
 				C49950000000000000000102 /* CodeSyntaxTextStyler.swift in Sources */,
 				4C8D02CE8AB7C12E7922A4F2 /* MessageMarkdownView.swift in Sources */,
 				C49320000000000000000002 /* ChatContentMutation.swift in Sources */,
+				C51810000000000000000002 /* ChatRequestPreparation.swift in Sources */,
 				C49510000000000000000002 /* OffscreenStreamingDisplayPolicy.swift in Sources */,
 				C5D5CCEFCB37DA980A064457 /* ComposerView.swift in Sources */,
 			);
@@ -535,7 +539,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5189;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -564,7 +568,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5189;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -658,11 +662,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5189;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) STREAM_HEIGHT_PHONE_CANDIDATE";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) STREAM_HEIGHT_PHONE_CANDIDATE PROSE_MEASUREMENT_REUSE_CANDIDATE";
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
@@ -742,11 +746,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5189;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) STREAM_HEIGHT_PHONE_CANDIDATE";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) STREAM_HEIGHT_PHONE_CANDIDATE PROSE_MEASUREMENT_REUSE_CANDIDATE";
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
