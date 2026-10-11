@@ -1,29 +1,29 @@
-# Mocca
+<h1 align="center">Mocca</h1>
 
-**用 SwiftUI 和 UIKit 构建的原生 iPhone AI 聊天应用。**
+<p align="center">原生 iPhone AI 聊天应用。<br>连接喜欢的模型，把对话留在自己的设备上。</p>
 
-[English](README.md) · 简体中文
-
-连接自己的模型，用助手整理对话，把聊天记录保存在自己的设备上。
-
-> **1.0.3（5194）** · [下载 IPA 预览包](https://github.com/UUZsama450/mocca/releases/tag/v1.0.3) · [更新说明](CHANGELOG.md)
-> GitHub 的 IPA 需要自行签名；App Store 更新单独送审，通过后手动发布。见[安装说明](docs/INSTALLATION.md)和[源码验证](docs/SNAPSHOT_1.0.3.md)。
-
-<p>
-  <a href="https://apps.apple.com/us/app/mocca-ai-chat/id6807043522"><img src="docs/images/app-store-badge.svg" height="44" alt="在 App Store 下载"></a>
-</p>
-
-[在 App Store 下载](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) · 是否可下载取决于你的 App Store 账号所在地区。
-
-## 界面预览
+<p align="center"><a href="README.md">English</a> · 简体中文</p>
 
 <p align="center">
-  <img src="docs/images/1.0.3/chat-zh.png" width="30%" alt="Mocca 日常聊天界面">
-  <img src="docs/images/1.0.3/group-zh.png" width="30%" alt="三位助手参与群聊">
-  <img src="docs/images/1.0.3/code-zh.png" width="30%" alt="暗色模式的代码高亮与模型选择">
+  <a href="https://apps.apple.com/us/app/mocca-ai-chat/id6807043522"><img src="docs/images/app-store-badge.svg" height="40" alt="在 App Store 下载"></a>
 </p>
 
-当前版本真实界面，使用虚构的演示对话。
+<p align="center">
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.3">IPA 预览包</a> · <a href="CHANGELOG.md">更新说明</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/1.0.3/showcase-zh.png" width="760" alt="Mocca 界面展示：日常聊天、多助手群聊与暗色代码界面">
+</p>
+
+<p align="center"><sub>日常聊天 · 多位助手 · 代码创作<br>加框展示图，使用虚构的演示对话。</sub></p>
+
+<details>
+<summary>查看原始截图</summary>
+
+[日常聊天](docs/images/1.0.3/chat-zh.png) · [多助手群聊](docs/images/1.0.3/group-zh.png) · [代码界面](docs/images/1.0.3/code-zh.png)
+
+</details>
 
 ## 主要功能
 
@@ -44,7 +44,13 @@ Mocca 不附带 API Key 或第三方服务额度。模型能力、服务可用�
 
 聊天与附件保存在本地。使用相关功能时，请求会将所需数据发送给配置的服务。数据处理说明见 [PRIVACY.md](PRIVACY.md)。
 
+## 下载说明
+
+[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)在支持的账号地区提供下载。GitHub 的 **1.0.3（5194）** IPA 预览包需要自行签名，步骤见[安装说明](docs/INSTALLATION.md)和[源码验证](docs/SNAPSHOT_1.0.3.md)。App Store 更新单独送审，通过后手动发布。
+
 ## 本地构建
+
+使用 SwiftUI 和 UIKit 构建。
 
 - iOS 17 或更高版本
 - Xcode 26.3，目前核验过的开发工具版本

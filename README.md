@@ -1,29 +1,29 @@
-# Mocca
+<h1 align="center">Mocca</h1>
 
-**A native AI chat app for iPhone, built with SwiftUI and UIKit.**
+<p align="center">A native AI chat app for iPhone.<br>Bring your own models. Keep your conversations on your device.</p>
 
-English · [简体中文](README.zh-CN.md)
-
-Bring your own models, organize conversations with assistants, and keep your chat history on your device.
-
-> **1.0.3 (5194)** · [Download the IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.3) · [What’s new](CHANGELOG.md)
-> The GitHub IPA requires your own signing. The App Store update is submitted separately and released manually after approval. See [installation](docs/INSTALLATION.md) and [source verification](docs/SNAPSHOT_1.0.3.md).
-
-<p>
-  <a href="https://apps.apple.com/us/app/mocca-ai-chat/id6807043522"><img src="docs/images/app-store-badge.svg" height="44" alt="Download on the App Store"></a>
-</p>
-
-[Download on the App Store](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) · Availability depends on your App Store region.
-
-## A look inside
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
 
 <p align="center">
-  <img src="docs/images/1.0.3/chat-en.png" width="30%" alt="Everyday conversation in Mocca">
-  <img src="docs/images/1.0.3/group-en.png" width="30%" alt="A group conversation with three assistants">
-  <img src="docs/images/1.0.3/code-en.png" width="30%" alt="Code highlighting and model selection in dark mode">
+  <a href="https://apps.apple.com/us/app/mocca-ai-chat/id6807043522"><img src="docs/images/app-store-badge.svg" height="40" alt="Download on the App Store"></a>
 </p>
 
-Current app screens with fictional demo conversations.
+<p align="center">
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.3">IPA preview</a> · <a href="CHANGELOG.md">What’s new</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/1.0.3/showcase-en.png" width="760" alt="Mocca previews: everyday chat, a group of assistants, and code in dark mode">
+</p>
+
+<p align="center"><sub>Everyday chat · Multiple assistants · Code<br>Framed previews with fictional demo conversations.</sub></p>
+
+<details>
+<summary>View original screenshots</summary>
+
+[Everyday chat](docs/images/1.0.3/chat-en.png) · [Group chat](docs/images/1.0.3/group-en.png) · [Code](docs/images/1.0.3/code-en.png)
+
+</details>
 
 ## Features
 
@@ -44,7 +44,13 @@ Mocca does not include API keys or third-party service credits. Model capabiliti
 
 Chats and attachments are stored locally. Requests send the data needed for the selected feature to the configured services. Read [PRIVACY.md](PRIVACY.md) for the data-handling details.
 
+## Download
+
+The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The **1.0.3 (5194)** GitHub IPA preview requires your own signing; see [installation](docs/INSTALLATION.md) and [source verification](docs/SNAPSHOT_1.0.3.md). App Store updates are reviewed separately and released manually after approval.
+
 ## Build locally
+
+Built with SwiftUI and UIKit.
 
 - iOS 17 or later
 - Xcode 26.3, the currently verified development toolchain
