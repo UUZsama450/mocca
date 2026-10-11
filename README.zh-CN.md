@@ -6,8 +6,24 @@
 
 连接自己的模型，用助手整理对话，把聊天记录保存在自己的设备上。
 
-> 版本标记仍为 **1.0.2（5173）**，源码纳入了来自手机 5189 的改进，列在[未发布改动](CHANGELOG.md)中。见[源码验证](docs/SNAPSHOT_5189.md)和[构建配置](docs/BUILD_CONFIGURATION.md)。
-> 本次更新源码，App Store 发版另行记录。[1.0（5135）未签名 IPA 预览包](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135)是较早版本的下载，需要自行签名。
+> **1.0.3（5194）** · [下载 IPA 预览包](https://github.com/UUZsama450/mocca/releases/tag/v1.0.3) · [更新说明](CHANGELOG.md)
+> GitHub 的 IPA 需要自行签名；App Store 更新单独送审，通过后手动发布。见[安装说明](docs/INSTALLATION.md)和[源码验证](docs/SNAPSHOT_1.0.3.md)。
+
+<p>
+  <a href="https://apps.apple.com/us/app/mocca-ai-chat/id6807043522"><img src="docs/images/app-store-badge.svg" height="44" alt="在 App Store 下载"></a>
+</p>
+
+[在 App Store 下载](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) · 是否可下载取决于你的 App Store 账号所在地区。
+
+## 界面预览
+
+<p align="center">
+  <img src="docs/images/1.0.3/chat-zh.png" width="30%" alt="Mocca 日常聊天界面">
+  <img src="docs/images/1.0.3/group-zh.png" width="30%" alt="三位助手参与群聊">
+  <img src="docs/images/1.0.3/code-zh.png" width="30%" alt="暗色模式的代码高亮与模型选择">
+</p>
+
+当前版本真实界面，使用虚构的演示对话。
 
 ## 主要功能
 

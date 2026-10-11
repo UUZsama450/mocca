@@ -251,8 +251,7 @@ struct ComposerView: View {
                                         .fixedSize()
                                         .accessibilityHidden(true)
                                 } else {
-                                    Text(verbatim: "✦")
-                                        .font(.system(size: 18, weight: .regular))
+                                    ComposerModelBrandIcon(icon: model.composerModelBrandIcon)
                                         .foregroundStyle(colorScheme == .dark ? Color.white : Color.secondary)
                                         .fixedSize()
                                         .accessibilityHidden(true)
@@ -493,6 +492,27 @@ struct ComposerView: View {
             for: nil
         )
         model.presentBottomTools()
+    }
+}
+
+private struct ComposerModelBrandIcon: View {
+    let icon: ProviderBrandIcon?
+
+    var body: some View {
+        // Keep the original star's layout footprint and vertical alignment.
+        Text(verbatim: "✦")
+            .font(.system(size: 18, weight: .regular))
+            .opacity(icon == nil ? 1 : 0)
+            .overlay {
+                if let icon {
+                    Image(icon.assetName)
+                        .renderingMode(icon.usesTemplateRendering ? .template : .original)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 17, height: 17)
+                        .foregroundStyle(icon == .openAI ? Color.secondary : Color.primary)
+                }
+            }
     }
 }
 

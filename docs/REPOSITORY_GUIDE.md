@@ -4,13 +4,13 @@
 
 ## Source snapshot / 源码快照
 
-This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0.2** with unreleased improvements from phone build 5189. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
+This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0.3 (5194)** with the changes adopted in phone build 5193. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
 
-本仓库从开发版 1.0（5058）的源码快照开始，当前版本标记仍为 **1.0.2**，源码纳入了来自手机 5189 的未发布改动，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
+本仓库从开发版 1.0（5058）的源码快照开始，当前版本为 **1.0.3（5194）**，纳入手机 5193 已采用的改动，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
 
-This is a portable source snapshot for the private [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Configurable signing identity, disabled-by-default sponsorship and the reviewed asset set distinguish it from the device build. This update does not create a downloadable app or change App Store releases.
+This is a portable source snapshot for the private [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Configurable signing identity, disabled-by-default sponsorship and the reviewed asset set distinguish it from the device build. The GitHub release includes an unsigned IPA preview; App Store review and manual publication are tracked separately.
 
-这是 [UUZsama450/mocca](https://github.com/UUZsama450/mocca) 私有仓库的可移植源码快照。可配置的签名身份、默认关闭的赞助及整理过的素材，使它与真机安装包有所区别。本次更新不创建可下载应用，也不改变 App Store 的发布状态。
+这是 [UUZsama450/mocca](https://github.com/UUZsama450/mocca) 私有仓库的可移植源码快照。可配置的签名身份、默认关闭的赞助及整理过的素材，使它与真机安装包有所区别。GitHub Release 提供未签名 IPA 预览包；App Store 审核及手动发布单独记录。
 
 ## Contents / 目录
 
@@ -30,9 +30,9 @@ Historical notes retain their original build context. Their presence does not me
 
 ## Verification boundary / 验证范围
 
-The 5189 portable source is compiled and checked separately from the phone build. Commands, results and limits are recorded in [5189 verification](SNAPSHOT_5189.md). Earlier snapshot results remain historical evidence. Device interaction, real purchases and release signing require their own verification.
+The 1.0.3 portable source is compiled and checked separately from the phone build. Commands, results and limits are recorded in [1.0.3 verification](SNAPSHOT_1.0.3.md). Earlier snapshot results remain historical evidence. Device interaction, real purchases and release signing require their own verification.
 
-5189 可移植源码独立进行编译与检查，命令、结果和限制记录在[本次变更与验证](SNAPSHOT_5189.md)中。旧快照的结果继续作为历史证据保留。真机交互、实际购买和发布签名需要分别验证。
+1.0.3 可移植源码独立进行编译与检查，命令、结果和限制记录在[本次变更与验证](SNAPSHOT_1.0.3.md)中。旧快照的结果继续作为历史证据保留。真机交互、实际购买和发布签名需要分别验证。
 
 Generated apps, build caches, device logs, private chats, backups, signing credentials and machine-local overrides are outside the source snapshot. See [.gitignore](../.gitignore) for exclusion rules. Ignore rules support this boundary; they do not replace reviewing the tracked tree and Git history before publication.
 

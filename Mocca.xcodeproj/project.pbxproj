@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C51900000000000000000002 /* TextSelectionEdgeAutoscroll.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51900000000000000000001 /* TextSelectionEdgeAutoscroll.swift */; };
 		C50580000000000000000012 /* LobeIcons-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000011 /* LobeIcons-LICENSE.txt */; };
 		C50580000000000000000002 /* AppBuildConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000001 /* AppBuildConfiguration.swift */; };
 		C51680000000000000000002 /* DraftEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51680000000000000000004 /* DraftEditing.swift */; };
@@ -102,6 +103,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C51900000000000000000001 /* TextSelectionEdgeAutoscroll.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSelectionEdgeAutoscroll.swift; sourceTree = "<group>"; };
 		C50580000000000000000011 /* LobeIcons-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LobeIcons-LICENSE.txt"; sourceTree = "<group>"; };
 		C50580000000000000000001 /* AppBuildConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuildConfiguration.swift; sourceTree = "<group>"; };
 		C50580000000000000000003 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Configuration/Shared.xcconfig; sourceTree = "<group>"; };
@@ -236,6 +238,7 @@
 				C50580000000000000000001 /* AppBuildConfiguration.swift */,
 				D65929F043A91AC7F097CC76 /* MoccaApp.swift */,
 				C50770000000000000000001 /* NativeChatTranscript.swift */,
+				C51900000000000000000001 /* TextSelectionEdgeAutoscroll.swift */,
 				39736C80662F903B8E18159D /* AppModel.swift */,
 				7F2C0B8B9E5F421EAC3D1041 /* ConversationStore.swift */,
 				1A57A5D201B7C0DEA1140002 /* AssistantModels.swift */,
@@ -444,6 +447,7 @@
 				C50580000000000000000002 /* AppBuildConfiguration.swift in Sources */,
 				E90C63C21E5097AAB65B237B /* MoccaApp.swift in Sources */,
 				C50770000000000000000002 /* NativeChatTranscript.swift in Sources */,
+				C51900000000000000000002 /* TextSelectionEdgeAutoscroll.swift in Sources */,
 				E2A32D257C67EFBC3BFDB3AD /* AppModel.swift in Sources */,
 				3D4E85D38F41E0D2F3BF4A12 /* ConversationStore.swift in Sources */,
 				1A57A5D201B7C0DEA1140001 /* AssistantModels.swift in Sources */,
@@ -539,7 +543,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5194;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -549,7 +553,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -568,7 +572,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5194;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -578,7 +582,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -662,7 +666,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5194;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -670,7 +674,7 @@
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -746,7 +750,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5173;
+				CURRENT_PROJECT_VERSION = 5194;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -754,7 +758,7 @@
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
