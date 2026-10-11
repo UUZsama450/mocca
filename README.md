@@ -6,8 +6,24 @@ English · [简体中文](README.zh-CN.md)
 
 Bring your own models, organize conversations with assistants, and keep your chat history on your device.
 
-> Version metadata remains **1.0.2 (5173)**. The source now includes improvements from phone build 5189, listed as [unreleased changes](CHANGELOG.md). See [source verification](docs/SNAPSHOT_5189.md) and [build configuration](docs/BUILD_CONFIGURATION.md).
-> This is a source update; an App Store release is tracked separately. The [1.0 (5135) unsigned IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.0-5135) is an older download and requires your own signing.
+> **1.0.3 (5194)** · [Download the IPA preview](https://github.com/UUZsama450/mocca/releases/tag/v1.0.3) · [What’s new](CHANGELOG.md)
+> The GitHub IPA requires your own signing. The App Store update is submitted separately and released manually after approval. See [installation](docs/INSTALLATION.md) and [source verification](docs/SNAPSHOT_1.0.3.md).
+
+<p>
+  <a href="https://apps.apple.com/us/app/mocca-ai-chat/id6807043522"><img src="docs/images/app-store-badge.svg" height="44" alt="Download on the App Store"></a>
+</p>
+
+[Download on the App Store](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) · Availability depends on your App Store region.
+
+## A look inside
+
+<p align="center">
+  <img src="docs/images/1.0.3/chat-en.png" width="30%" alt="Everyday conversation in Mocca">
+  <img src="docs/images/1.0.3/group-en.png" width="30%" alt="A group conversation with three assistants">
+  <img src="docs/images/1.0.3/code-en.png" width="30%" alt="Code highlighting and model selection in dark mode">
+</p>
+
+Current app screens with fictional demo conversations.
 
 ## Features
 

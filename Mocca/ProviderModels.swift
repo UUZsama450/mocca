@@ -154,6 +154,34 @@ enum ProviderBrandIcon: String, Codable, CaseIterable, Identifiable, Sendable {
         return selectableCases.first(where: { $0.matchesURL(normalizedURL) })
     }
 
+    /// Model identity is independent of the provider's API format or branding.
+    /// Match the model component first so a gateway namespace cannot win.
+    static func inferredModel(id: String, catalogName: String?) -> ProviderBrandIcon? {
+        func match(_ value: String) -> ProviderBrandIcon? {
+            let normalized = normalize(value)
+            let range = NSRange(normalized.startIndex..., in: normalized)
+            return modelBrandRules.first {
+                $0.pattern.firstMatch(in: normalized, range: range) != nil
+            }?.icon
+        }
+
+        let modelID = id.split(separator: "/").last.map(String.init) ?? id
+        if let icon = match(modelID) { return icon }
+        return catalogName.flatMap(match)
+    }
+
+    private static let modelBrandRules: [(icon: ProviderBrandIcon, pattern: NSRegularExpression)] = [
+        (.openAI, #"(^|[^a-z0-9])(gpt($|[-_ .]?([0-9]|oss\b))|chatgpt\b|o[1-9][0-9]*($|[^a-z0-9]))"#),
+        (.claude, #"(^|[^a-z0-9])claude($|[^a-z])"#),
+        (.gemini, #"(^|[^a-z0-9])gemini($|[^a-z])"#),
+        (.deepSeek, #"(^|[^a-z0-9])deepseek($|[^a-z])"#),
+        (.grok, #"(^|[^a-z0-9])grok($|[^a-z])"#),
+        (.zhipu, #"(^|[^a-z0-9])(glm|zhipu)($|[^a-z])|智谱"#)
+    ].compactMap { icon, pattern in
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        return (icon, expression)
+    }
+
     static func fromLegacyAvatar(type: String?, value: String?) -> ProviderBrandIcon? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty else { return nil }
@@ -644,6 +672,13 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         }
         let suffix = name[name.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
         return suffix.isEmpty ? name : suffix
+    }
+
+    var modelBrandIcon: ProviderBrandIcon? {
+        ProviderBrandIcon.inferredModel(
+            id: id,
+            catalogName: isDisplayNameCustomized ? nil : displayName
+        )
     }
 }
 

@@ -2566,6 +2566,11 @@ final class AppModel {
             ?? context.selection.modelID
     }
 
+    var composerModelBrandIcon: ProviderBrandIcon? {
+        guard let context = effectiveModelContext else { return nil }
+        return context.provider.models.first { $0.id == context.selection.modelID }?.modelBrandIcon
+    }
+
     func modelTitle(for assistant: AssistantProfile) -> String {
         guard let context = modelContext(for: assistant) else { return "助手" }
         return context.provider.models.first { $0.id == context.selection.modelID }?.displayName

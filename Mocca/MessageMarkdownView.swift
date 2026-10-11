@@ -394,10 +394,26 @@ enum DrawerTextSelectionInteractionGate {
 
     fileprivate static func unregister(_ textView: UITextView) {
         textViews.remove(textView)
+        for case let controller as TextSelectionDismissTapController in dismissalControllers.objectEnumerator()?.allObjects ?? [] {
+            controller.edgeAutoscroll.unregister(textView)
+        }
+    }
+
+    fileprivate static func cancelAutoscroll(in textView: UITextView) {
+        for case let controller as TextSelectionDismissTapController in dismissalControllers.objectEnumerator()?.allObjects ?? [] {
+            controller.edgeAutoscroll.cancelSelection(in: textView)
+        }
+    }
+
+    static func cancelAutoscroll(in scrollView: UIScrollView) {
+        dismissalControllers.object(forKey: scrollView)?.edgeAutoscroll.cancel()
     }
 
     static var ownsCurrentTouch: Bool {
-        textViews.allObjects.contains { $0.ownsCurrentSelectionTouch }
+        if (dismissalControllers.objectEnumerator()?.allObjects ?? []).contains(where: {
+            ($0 as? TextSelectionDismissTapController)?.edgeAutoscroll.ownsSelectionDrag == true
+        }) { return true }
+        return textViews.allObjects.contains { $0.ownsCurrentSelectionTouch }
     }
 
     fileprivate static func hasActiveSelection(in scrollView: UIScrollView) -> Bool {
@@ -425,12 +441,15 @@ enum DrawerTextSelectionInteractionGate {
     private static func installDismissalControllerIfNeeded(
         for textView: UITextView
     ) {
-        guard let scrollView = enclosingScrollView(of: textView),
-              dismissalControllers.object(forKey: scrollView) == nil else { return }
-        dismissalControllers.setObject(
-            TextSelectionDismissTapController(scrollView: scrollView),
-            forKey: scrollView
-        )
+        guard let scrollView = enclosingScrollView(of: textView) else { return }
+        let controller: TextSelectionDismissTapController
+        if let existing = dismissalControllers.object(forKey: scrollView) {
+            controller = existing
+        } else {
+            controller = TextSelectionDismissTapController(scrollView: scrollView)
+            dismissalControllers.setObject(controller, forKey: scrollView)
+        }
+        controller.edgeAutoscroll.register(textView)
     }
 
     private static func enclosingScrollView(of textView: UIView) -> UIScrollView? {
@@ -453,11 +472,13 @@ enum DrawerTextSelectionInteractionGate {
 /// taps on selected text or its handles remain fully owned by UITextView.
 @MainActor
 private final class TextSelectionDismissTapController: NSObject, UIGestureRecognizerDelegate {
+    let edgeAutoscroll: TextSelectionEdgeAutoscroll
     private weak var scrollView: UIScrollView?
     private var tapRecognizer: UITapGestureRecognizer?
 
     init(scrollView: UIScrollView) {
         self.scrollView = scrollView
+        edgeAutoscroll = TextSelectionEdgeAutoscroll(scrollView: scrollView)
         super.init()
 
         let tapRecognizer = UITapGestureRecognizer(
@@ -2618,6 +2639,7 @@ private final class GlyphSelectableTextView: UITextView {
 // Only message views register with the gate; the composer keeps its own owner.
 fileprivate extension UITextView {
     func clearSelection(resign: Bool = true) {
+        DrawerTextSelectionInteractionGate.cancelAutoscroll(in: self)
         selectedRange = NSRange(location: 0, length: 0)
         if resign {
             resignFirstResponder()
@@ -5949,8 +5971,13 @@ private enum MarkdownRenderParser {
 
 // Preserve one document and its fixed code width while bounding display height.
 // The measured document size remains the only size reported to the transcript.
-private final class CodeViewportTextView: UITextView {
+private final class CodeViewportTextView: UITextView, TextSelectionAutoscrollDocument {
     var mapsDocumentCoordinates = false
+
+    var selectionAutoscrollDocumentRect: CGRect {
+        guard let superview else { return bounds }
+        return convert(superview.bounds, from: superview)
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()

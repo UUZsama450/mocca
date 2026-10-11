@@ -12304,12 +12304,57 @@ private struct RegisteredChatScrollHeader: ViewModifier {
     }
 }
 
+/// The A3.1 open-corner bubble, drawn at toolbar size with a single stroke weight.
+private struct NewChatHeaderSymbol: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 13.2, y: 5.65))
+        path.addLine(to: CGPoint(x: 7.8, y: 5.65))
+        path.addCurve(to: CGPoint(x: 2.2, y: 11.25),
+                      control1: CGPoint(x: 4.707, y: 5.65),
+                      control2: CGPoint(x: 2.2, y: 8.157))
+        path.addLine(to: CGPoint(x: 2.2, y: 14.35))
+        path.addCurve(to: CGPoint(x: 4.65, y: 18.85),
+                      control1: CGPoint(x: 2.2, y: 16.3),
+                      control2: CGPoint(x: 3.12, y: 17.93))
+        path.addCurve(to: CGPoint(x: 4.96, y: 19.53),
+                      control1: CGPoint(x: 4.96, y: 19.04),
+                      control2: CGPoint(x: 5.04, y: 19.2))
+        path.addLine(to: CGPoint(x: 4.49, y: 21.99))
+        path.addQuadCurve(to: CGPoint(x: 5.15, y: 22.45),
+                          control: CGPoint(x: 4.34, y: 22.96))
+        path.addLine(to: CGPoint(x: 8.2, y: 20.46))
+        path.addCurve(to: CGPoint(x: 9.3, y: 20.1),
+                      control1: CGPoint(x: 8.55, y: 20.22),
+                      control2: CGPoint(x: 8.88, y: 20.1))
+        path.addLine(to: CGPoint(x: 15.0, y: 20.1))
+        path.addCurve(to: CGPoint(x: 20.6, y: 14.5),
+                      control1: CGPoint(x: 18.093, y: 20.1),
+                      control2: CGPoint(x: 20.6, y: 17.593))
+        path.addLine(to: CGPoint(x: 20.6, y: 11.45))
+
+        path.move(to: CGPoint(x: 15.9, y: 6.4))
+        path.addLine(to: CGPoint(x: 21.75, y: 6.4))
+        path.move(to: CGPoint(x: 18.825, y: 3.35))
+        path.addLine(to: CGPoint(x: 18.825, y: 9.45))
+
+        // Center the visible contour, including its tail and plus, in the glass circle.
+        let bounds = path.boundingRect
+        let centeredPath = path.applying(CGAffineTransform(
+            translationX: 12 - bounds.midX, y: 12 - bounds.midY
+        ))
+        return centeredPath.applying(CGAffineTransform(translationX: rect.minX, y: rect.minY)
+            .scaledBy(x: rect.width / 24, y: rect.height / 24))
+    }
+}
+
 private struct NewChatHeaderButton: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Image(systemName: "plus.bubble")
-            .font(.system(size: 20, weight: .medium))
+        NewChatHeaderSymbol()
+            .stroke(style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            .frame(width: 24, height: 24)
             .frame(width: 44, height: 44)
             .foregroundStyle(Color.primary)
             .background(GlassSurface(shape: Circle()))

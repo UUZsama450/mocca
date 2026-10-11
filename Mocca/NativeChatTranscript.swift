@@ -179,7 +179,19 @@ struct NativeChatViewportLayoutChange {
     let presentedOffsetBeforeLayout: CGFloat?
 }
 
-fileprivate final class NativeChatCollectionView: UICollectionView {
+fileprivate final class NativeChatCollectionView: UICollectionView, TextSelectionAutoscrollHost {
+    var onSelectionAutoscrollBegan: (() -> Void)?
+    var onSelectionAutoscrollEnded: (() -> Void)?
+    private(set) var selectionAutoscrolling = false
+
+    func selectionAutoscrollDidBegin() {
+        selectionAutoscrolling = true
+        onSelectionAutoscrollBegan?()
+    }
+    func selectionAutoscrollDidEnd() {
+        selectionAutoscrolling = false
+        onSelectionAutoscrollEnded?()
+    }
     var onViewportLayout: ((NativeChatViewportMetrics, NativeChatViewportMetrics, CGFloat?) -> Void)?
     var onContentLayoutCompleted: (() -> Void)?
     private var lastLayoutMetrics: NativeChatViewportMetrics?
@@ -1195,6 +1207,14 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         }
         collection.register(NativeChatCell.self, forCellWithReuseIdentifier: "native-chat")
         collection.accessibilityIdentifier = "nativeChat.transcript"
+        collection.onSelectionAutoscrollBegan = { [weak self] in
+            guard let self, !self.detached, self.input.driver.controller === self else { return }
+            self.cancelHostedDisclosureMotions()
+            self.input.mutationLanding = nil
+            self.input.driver.releasePosition(userOwned: true)
+            self.refreshPhase()
+        }
+        collection.onSelectionAutoscrollEnded = { [weak self] in self?.refreshPhase() }
         view.addSubview(collection)
         NSLayoutConstraint.activate([
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor), collection.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -1309,6 +1329,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     }
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated); visible = false
+        DrawerTextSelectionInteractionGate.cancelAutoscroll(in: collection)
         input.mutationLanding = nil
         scheduledPage?.cancel(); scheduledPage = nil
     }
@@ -1318,6 +1339,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         #endif
         guard !detached else { return }
         detached = true; visible = false
+        DrawerTextSelectionInteractionGate.cancelAutoscroll(in: collection)
         cancelHostedDisclosureMotions()
         collection.onViewportLayout = nil
         collection.onContentLayoutCompleted = nil
@@ -1653,6 +1675,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     }
 
     private func phaseNow() -> NativeChatScrollPhase {
+        if collection.selectionAutoscrolling { return .interacting }
         if (touching || collection.isTracking) && collection.isDragging { return .interacting }
         if touching || collection.isTracking { return .tracking }
         if collection.isDecelerating { return .decelerating }
