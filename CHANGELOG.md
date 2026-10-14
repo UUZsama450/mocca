@@ -1,18 +1,18 @@
 # 更新记录 / Changelog
 
-## 未发布更新 / Unreleased
+## 1.0.4（5210）
 
-同步手机 1.0.4（5210）已采用的源码进度。此次不创建 Release 或更新安装包；工程元数据仍为 1.0.4（5206），下次打包时单独递增构建号。[版本对应关系](docs/RELEASE_TRACKING.md)。
+- 优化模型卡片两排布局，对齐品牌、模型类型和能力图标。
+- 完善助手多选删除、独立滚动列表与编辑页顶部样式。
+- 改进工具、MCP 面板以及记忆和图像说明气泡。
+- 本构建沿用 1.0.4，GitHub 标签为 `v1.0.4-build.5210`；旧 5206 预览包保留。
 
-- 优化模型卡片的两排布局，品牌图标、模型类型和能力图标居中对齐。
-- 完善助手多选删除与独立滚动列表，恢复编辑页原有的系统顶部样式。
-- 调整工具与 MCP 面板布局，把记忆和图像说明整理为适配主题、大字与滚动的系统气泡。
+### English
 
-Source progress adopted in phone build 1.0.4 (5210), without a new Release or binary. Project metadata remains 1.0.4 (5206); a future package receives its own incremented build number.
-
-- Refine two-row model cards and center-align brand, kind and capability icons.
-- Add assistant multi-select deletion, bound the independently scrolling assistant list, and restore the native editor header.
-- Refine tools/MCP layouts and make memory/image explanations readable, scrollable native popovers.
+- Refine two-row model cards and align brand, kind and capability icons.
+- Improve assistant multi-select deletion, independent list scrolling and the native editor header.
+- Refine tools/MCP panels and memory/image information popovers.
+- Keep version 1.0.4 and identify this build with tag `v1.0.4-build.5210`; retain the earlier 5206 preview.
 
 ## 1.0.4（5206）
 
