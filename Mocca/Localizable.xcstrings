@@ -1,6 +1,17 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "从列表添加": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add from list"
+          }
+        }
+      }
+    },
     "自动附带时间": {
       "extractionState": "manual",
       "localizations": {
@@ -11987,13 +11998,13 @@
         }
       }
     },
-    "点下方“选择模型”从供应商目录添加，或手动输入模型 ID": {
+    "点下方“从列表添加”从供应商目录添加，或手动输入模型 ID": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Use Choose Models below to add models from the provider's catalog, or enter a model ID manually"
+            "value": "Tap “Add from list” to add models from the provider catalog, or enter a model ID manually."
           }
         }
       }
@@ -20061,6 +20072,39 @@
         }
       }
     },
+    "这条回复没有保存具体的中断原因。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No specific interruption reason was saved for this reply."
+          }
+        }
+      }
+    },
+    "轻点展开中断原因": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to show the interruption reason"
+          }
+        }
+      }
+    },
+    "轻点收起中断原因": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to hide the interruption reason"
+          }
+        }
+      }
+    },
     "回复已中断": {
       "extractionState": "manual",
       "localizations": {
@@ -22140,6 +22184,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Not replying this time"
+          }
+        }
+      }
+    },
+    "识图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vision"
+          }
+        }
+      }
+    },
+    "生图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image output"
+          }
+        }
+      }
+    },
+    "只看收藏": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show favorites only"
+          }
+        }
+      }
+    },
+    "显示全部模型": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show all models"
           }
         }
       }

@@ -1261,7 +1261,7 @@ private struct ProviderModelsWorkspaceView: View {
                     ContentUnavailableView(
                         L10n.lookup("还没有模型"),
                         systemImage: "cube.transparent",
-                        description: Text(L10n.lookup("点下方“选择模型”从供应商目录添加，或手动输入模型 ID"))
+                        description: Text(L10n.lookup("点下方“从列表添加”从供应商目录添加，或手动输入模型 ID"))
                     )
                 }
             }
@@ -1348,7 +1348,7 @@ private struct ProviderModelsWorkspaceView: View {
 
     private var modelActionBar: some View {
         HStack(spacing: 10) {
-            actionButton(L10n.lookup("选择模型"), systemImage: "checklist") {
+            actionButton(L10n.lookup("从列表添加"), systemImage: "checklist") {
                 isCatalogPresented = true
             }
             actionButton(L10n.lookup("手动添加"), systemImage: "plus") {
@@ -1480,7 +1480,7 @@ private struct ProviderCapabilityFlowLayout: Layout {
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
             let spacing = rowWidth == 0 ? 0 : horizontalSpacing
-            if rowWidth > 0, rowWidth + spacing + size.width > maximumWidth {
+            if rowWidth > 0, rowWidth + spacing + size.width > maximumWidth + 0.5 {
                 usedWidth = max(usedWidth, rowWidth)
                 usedHeight += rowHeight + verticalSpacing
                 rowWidth = size.width
@@ -1509,7 +1509,9 @@ private struct ProviderCapabilityFlowLayout: Layout {
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
             let proposedX = x == bounds.minX ? x : x + horizontalSpacing
-            if x > bounds.minX, proposedX + size.width > bounds.maxX {
+            // The measured intrinsic width can lose a fraction of a point when
+            // positioned in its parent. Keep that rounding from adding a row.
+            if x > bounds.minX, proposedX + size.width > bounds.maxX + 0.5 {
                 x = bounds.minX
                 y += rowHeight + verticalSpacing
                 rowHeight = 0
@@ -2023,7 +2025,6 @@ struct ModelSelectorView: View {
     @State private var favoritesOnly = false
     @State private var activeProviderID: UUID?
     @State private var editingModelItem: ModelSelectorItem?
-    @State private var pressedModelKey: String?
     @State private var searchCollapsedProviderIDs: Set<UUID> = []
     @FocusState private var searchFocused: Bool
     let context: SettingsPageContext
@@ -2091,6 +2092,10 @@ struct ModelSelectorView: View {
                         .padding(.bottom, 4)
 
                     HStack {
+                        Text(screenTitle)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+
                         Spacer()
 
                         Button {
@@ -2106,7 +2111,7 @@ struct ModelSelectorView: View {
                         .accessibilityLabel(L10n.lookup("关闭模型选择"))
                     }
                     .padding(.horizontal, 18)
-                    .frame(height: 38)
+                    .frame(minHeight: 44)
                     .padding(.bottom, 4)
                 }
 
@@ -2181,11 +2186,12 @@ struct ModelSelectorView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: favoritesOnly ? "bookmark.fill" : "bookmark")
+                    Image(systemName: favoritesOnly ? "heart.fill" : "heart")
                         .font(.system(size: 19, weight: .medium))
                         .foregroundStyle(favoritesOnly ? themeAccent : .secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(L10n.lookup(favoritesOnly ? "显示全部模型" : "只看收藏"))
                 .disabled(favoriteItems.isEmpty)
                 .opacity(favoriteItems.isEmpty ? 0.38 : 1)
             }
@@ -2204,7 +2210,7 @@ struct ModelSelectorView: View {
                 }
 
                 if !filteredFavorites.isEmpty {
-                    sectionHeader(L10n.lookup("favoriteModels.title"), systemImage: "heart.fill")
+                    sectionHeader(L10n.lookup("favoriteModels.title"), count: filteredFavorites.count)
                         .id("favorites")
                     ForEach(filteredFavorites, id: \.favoriteID) { item in
                         modelCard(item, showsProvider: true)
@@ -2240,21 +2246,19 @@ struct ModelSelectorView: View {
         .scrollDismissesKeyboard(.interactively)
     }
 
-    private func sectionHeader(_ title: String, systemImage: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(systemImage == "heart.fill" ? Color.red : themeAccent)
+    private func sectionHeader(_ title: String, count: Int) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "heart")
             Text(title)
-                .font(.system(size: 17, weight: .semibold))
             Spacer()
+            Text(count.formatted())
+                .monospacedDigit()
         }
-        .padding(.horizontal, 12)
-        .frame(height: 42)
-        .background(
-            Color.primary.opacity(0.035),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .frame(minHeight: 26)
     }
 
     private func providerSectionHeader(_ provider: ProviderConfiguration) -> some View {
@@ -2323,88 +2327,117 @@ struct ModelSelectorView: View {
         let selection = ModelSelection(providerID: item.provider.id, modelID: item.model.id)
         let isSelected = currentSelection == selection
         let isFavorite = model.isFavoriteModel(providerID: item.provider.id, modelID: item.model.id)
+        let rowID = showsProvider ? item.favoriteID : item.providerID
 
-        return HStack(spacing: 10) {
-            HStack(spacing: 12) {
-                modelAvatar(item)
-                    .overlay(alignment: .bottomTrailing) {
-                        if isSelected {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.primary)
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(Color(uiColor: .systemBackground))
+        return VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 4) {
+                HStack(spacing: 11) {
+                    modelAvatar(item)
+                        .overlay(alignment: .bottomTrailing) {
+                            if isSelected {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.primary)
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(Color(uiColor: .systemBackground))
+                                }
+                                .frame(width: 16, height: 16)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color(uiColor: .systemBackground), lineWidth: 2)
+                                )
+                                .offset(x: 2, y: 2)
+                                .accessibilityHidden(true)
                             }
-                            .frame(width: 18, height: 18)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color(uiColor: .systemBackground), lineWidth: 2)
-                            )
-                            .offset(x: 2, y: 2)
                         }
-                    }
 
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 5) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(item.model.displayName)
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(.primary)
-                            .lineLimit(1)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                        if showsProvider {
-                            Text("| \(item.provider.name)")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
+                        Text(modelSource(item, showsProvider: showsProvider))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    modelTags(item)
                 }
-
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                select(selection)
-            }
-            .onLongPressGesture(
-                minimumDuration: 0.38,
-                maximumDistance: 18,
-                pressing: { isPressing in
-                    withAnimation(.snappy(duration: 0.18)) {
-                        pressedModelKey = isPressing ? item.identity : nil
-                    }
-                },
-                perform: {
+                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                .contentShape(Rectangle())
+                .gesture(
+                    LongPressGesture(minimumDuration: 0.38, maximumDistance: 18)
+                        .exclusively(before: TapGesture())
+                        .onEnded { gesture in
+                            switch gesture {
+                            case .first:
+                                searchFocused = false
+                                editingModelItem = item
+                            case .second:
+                                select(selection)
+                            }
+                        }
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityValue(isSelected ? L10n.lookup("已选择") : L10n.lookup("未选择"))
+                .accessibilityAction { select(selection) }
+                .accessibilityAction(named: Text(L10n.lookup("编辑模型"))) {
                     editingModelItem = item
                 }
-            )
+                .accessibilityIdentifier("modelSelector.select.\(rowID)")
+
+                Button {
+                    model.toggleFavoriteModel(providerID: item.provider.id, modelID: item.model.id)
+                } label: {
+                    Image(systemName: isFavorite ? "heart.fill" : "heart")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(
+                            isFavorite
+                                ? Color.red.opacity(0.8)
+                                : Color.secondary.opacity(0.58)
+                        )
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isFavorite ? L10n.lookup("取消收藏模型") : L10n.lookup("收藏模型"))
+                .accessibilityIdentifier("modelSelector.favorite.\(rowID)")
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 6)
 
             Button {
-                model.toggleFavoriteModel(providerID: item.provider.id, modelID: item.model.id)
+                searchFocused = false
+                editingModelItem = item
             } label: {
-                Image(systemName: isFavorite ? "heart.fill" : "heart")
-                    .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(
-                        isFavorite
-                            ? Color.red
-                            : Color.secondary.opacity(0.58)
-                    )
-                    .frame(width: 44, height: 44)
-                    .contentShape(Circle())
+                HStack(spacing: 10) {
+                    modelTags(item)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 5)
+                .frame(minHeight: 46)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isFavorite ? L10n.lookup("取消收藏模型") : L10n.lookup("收藏模型"))
+            .accessibilityLabel("\(L10n.lookup("编辑模型")) · \(item.model.displayName)")
+            .accessibilityValue(modelCapabilityDescription(item.model.capabilities))
+            .accessibilityIdentifier("modelSelector.edit.\(rowID)")
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 10)
-        .padding(.vertical, 12)
+        .padding(.top, 9)
+        .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(modelCardBackground(selected: isSelected))
-        .scaleEffect(pressedModelKey == item.identity ? 0.985 : 1)
-        .animation(.snappy(duration: 0.18), value: pressedModelKey)
     }
 
     private func inheritedChoiceCard(title: String) -> some View {
@@ -2458,63 +2491,56 @@ struct ModelSelectorView: View {
     }
 
     private func modelAvatar(_ item: ModelSelectorItem) -> some View {
-        ProviderGlyph(provider: item.provider, size: 44)
+        ProviderGlyph(provider: item.provider, size: 38)
+    }
+
+    private func modelSource(_ item: ModelSelectorItem, showsProvider: Bool) -> String {
+        let protocolName = item.provider.type.title
+        guard showsProvider, item.provider.name != protocolName else { return protocolName }
+        return "\(item.provider.name) · \(protocolName)"
     }
 
     private func modelTags(_ item: ModelSelectorItem) -> some View {
         let capabilities = item.model.capabilities
-        return HStack(spacing: 6) {
-            tag(text: L10n.lookup(capabilities.kind.title), color: themeAccent)
-            tagIcons(item, capabilities: capabilities)
-            ForEach(capabilities.abilities, id: \.self) { ability in
-                abilityTag(ability)
+        return ProviderCapabilityFlowLayout(horizontalSpacing: 10, verticalSpacing: 6) {
+            Text(L10n.lookup(capabilities.kind.title))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 7))
+                .fixedSize()
+
+            if capabilities.input.contains(.image) {
+                capabilityLabel(L10n.lookup("识图"), systemImage: "photo")
             }
-            providerTypeTag(item.provider.type)
+            if capabilities.output.contains(.image) {
+                capabilityLabel(L10n.lookup("生图"), systemImage: "photo.badge.plus")
+            }
+            if capabilities.abilities.contains(.reasoning) {
+                capabilityLabel(L10n.lookup(ModelAbility.reasoning.title), systemImage: ModelAbility.reasoning.systemImage)
+            }
+            if capabilities.abilities.contains(.tool) {
+                capabilityLabel(L10n.lookup(ModelAbility.tool.shortTitle), systemImage: ModelAbility.tool.systemImage)
+            }
         }
-        .lineLimit(1)
     }
 
-    private func tag(text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 9)
-            .frame(height: 24)
-            .background(Capsule().fill(color.opacity(0.12)))
-            .overlay(Capsule().stroke(color.opacity(0.18), lineWidth: 0.6))
+    private func capabilityLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 4)
+            .fixedSize()
     }
 
-    private func tagIcons(_ item: ModelSelectorItem, capabilities: ModelCapabilities) -> some View {
-        ModelModalityMarkers(capabilities: capabilities)
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(themeAccent)
-        .padding(.horizontal, 8)
-        .frame(height: 24)
-        .background(Capsule().fill(themeAccent.opacity(0.11)))
-        .overlay(Capsule().stroke(themeAccent.opacity(0.18), lineWidth: 0.6))
-        .accessibilityLabel(L10n.format("%@ 输入输出模态", [String(describing: item.model.displayName)]))
-    }
-
-    private func abilityTag(_ ability: ModelAbility) -> some View {
-        Image(systemName: ability.systemImage)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(themeAccent)
-            .frame(width: 28, height: 24)
-            .background(Capsule().fill(themeAccent.opacity(0.11)))
-            .overlay(Capsule().stroke(themeAccent.opacity(0.18), lineWidth: 0.6))
-            .accessibilityLabel(L10n.lookup(ability.title))
-    }
-
-    private func providerTypeTag(_ type: ProviderType) -> some View {
-        Image(type.brandIcon.assetName)
-            .resizable()
-            .renderingMode(type.brandIcon.usesTemplateRendering ? .template : .original)
-            .scaledToFit()
-            .foregroundStyle(themeAccent)
-            .padding(6)
-            .frame(width: 28, height: 24)
-            .background(Capsule().fill(themeAccent.opacity(0.11)))
-            .overlay(Capsule().stroke(themeAccent.opacity(0.18), lineWidth: 0.6))
+    private func modelCapabilityDescription(_ capabilities: ModelCapabilities) -> String {
+        var labels = [L10n.lookup(capabilities.kind.title)]
+        if capabilities.input.contains(.image) { labels.append(L10n.lookup("识图")) }
+        if capabilities.output.contains(.image) { labels.append(L10n.lookup("生图")) }
+        if capabilities.abilities.contains(.reasoning) { labels.append(L10n.lookup(ModelAbility.reasoning.title)) }
+        if capabilities.abilities.contains(.tool) { labels.append(L10n.lookup(ModelAbility.tool.title)) }
+        return labels.joined(separator: " · ")
     }
 
     private func providerTabs(proxy: ScrollViewProxy) -> some View {
@@ -2591,13 +2617,13 @@ struct ModelSelectorView: View {
     }
 
     private func modelCardBackground(selected: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(selected ? Color.primary.opacity(0.085) : Color.primary.opacity(0.045))
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .fill(selected ? Color.primary.opacity(0.065) : Color.primary.opacity(0.035))
             .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(
-                        selected ? Color.primary.opacity(0.48) : Color.primary.opacity(0.055),
-                        lineWidth: selected ? 1.35 : 0.7
+                        selected ? Color.primary.opacity(0.36) : Color.primary.opacity(0.045),
+                        lineWidth: selected ? 1 : 0.6
                     )
             )
     }

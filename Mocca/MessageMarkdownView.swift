@@ -1726,6 +1726,7 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
     private func apply(to textView: GlyphSelectableTextView, coordinator: Coordinator) {
         StreamLayoutWorkProbe.hit("text.apply.request")
         textView.materializeInitialContent = nil
+        textView.usesSettledDecorationCache = usesSharedMeasurementCache
         textView.isSelectable = allowsSelection
         textView.tintColor = selectionTintColor
         coordinator.onOpenURL = onOpenURL
@@ -1994,11 +1995,76 @@ private final class SelectableTextBlankOverlayView: UIView, UIGestureRecognizerD
 private final class MarkdownDecorationLayoutManager: NSLayoutManager {
     var usesDarkAppearance = false
     var permittedDrawingRect: CGRect?
+    var usesSettledDecorationCache = false {
+        didSet {
+            if oldValue != usesSettledDecorationCache { clearDecorationCache() }
+        }
+    }
+    private struct DecorationRanges {
+        var quotes: [NSRange] = []
+        var inlineCode: [NSRange] = []
+    }
+    private weak var decorationStorage: NSTextStorage?
+    private var decorationRanges: DecorationRanges?
+    private var attemptedDecorationCache = false
+    // At most 2,048 ranges (32 KiB payload, plus array overhead). Very heavily
+    // decorated text retains the bounded visible-range enumeration path.
+    private static let maximumCachedDecorationRanges = 2_048
     var versionFlashHostToken: Int?
     var versionFlashContext: VersionFlashTextContext?
     var versionFlashSegmentIndex: Int?
     var versionFlashGeneration = 0
     var versionFlashUTF16Length = 0
+
+    override func processEditing(
+        for textStorage: NSTextStorage,
+        edited editMask: NSTextStorage.EditActions,
+        range newCharRange: NSRange,
+        changeInLength delta: Int,
+        invalidatedRange invalidatedCharRange: NSRange
+    ) {
+        clearDecorationCache()
+        super.processEditing(for: textStorage, edited: editMask, range: newCharRange,
+                             changeInLength: delta, invalidatedRange: invalidatedCharRange)
+    }
+
+    private func clearDecorationCache() {
+        decorationStorage = nil
+        decorationRanges = nil
+        attemptedDecorationCache = false
+    }
+
+    private func settledDecorationRanges(in storage: NSTextStorage) -> DecorationRanges? {
+        guard usesSettledDecorationCache else { return nil }
+        if decorationStorage !== storage {
+            clearDecorationCache()
+            decorationStorage = storage
+        }
+        if attemptedDecorationCache { return decorationRanges }
+        attemptedDecorationCache = true
+
+        var result = DecorationRanges()
+        var overflow = false
+        for attribute in [NSAttributedString.Key.moccaQuoteBlock, .moccaInlineCode] {
+            storage.enumerateAttribute(attribute, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+                guard self.isDecoration(value, for: attribute) else { return }
+                guard result.quotes.count + result.inlineCode.count < Self.maximumCachedDecorationRanges else {
+                    overflow = true
+                    stop.pointee = true
+                    return
+                }
+                if attribute == .moccaQuoteBlock { result.quotes.append(range) }
+                else { result.inlineCode.append(range) }
+            }
+            if overflow { return nil }
+        }
+        decorationRanges = result
+        return result
+    }
+
+    private func isDecoration(_ value: Any?, for attribute: NSAttributedString.Key) -> Bool {
+        attribute == .moccaQuoteBlock ? value is String : (value as? Bool) == true
+    }
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         let visibleGlyphs = viewportLimitedGlyphRange(glyphsToShow)
@@ -2027,10 +2093,17 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
             super.drawBackground(forGlyphRange: visibleGlyphs, at: origin)
             return
         }
-        context.saveGState()
-        drawInlineCodeBackgrounds(forGlyphRange: visibleGlyphs, at: origin)
-        drawQuoteBars(forGlyphRange: visibleGlyphs, at: origin)
-        context.restoreGState()
+        let settledRanges = textStorage.flatMap { settledDecorationRanges(in: $0) }
+        if settledRanges?.inlineCode.isEmpty != true || settledRanges?.quotes.isEmpty != true {
+            context.saveGState()
+            if settledRanges?.inlineCode.isEmpty != true {
+                drawInlineCodeBackgrounds(forGlyphRange: visibleGlyphs, at: origin)
+            }
+            if settledRanges?.quotes.isEmpty != true {
+                drawQuoteBars(forGlyphRange: visibleGlyphs, at: origin)
+            }
+            context.restoreGState()
+        }
         super.drawBackground(forGlyphRange: visibleGlyphs, at: origin)
     }
 
@@ -2050,13 +2123,64 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
         return NSIntersectionRange(proposedRange, viewportGlyphs)
     }
 
+    private func enumerateVisibleDecoration(
+        _ attribute: NSAttributedString.Key,
+        forGlyphRange glyphsToShow: NSRange,
+        using body: (NSRange) -> Void
+    ) {
+        guard let textStorage, textStorage.length > 0, glyphsToShow.length > 0 else { return }
+        let cached = settledDecorationRanges(in: textStorage).map {
+            attribute == .moccaQuoteBlock ? $0.quotes : $0.inlineCode
+        }
+        // Plain, settled text needs no repeated attribute search or conversion
+        // from glyphs to characters, however long or short that text is.
+        if cached?.isEmpty == true { return }
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let visibleCharacters = NSIntersectionRange(
+            characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil), fullRange
+        )
+        guard visibleCharacters.length > 0 else { return }
+
+        if let cached {
+            // Ranges were enumerated in text order and preserve full boundary
+            // runs. Locate only the decorations intersecting this drawing pass.
+            var lower = 0, upper = cached.count
+            while lower < upper {
+                let middle = (lower + upper) / 2
+                if NSMaxRange(cached[middle]) <= visibleCharacters.location { lower = middle + 1 }
+                else { upper = middle }
+            }
+            while lower < cached.count, cached[lower].location < NSMaxRange(visibleCharacters) {
+                body(cached[lower])
+                lower += 1
+            }
+            return
+        }
+
+        // Scrolling redraws a viewport-sized glyph range. Avoid scanning the
+        // decorations in the rest of a long, unchanged reply on every redraw.
+        textStorage.enumerateAttribute(attribute, in: visibleCharacters) { value, range, _ in
+            guard self.isDecoration(value, for: attribute) else { return }
+            var decorationRange = range
+            if range.location == visibleCharacters.location
+                || NSMaxRange(range) == NSMaxRange(visibleCharacters) {
+                // Enumeration clips boundary runs. Recover their original
+                // extent so quote bars and wrapped inline-code corners keep
+                // exactly the same shape as the full-document drawing path.
+                _ = textStorage.attribute(
+                    attribute, at: range.location,
+                    longestEffectiveRange: &decorationRange, in: fullRange
+                )
+            }
+            body(decorationRange)
+        }
+    }
+
     private func drawQuoteBars(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         guard let textStorage, textStorage.length > 0 else { return }
-        let fullRange = NSRange(location: 0, length: textStorage.length)
         let color = UIColor.secondaryLabel.withAlphaComponent(usesDarkAppearance ? 0.48 : 0.36)
 
-        textStorage.enumerateAttribute(.moccaQuoteBlock, in: fullRange) { value, range, _ in
-            guard value is String else { return }
+        enumerateVisibleDecoration(.moccaQuoteBlock, forGlyphRange: glyphsToShow) { range in
             let glyphRange = self.glyphRange(
                 forCharacterRange: range,
                 actualCharacterRange: nil
@@ -2096,7 +2220,6 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
     ) {
         guard let textStorage, textStorage.length > 0,
               let textContainer = textContainers.first else { return }
-        let fullRange = NSRange(location: 0, length: textStorage.length)
         let fillColor = usesDarkAppearance
             ? UIColor.white.withAlphaComponent(0.12)
             : UIColor(red: 241 / 255, green: 243 / 255, blue: 245 / 255, alpha: 1)
@@ -2104,8 +2227,7 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
             ? UIColor(red: 69 / 255, green: 70 / 255, blue: 79 / 255, alpha: 0.22)
             : UIColor(red: 198 / 255, green: 198 / 255, blue: 208 / 255, alpha: 0.22)
 
-        textStorage.enumerateAttribute(.moccaInlineCode, in: fullRange) { value, range, _ in
-            guard (value as? Bool) == true else { return }
+        enumerateVisibleDecoration(.moccaInlineCode, forGlyphRange: glyphsToShow) { range in
             let glyphRange = self.glyphRange(
                 forCharacterRange: range,
                 actualCharacterRange: nil
@@ -2220,6 +2342,11 @@ private struct DrawerViewportRefreshKey: Equatable {
 private final class GlyphSelectableTextView: UITextView {
     static let initialSelectionLongPressDuration: TimeInterval = 0.28
     private static let viewportOverscan: CGFloat = 720
+
+    var usesSettledDecorationCache: Bool {
+        get { decorationLayoutManager.usesSettledDecorationCache }
+        set { decorationLayoutManager.usesSettledDecorationCache = newValue }
+    }
 
     override func becomeFirstResponder() -> Bool {
         // A body tap dismisses the composer through the transcript's tap owner.

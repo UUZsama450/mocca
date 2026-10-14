@@ -101,6 +101,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var sentTimeZoneOffsetSeconds: Int?
     var updatedAt: Date
     var status: Status
+    /// The error shown when this reply failed, retained for later inspection.
+    /// Older messages and interruptions without a reported error have no reason.
+    var interruptionReason: String?
     /// Orders received generation content independently of presentation frames
     /// and wall-clock timestamps. Absent on messages saved by older versions.
     var streamingRevision: UInt64?
@@ -155,6 +158,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         sentTimeZoneOffsetSeconds: Int? = nil,
         updatedAt: Date = .now,
         status: Status = .complete,
+        interruptionReason: String? = nil,
         parts: [MessagePart]? = nil,
         reasoningSegments: [ReasoningSegment] = [],
         attachments: [MessageAttachment] = [],
@@ -179,6 +183,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.sentTimeZoneOffsetSeconds = sentTimeZoneOffsetSeconds
         self.updatedAt = updatedAt
         self.status = status
+        self.interruptionReason = interruptionReason
         self.parts = parts ?? [MessagePart(kind: .text, text: text)]
         self.reasoningSegments = reasoningSegments
         self.attachments = attachments
@@ -502,6 +507,7 @@ enum StreamingMessageRecovery {
         current.attachments = incoming.attachments
         current.toolEvents = incoming.toolEvents
         current.tokenUsage = incoming.tokenUsage
+        current.interruptionReason = incoming.interruptionReason
         current.streamingRevision = revision
         current.updatedAt = max(current.updatedAt, incoming.updatedAt)
         if incoming.status == .streaming {
@@ -2124,7 +2130,7 @@ final class ConversationRecordDatabase {
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom(ConversationRecordDateDecoder.decode)
     }
     deinit { if let connection { sqlite3_close(connection) } }
     private func failure(_ detail: String) -> Error {
@@ -2676,4 +2682,70 @@ final class ConversationRecordDatabase {
         }
     }
     private var legacyGuardInstalled = false
+}
+
+/// The record writer emits UTC ISO 8601 timestamps with second precision.
+/// Decode that common spelling directly, while keeping Foundation's original
+/// ISO 8601 strategy for every other representation and validation failure.
+enum ConversationRecordDateDecoder {
+    static func decode(_ decoder: Decoder) throws -> Date {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        if let date = canonicalUTC(value) { return date }
+        let fallback = JSONDecoder()
+        fallback.dateDecodingStrategy = .iso8601
+        do {
+            return try fallback.decode(Date.self, from: JSONEncoder().encode(value))
+        } catch DecodingError.dataCorrupted(let context) {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: context.debugDescription,
+                underlyingError: context.underlyingError
+            ))
+        }
+    }
+
+    static func canonicalUTC(_ value: String) -> Date? {
+        value.utf8.withContiguousStorageIfAvailable { bytes -> Date? in
+            guard bytes.count == 20, bytes[4] == 45, bytes[7] == 45,
+                  bytes[10] == 84, bytes[13] == 58, bytes[16] == 58,
+                  bytes[19] == 90 else { return nil }
+            func number(_ start: Int, _ count: Int) -> Int? {
+                var result = 0
+                for index in start..<(start + count) {
+                    let digit = bytes[index]
+                    guard digit >= 48, digit <= 57 else { return nil }
+                    result = result * 10 + Int(digit - 48)
+                }
+                return result
+            }
+            guard let year = number(0, 4), year >= 1970,
+                  let month = number(5, 2), (1...12).contains(month),
+                  let day = number(8, 2), day >= 1,
+                  let hour = number(11, 2), hour < 24,
+                  let minute = number(14, 2), minute < 60,
+                  let second = number(17, 2), second < 60 else { return nil }
+            let leap = year.isMultiple(of: 4)
+                && (!year.isMultiple(of: 100) || year.isMultiple(of: 400))
+            let maximumDay: Int
+            switch month {
+            case 2: maximumDay = leap ? 29 : 28
+            case 4, 6, 9, 11: maximumDay = 30
+            default: maximumDay = 31
+            }
+            guard day <= maximumDay else { return nil }
+
+            // Gregorian civil days since 1970-01-01. Restricting the fast path
+            // to 1970...9999 keeps all divisions nonnegative and all resulting
+            // integer seconds exactly representable by Date's Double storage.
+            let adjustedYear = year - (month <= 2 ? 1 : 0)
+            let era = adjustedYear / 400
+            let yearOfEra = adjustedYear - era * 400
+            let marchMonth = month + (month > 2 ? -3 : 9)
+            let dayOfYear = (153 * marchMonth + 2) / 5 + day - 1
+            let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
+            let days = era * 146_097 + dayOfEra - 719_468
+            let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second
+            return Date(timeIntervalSince1970: Double(seconds))
+        } ?? nil
+    }
 }

@@ -12219,16 +12219,20 @@ private struct ChatHeader: View {
     }
 }
 
+private enum ChatHeaderMetrics {
+    static let iconLineWidth: CGFloat = 1.8
+}
+
 private struct DrawerMenuButton: View {
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 8 - ChatHeaderMetrics.iconLineWidth) {
                 Capsule()
-                    .frame(width: 21, height: 3)
+                    .frame(width: 21, height: ChatHeaderMetrics.iconLineWidth)
                 Capsule()
-                    .frame(width: 13, height: 3)
+                    .frame(width: 13, height: ChatHeaderMetrics.iconLineWidth)
             }
             .foregroundStyle(.primary)
             .frame(width: 44, height: 44)
@@ -12353,7 +12357,7 @@ private struct NewChatHeaderButton: View {
 
     var body: some View {
         NewChatHeaderSymbol()
-            .stroke(style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            .stroke(style: StrokeStyle(lineWidth: ChatHeaderMetrics.iconLineWidth, lineCap: .round, lineJoin: .round))
             .frame(width: 24, height: 24)
             .frame(width: 44, height: 44)
             .foregroundStyle(Color.primary)
@@ -14296,6 +14300,60 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
     }
 }
 
+private struct GroupChatHeaderAvatars: View {
+    let members: [AssistantProfile]
+
+    private let visibleMemberLimit = 4
+    private let avatarSize: CGFloat = 22
+
+    var body: some View {
+        HStack(spacing: -8) {
+            ForEach(Array(members.prefix(visibleMemberLimit).enumerated()), id: \.element.id) { index, member in
+                Group {
+                    if index == 0 {
+                        SponsorWearableAvatar(target: .assistant, badgeSize: 13) {
+                            avatar(member)
+                        }
+                    } else {
+                        avatar(member)
+                            .opacity(1 - Double(index) * 0.18)
+                    }
+                }
+                // Keep the clear primary avatar in front of the fading members.
+                .zIndex(Double(visibleMemberLimit - index))
+            }
+
+            if members.count > visibleMemberLimit {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: avatarSize, height: avatarSize)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: Circle())
+                    .overlay {
+                        Circle()
+                            .strokeBorder(Color(uiColor: .systemBackground), lineWidth: 1.25)
+                    }
+                    .opacity(0.5)
+            }
+        }
+        .fixedSize()
+        .accessibilityHidden(true)
+    }
+
+    private func avatar(_ member: AssistantProfile) -> some View {
+        // Reuse the small, asynchronously decoded avatar cache here.
+        SearchResultAvatar(
+            descriptor: .assistant(name: member.name, avatar: member.avatar),
+            size: avatarSize
+        )
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: Circle())
+        .overlay {
+            Circle()
+                .strokeBorder(Color(uiColor: .systemBackground), lineWidth: 1.25)
+        }
+    }
+}
+
 private struct CalendarPill: View {
     @Environment(AppModel.self) private var model
     let interactionOnly: Bool
@@ -14309,17 +14367,30 @@ private struct CalendarPill: View {
     }
 
     var body: some View {
+        let members = model.selectedConversationAssistantProfiles
+
         HStack(spacing: 6) {
-            SponsorWearableAvatar(target: .assistant, badgeSize: 13) {
-                AssistantAvatarView(
-                    profile: model.selectedConversationDisplayAssistant,
-                    size: 22
-                )
+            if !model.selectedConversationIsGroupChat {
+                SponsorWearableAvatar(target: .assistant, badgeSize: 13) {
+                    AssistantAvatarView(
+                        profile: members.first ?? model.currentAssistant,
+                        size: 22
+                    )
+                }
             }
 
-            Text(displayName)
-                .font(.system(size: 14, weight: .semibold))
-                .lineLimit(1)
+            if model.selectedConversationIsGroupChat {
+                Image(systemName: "person.2")
+                    .font(.system(size: 16, weight: .medium))
+                    .frame(width: 22, height: 22)
+                    .accessibilityHidden(true)
+
+                GroupChatHeaderAvatars(members: members)
+            } else {
+                Text(displayName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+            }
         }
         .opacity(interactionOnly ? 0 : 1)
         .padding(.horizontal, 10)
@@ -14349,7 +14420,9 @@ private struct CalendarPill: View {
                     }
                 }
         )
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(L10n.format("当前助手：%@", [String(describing: displayName)]))
+        .accessibilityValue(model.selectedConversationIsGroupChat ? members.map(\.name).joined(separator: "、") : "")
         .accessibilityHint(L10n.lookup("轻点选择助手，长按打开共享日历"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
@@ -15505,9 +15578,8 @@ private struct MessageRow: View {
 
             if message.role == .assistant,
                message.status == .interrupted || message.status == .failed {
-                Text(L10n.lookup("回复已中断"))
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                MessageInterruptionDetails(reason: message.interruptionReason)
+                    .id(message.id)
                     .padding(.top, 6)
             }
 
@@ -17175,6 +17247,58 @@ private struct ContextClearedDivider: View {
     }
 }
 
+private struct MessageInterruptionDetails: View {
+    @Environment(\.nativeChatRowDisclosureMotion) private var nativeDisclosureMotion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+    let reason: String?
+
+    private var displayedReason: String {
+        guard let reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return L10n.lookup("这条回复没有保存具体的中断原因。")
+        }
+        return reason
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                guard DrawerInlineActionTapGate.allowsAction else { return }
+                if reduceMotion {
+                    nativeDisclosureMotion?.beginManualMeasuredDisclosure()
+                    isExpanded.toggle()
+                } else {
+                    ChatDisclosureMotion.animate(using: nativeDisclosureMotion) {
+                        isExpanded.toggle()
+                    }
+                }
+            } label: {
+                Text(L10n.lookup("回复已中断"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(L10n.lookup(isExpanded ? "已展开" : "已收起"))
+            .accessibilityHint(L10n.lookup(isExpanded ? "轻点收起中断原因" : "轻点展开中断原因"))
+            .accessibilityIdentifier("message-interruption-toggle")
+
+            if isExpanded {
+                Text(verbatim: displayedReason)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityIdentifier("message-interruption-reason")
+                    .transition(ChatDisclosureMotion.transition)
+            }
+        }
+    }
+}
+
 private enum ChatDisclosureMotion {
     static let animation = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.18)
     static var transition: AnyTransition { .opacity }
@@ -18717,10 +18841,11 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                                 .font(.system(size: 20, weight: .regular))
                         }
                     }
-                        .frame(width: 40, height: 40)
+                        .frame(width: 44, height: 44)
                         .background {
                             GlassSurface(shape: Circle(), backgroundOpacity: 0.08)
                         }
+                        .frame(width: 50, height: 50)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -18730,9 +18855,12 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                         : (groupChatMode ? L10n.lookup("搜索群聊") : L10n.lookup("搜索聊天"))
                 )
             }
-            .padding(.horizontal, 20)
-            .padding(.top, safeAreaInsets.top + 10)
-            .padding(.bottom, 14)
+            .padding(.leading, 24)
+            .padding(.trailing, 15)
+            // Match the chat header's center while preserving the 64pt
+            // footprint below the safe area and the search button's center X.
+            .padding(.top, safeAreaInsets.top + 8)
+            .padding(.bottom, 6)
 
             if isSearchModeActive {
                 HStack(spacing: 9) {
@@ -18820,10 +18948,13 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        // Keep both disclosure rotations centered under search.
+                        .frame(width: 24, height: 24)
                         .rotationEffect(.degrees(assistantsExpanded ? 180 : 0))
                         .animation(.easeOut(duration: 0.26), value: assistantsExpanded)
                 }
-                .padding(.horizontal, 12)
+                .padding(.leading, 8)
+                .padding(.trailing, 12)
                 .frame(height: 58)
                 .background(
                     assistantsExpanded
@@ -18861,17 +18992,19 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(Color.primary.opacity(0.82))
-                        .frame(width: 36, height: 36)
+                        .frame(width: 40, height: 36)
                     Text(L10n.lookup("群聊"))
                         .font(.system(size: 16, weight: .semibold))
                     Spacer()
-                    Image(systemName: "chevron.right")
+                    Image(systemName: "chevron.down")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(groupChatMode ? 90 : 0))
+                        .frame(width: 24, height: 24)
+                        .rotationEffect(.degrees(groupChatMode ? 0 : -90))
                         .animation(.easeOut(duration: 0.24), value: groupChatMode)
                 }
-                .padding(.horizontal, 12)
+                .padding(.leading, 8)
+                .padding(.trailing, 12)
                 .frame(height: 52)
                 .background(
                     groupChatMode
@@ -18988,6 +19121,28 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                 .animation(nil, value: groupChatMode)
 
                 HStack(spacing: 0) {
+                    if groupChatMode {
+                        Button {
+                            guard !isDrawerTapSuppressed else { return }
+                            model.performListItemHaptic()
+                            isSearchFocused = false
+                            model.openNewGroupChatCreator()
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 21, weight: .regular))
+                                .foregroundStyle(Color.primary.opacity(0.72))
+                                .frame(width: 52, height: 52)
+                                .background {
+                                    GlassSurface(shape: Circle(), backgroundOpacity: 0.18)
+                                }
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(L10n.lookup("创建群聊"))
+                        .accessibilityIdentifier("drawer.createGroupChat")
+                        .transition(.opacity)
+                    }
+
                     Spacer(minLength: 0)
 
                     HStack(spacing: 2) {
@@ -19170,20 +19325,15 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         }
         guard !Task.isCancelled else { return }
 
-        // Preserve the old Kelivo boundary: ordinary content search spans all
-        // assistants, while group chats remain in their dedicated drawer mode.
-        let conversations = model.conversations
-            .filter { conversation in
-                request.groupChatMode
-                    ? conversation.groupAssistantIDs.count >= 2
-                    : conversation.groupAssistantIDs.count < 2
-            }
-            .sorted { lhs, rhs in
-                if lhs.updatedAt == rhs.updatedAt {
-                    return lhs.createdAt > rhs.createdAt
-                }
-                return lhs.updatedAt > rhs.updatedAt
-            }
+        // Capture values only; version selection, scanning and snippets run
+        // off the main actor. The task owns a single consistent search snapshot.
+        let snapshot = ConversationContentSearchSnapshot(
+            conversations: model.conversations,
+            messagesByConversation: model.conversationMessageStore.snapshot
+        )
+        guard let matches = try? await ConversationContentSearch.search(
+            snapshot, query: request.query, groupChatMode: request.groupChatMode
+        ), !Task.isCancelled, contentSearchRequest == request else { return }
 
         let assistantsByID = Dictionary(uniqueKeysWithValues: model.assistants.map {
             ($0.id.uuidString, $0)
@@ -19195,68 +19345,35 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         )
 
         var results: [ConversationContentSearchResult] = []
-        results.reserveCapacity(min(conversations.count, 32))
-
-        for (conversationIndex, conversation) in conversations.enumerated() {
+        results.reserveCapacity(matches.count)
+        for (index, match) in matches.enumerated() {
             guard !Task.isCancelled else { return }
-            if let message = await firstContentSearchMatch(
-                in: conversation.id,
-                query: request.query
-            ) {
-                let snippet = contentSearchSnippet(
-                    for: message.text,
-                    query: request.query
-                )
-                let authorID = SearchResultAuthorResolver.assistantID(
-                    messageAuthorID: message.groupID,
-                    messageID: message.id.uuidString,
-                    conversationAssistantID: conversation.assistantID,
-                    isGroupChat: conversation.groupAssistantIDs.count >= 2,
-                    availableAssistantIDs: availableAssistantIDs
-                )
-                let author = authorID.flatMap { assistantsByID[$0] }
-                results.append(
-                    ConversationContentSearchResult(
-                        conversation: conversation,
-                        message: message,
-                        avatar: message.role == .user ? userAvatar : .assistant(
-                            name: author?.name, avatar: author?.avatar
-                        ),
-                        snippetSegments: contentSearchSnippetSegments(
-                            for: snippet,
-                            query: request.query
-                        )
-                    )
-                )
-            }
-
-            // Let keyboard, drawer, and cancellation work run between chats.
-            if conversationIndex.isMultiple(of: 2) {
-                await Task.yield()
-            }
+            let conversation = match.conversation
+            let message = match.message
+            let authorID = SearchResultAuthorResolver.assistantID(
+                messageAuthorID: message.groupID,
+                messageID: message.id.uuidString,
+                conversationAssistantID: conversation.assistantID,
+                isGroupChat: conversation.groupAssistantIDs.count >= 2,
+                availableAssistantIDs: availableAssistantIDs
+            )
+            let author = authorID.flatMap { assistantsByID[$0] }
+            results.append(ConversationContentSearchResult(
+                conversation: conversation,
+                message: message,
+                avatar: message.role == .user ? userAvatar : .assistant(
+                    name: author?.name, avatar: author?.avatar
+                ),
+                snippetSegments: match.snippetSegments
+            ))
+            // Avatar descriptors and final row assembly stay on the UI actor.
+            if index.isMultiple(of: 2) { await Task.yield() }
         }
 
         guard !Task.isCancelled, contentSearchRequest == request else { return }
         contentSearchResults = results
         contentSearchResultQuery = request.query
         isContentSearchRunning = false
-    }
-
-    private func firstContentSearchMatch(
-        in conversationID: UUID,
-        query: String
-    ) async -> ChatMessage? {
-        let messages = model.searchableMessages(for: conversationID)
-        for (messageIndex, message) in messages.enumerated() {
-            guard !Task.isCancelled else { return nil }
-            if message.text.localizedCaseInsensitiveContains(query) {
-                return message
-            }
-            if messageIndex % 12 == 11 {
-                await Task.yield()
-            }
-        }
-        return nil
     }
 
     private var isDrawerTapSuppressed: Bool {
@@ -19412,78 +19529,6 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         }
         .buttonStyle(.plain)
         .id("\(result.message.id.uuidString)-\(isSelected)")
-    }
-
-    private func contentSearchSnippet(for text: String, query: String) -> String {
-        let compactText = text
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        guard let matchRange = compactText.range(
-            of: query,
-            options: [.caseInsensitive, .diacriticInsensitive]
-        ) else {
-            return String(compactText.prefix(120))
-        }
-
-        let start = compactText.index(
-            matchRange.lowerBound,
-            offsetBy: -36,
-            limitedBy: compactText.startIndex
-        ) ?? compactText.startIndex
-        let end = compactText.index(
-            matchRange.upperBound,
-            offsetBy: 96,
-            limitedBy: compactText.endIndex
-        ) ?? compactText.endIndex
-        let prefix = start > compactText.startIndex ? "…" : ""
-        let suffix = end < compactText.endIndex ? "…" : ""
-        return prefix + String(compactText[start..<end]) + suffix
-    }
-
-    private func contentSearchSnippetSegments(
-        for snippet: String,
-        query: String
-    ) -> [ConversationContentSearchSnippetSegment] {
-        guard !query.isEmpty else {
-            return [ConversationContentSearchSnippetSegment(text: snippet, isMatch: false)]
-        }
-
-        var segments: [ConversationContentSearchSnippetSegment] = []
-        var cursor = snippet.startIndex
-        while cursor < snippet.endIndex,
-              let match = snippet.range(
-                  of: query,
-                  options: [.caseInsensitive, .diacriticInsensitive],
-                  range: cursor..<snippet.endIndex
-              ) {
-            if cursor < match.lowerBound {
-                segments.append(
-                    ConversationContentSearchSnippetSegment(
-                        text: String(snippet[cursor..<match.lowerBound]),
-                        isMatch: false
-                    )
-                )
-            }
-            segments.append(
-                ConversationContentSearchSnippetSegment(
-                    text: String(snippet[match]),
-                    isMatch: true
-                )
-            )
-            cursor = match.upperBound
-        }
-        if cursor < snippet.endIndex {
-            segments.append(
-                ConversationContentSearchSnippetSegment(
-                    text: String(snippet[cursor..<snippet.endIndex]),
-                    isMatch: false
-                )
-            )
-        }
-        return segments.isEmpty
-            ? [ConversationContentSearchSnippetSegment(text: snippet, isMatch: false)]
-            : segments
     }
 
     private func highlightedContentSnippet(
@@ -19669,11 +19714,6 @@ private struct ConversationContentSearchResult: Identifiable {
     let avatar: SearchResultAvatarDescriptor
     let snippetSegments: [ConversationContentSearchSnippetSegment]
     var id: UUID { message.id }
-}
-
-private struct ConversationContentSearchSnippetSegment {
-    let text: String
-    let isMatch: Bool
 }
 
 private struct DrawerTopScrollEdgeEffectModifier: ViewModifier {

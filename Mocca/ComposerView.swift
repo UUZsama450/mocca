@@ -510,7 +510,7 @@ private struct ComposerModelBrandIcon: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: 17, height: 17)
-                        .foregroundStyle(icon == .openAI ? Color.secondary : Color.primary)
+                        .foregroundStyle(Color.primary)
                 }
             }
     }
