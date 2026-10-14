@@ -5597,13 +5597,13 @@ final class AppModel {
         }
     }
 
-    /// Creates an independent conversation from the currently selected logical
-    /// reply path through `messageID`. Message versions are flattened so the new
-    /// conversation starts with exactly the content visible when it was forked.
+    /// Creates an independent conversation through the selected logical message,
+    /// retaining every version of each included reply and its visible selection.
     func branchConversation(at messageID: UUID) {
         guard requireConversationPersistence() else { return }
         guard let location = messageLocation(for: messageID),
               !isConversationStreaming(location.conversationID),
+              let rawMessages = conversationMessageStore[location.conversationID],
               let sourceConversation = conversations.first(where: {
                   $0.id == location.conversationID
               }) else { return }
@@ -5613,7 +5613,7 @@ final class AppModel {
         }) else { return }
 
         let now = Date()
-        let branch = Conversation(
+        var branch = Conversation(
             title: Conversation.defaultTitle,
             createdAt: now,
             updatedAt: now,
@@ -5623,36 +5623,54 @@ final class AppModel {
             providerID: sourceConversation.providerID,
             modelID: sourceConversation.modelID
         )
-        let clonedMessages = projection.prefix(targetIndex + 1).map { item in
-            let source = item.message
-            // A bookmark belongs to the original message; ordinary reactions
-            // still travel with the visible reply copied into the branch.
-            var branchReactions = source.reactions
-            branchReactions.bookmarkedAt = nil
-            return ChatMessage(
-                conversationID: branch.id,
-                role: source.role,
-                text: source.text,
-                createdAt: source.createdAt,
-                sentTimeZoneOffsetSeconds: source.sentTimeZoneOffsetSeconds,
-                updatedAt: source.updatedAt,
-                status: source.status == .streaming ? .interrupted : source.status,
-                parts: source.parts,
-                reasoningSegments: source.reasoningSegments,
-                attachments: source.attachments,
-                historicalImagesCollapsed: source.historicalImagesCollapsed,
-                toolEvents: source.toolEvents,
-                tokenUsage: source.tokenUsage,
-                modelID: source.modelID,
-                providerID: source.providerID,
-                groupID: source.role == .assistant ? source.groupID : nil,
-                versionGroupID: nil,
-                version: 0,
-                translation: source.translation,
-                reactions: branchReactions,
-                schemaVersion: source.schemaVersion,
-                migrationMetadata: source.migrationMetadata
+        let inheritedProjection = projection.prefix(targetIndex + 1)
+        let inheritedGroupKeys = Set(inheritedProjection.map(\.groupKey))
+        // Later regenerations can sit after the branch point in raw storage.
+        // Bound by logical groups, so their hidden versions still travel along.
+        let inheritedGroups = Dictionary(grouping: rawMessages.filter {
+            inheritedGroupKeys.contains($0.versionGroupKey)
+        }, by: \.versionGroupKey)
+        let clonedMessages = inheritedProjection.flatMap { item -> [ChatMessage] in
+            let branchGroupKey = UUID().uuidString
+            let variants = sortedVersions(
+                in: inheritedGroups[item.groupKey] ?? [], groupKey: item.groupKey
             )
+            return variants.enumerated().map { version, source in
+                // Fresh ordinals preserve the visible order even if imported source
+                // versions share a number/date: cloned UUIDs must not break the tie.
+                if source.id == item.message.id {
+                    branch.versionSelections[branchGroupKey] = version
+                }
+                // A bookmark belongs to the original message; ordinary reactions
+                // still travel with every reply version copied into the branch.
+                var branchReactions = source.reactions
+                branchReactions.bookmarkedAt = nil
+                return ChatMessage(
+                    conversationID: branch.id,
+                    role: source.role,
+                    text: source.text,
+                    createdAt: source.createdAt,
+                    sentTimeZoneOffsetSeconds: source.sentTimeZoneOffsetSeconds,
+                    updatedAt: source.updatedAt,
+                    status: source.status == .streaming ? .interrupted : source.status,
+                    interruptionReason: source.interruptionReason,
+                    parts: source.parts,
+                    reasoningSegments: source.reasoningSegments,
+                    attachments: source.attachments,
+                    historicalImagesCollapsed: source.historicalImagesCollapsed,
+                    toolEvents: source.toolEvents,
+                    tokenUsage: source.tokenUsage,
+                    modelID: source.modelID,
+                    providerID: source.providerID,
+                    groupID: source.role == .assistant ? source.groupID : nil,
+                    versionGroupID: branchGroupKey,
+                    version: version,
+                    translation: source.translation,
+                    reactions: branchReactions,
+                    schemaVersion: source.schemaVersion,
+                    migrationMetadata: source.migrationMetadata
+                )
+            }
         }
 
         conversations.insert(branch, at: 0)
@@ -11509,6 +11527,7 @@ final class AppModel {
         } else {
             conversationMessages[index].updatedAt = .now
             conversationMessages[index].status = cancelled ? .cancelled : (failureDescription == nil ? .complete : .failed)
+            conversationMessages[index].interruptionReason = cancelled ? nil : failureDescription
             if let lastSegment = conversationMessages[index].reasoningSegments.indices.last,
                conversationMessages[index].reasoningSegments[lastSegment].finishedAt == nil {
                 conversationMessages[index].reasoningSegments[lastSegment].finishedAt = .now

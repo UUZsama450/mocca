@@ -769,6 +769,12 @@ struct MCPServerSelectionView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let assistantID: UUID
+    @State private var contentHeight: CGFloat = 296
+    @State private var selectedDetent: PresentationDetent = .height(360)
+
+    private var compactDetent: PresentationDetent {
+        .height(max(220, min(contentHeight + 64, UIScreen.main.bounds.height * 0.72)))
+    }
 
     private var selectedIDs: Set<UUID> {
         Set(model.assistantProfile(id: assistantID.uuidString)?.mcpServerIDs ?? [])
@@ -782,37 +788,64 @@ struct MCPServerSelectionView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                     if connectedServers.isEmpty {
                         ContentUnavailableView(L10n.lookup("没有可用 MCP 服务器"), systemImage: "terminal", description: Text(L10n.lookup("先在设置里添加并同步服务器工具")))
+                            .frame(minHeight: 160)
                     } else {
-                        Button(L10n.lookup("全选")) {
-                            model.setMCPServers(connectedServers.map(\.id), forAssistantID: assistantID)
-                        }
-                        Button(L10n.lookup("清空"), role: .destructive) {
-                            model.setMCPServers([], forAssistantID: assistantID)
-                        }
-                    }
-                }
-
-                Section(L10n.lookup("服务器")) {
-                    ForEach(connectedServers) { server in
-                        let isSelected = selectedIDs.contains(server.id)
-                        Toggle(isOn: Binding(
-                            get: { isSelected },
-                            set: { model.toggleMCPServer(server.id, enabled: $0, forAssistantID: assistantID) }
-                        )) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(server.normalizedName)
-                                Text(L10n.format("%@/%@ 个工具", [String(server.tools.filter(\.enabled).count), String(server.tools.count)]))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Button(L10n.lookup("全选")) {
+                                model.setMCPServers(connectedServers.map(\.id), forAssistantID: assistantID)
+                            }
+                            Button(L10n.lookup("清空"), role: .destructive) {
+                                model.setMCPServers([], forAssistantID: assistantID)
                             }
                         }
+                        .buttonStyle(.bordered)
+                        .tint(.primary)
+                    }
+                    if !connectedServers.isEmpty {
+                        Text(L10n.lookup("服务器"))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                        VStack(spacing: 0) {
+                            ForEach(connectedServers) { server in
+                                let isSelected = selectedIDs.contains(server.id)
+                                Toggle(isOn: Binding(
+                                    get: { isSelected },
+                                    set: { model.toggleMCPServer(server.id, enabled: $0, forAssistantID: assistantID) }
+                                )) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(server.normalizedName)
+                                        Text(L10n.format("%@/%@ 个工具", [String(server.tools.filter(\.enabled).count), String(server.tools.count)]))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .tint(.primary.opacity(0.7))
+                                .padding(14)
+                                if server.id != connectedServers.last?.id {
+                                    Divider().padding(.leading, 14)
+                                }
+                            }
+                        }
+                        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                    in: RoundedRectangle(cornerRadius: 18))
+                    }
+                }
+                .padding(16)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    guard height.isFinite, height > 0, abs(contentHeight - height) > 1 else { return }
+                    let previous = compactDetent
+                    contentHeight = ceil(height)
+                    if selectedDetent == previous {
+                        withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = compactDetent }
                     }
                 }
             }
+            .scrollBounceBehavior(.basedOnSize)
             .settingsGroupedPageStyle()
             .navigationTitle(L10n.lookup("MCP 服务器"))
             .navigationBarTitleDisplayMode(.inline)
@@ -823,5 +856,8 @@ struct MCPServerSelectionView: View {
                 }
             }
         }
+        .presentationDetents([compactDetent, selectedDetent, .large], selection: $selectedDetent)
+        .presentationDragIndicator(.visible)
+        .onAppear { selectedDetent = compactDetent }
     }
 }

@@ -51,6 +51,7 @@
 		4C8D02CE8AB7C12E7922A4F2 /* MessageMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95E479E3E91C6559F50DA86 /* MessageMarkdownView.swift */; };
 		C49320000000000000000002 /* ChatContentMutation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C49320000000000000000001 /* ChatContentMutation.swift */; };
 		C51810000000000000000002 /* ChatRequestPreparation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51810000000000000000001 /* ChatRequestPreparation.swift */; };
+		C52000000000000000000002 /* ConversationContentSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C52000000000000000000001 /* ConversationContentSearch.swift */; };
 		C49510000000000000000002 /* OffscreenStreamingDisplayPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C49510000000000000000001 /* OffscreenStreamingDisplayPolicy.swift */; };
 		6D1194B98BA9ED10D06D67C0 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44ECEBD2B5DAA93B6CCB3D53 /* RootView.swift */; };
 		AA103C225507E39B42C51783 /* ProviderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 174FAD6002EC9DD090C5EBEC /* ProviderModels.swift */; };
@@ -159,6 +160,7 @@
 		B95E479E3E91C6559F50DA86 /* MessageMarkdownView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageMarkdownView.swift; sourceTree = "<group>"; };
 		C49320000000000000000001 /* ChatContentMutation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatContentMutation.swift; sourceTree = "<group>"; };
 		C51810000000000000000001 /* ChatRequestPreparation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatRequestPreparation.swift; sourceTree = "<group>"; };
+		C52000000000000000000001 /* ConversationContentSearch.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConversationContentSearch.swift; sourceTree = "<group>"; };
 		C49510000000000000000001 /* OffscreenStreamingDisplayPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OffscreenStreamingDisplayPolicy.swift; sourceTree = "<group>"; };
 		D65929F043A91AC7F097CC76 /* MoccaApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MoccaApp.swift; sourceTree = "<group>"; };
 		D9C529652339093513C3A838 /* Mocca.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mocca.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -296,6 +298,7 @@
 				B95E479E3E91C6559F50DA86 /* MessageMarkdownView.swift */,
 				C49320000000000000000001 /* ChatContentMutation.swift */,
 				C51810000000000000000001 /* ChatRequestPreparation.swift */,
+				C52000000000000000000001 /* ConversationContentSearch.swift */,
 				C49510000000000000000001 /* OffscreenStreamingDisplayPolicy.swift */,
 				5769666635B0E581D7481780 /* ComposerView.swift */,
 				C48290000000000000000002 /* AppIcon.icon */,
@@ -498,6 +501,7 @@
 				4C8D02CE8AB7C12E7922A4F2 /* MessageMarkdownView.swift in Sources */,
 				C49320000000000000000002 /* ChatContentMutation.swift in Sources */,
 				C51810000000000000000002 /* ChatRequestPreparation.swift in Sources */,
+				C52000000000000000000002 /* ConversationContentSearch.swift in Sources */,
 				C49510000000000000000002 /* OffscreenStreamingDisplayPolicy.swift in Sources */,
 				C5D5CCEFCB37DA980A064457 /* ComposerView.swift in Sources */,
 			);
@@ -543,7 +547,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5194;
+				CURRENT_PROJECT_VERSION = 5206;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -553,7 +557,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -572,7 +576,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5194;
+				CURRENT_PROJECT_VERSION = 5206;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -582,7 +586,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -666,7 +670,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5194;
+				CURRENT_PROJECT_VERSION = 5206;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -674,7 +678,7 @@
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -750,7 +754,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5194;
+				CURRENT_PROJECT_VERSION = 5206;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -758,7 +762,7 @@
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

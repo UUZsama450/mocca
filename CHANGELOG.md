@@ -1,5 +1,17 @@
 # 更新记录 / Changelog
 
+## 1.0.4（5206）
+
+- 优化模型选择、工具面板和聊天界面。
+- 改进聊天搜索、启动速度与长对话显示。
+- 完善中断提示和对话分支，保留回复版本。
+
+### English
+
+- Refine model selection, the tools panel and chat interface.
+- Improve conversation search, startup and long-chat rendering.
+- Clarify interruptions and preserve reply versions in conversation branches.
+
 ## 1.0.3（5194）
 
 - 新增模型品牌图标，支持群聊成员独立选模。

@@ -659,7 +659,9 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
     }
 
     var capabilities: ModelCapabilities {
-        ModelCapabilityRegistry.infer(id: id, base: capabilityOverride)
+        // Catalog metadata is already inferred on import. An explicit override
+        // must also be able to remove an inferred ability in the model editor.
+        capabilityOverride ?? ModelCapabilityRegistry.infer(id: id)
     }
 
     var composerDisplayName: String {
