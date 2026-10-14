@@ -1,18 +1,30 @@
 # 更新记录 / Changelog
 
-## 1.0.4（5210）
+## 1.0.4（5211）
+
+- 修复助手编辑页滚动内容穿过标题和分页栏的问题，统一顶部背景。
+- 保留已采用的模型卡片对齐、助手管理、工具及说明气泡改进。
+- 更新现有 `v1.0.4` 发布页的下载包；5210 仅完成准备，未发布为独立 Release。
+
+### English
+
+- Prevent assistant-editor content from showing behind the title and tabs; use one continuous header background.
+- Retain the adopted model-card alignment, assistant management, tools and information-popover improvements.
+- Refresh downloads on the existing `v1.0.4` release page. Build 5210 was prepared but not published as a separate release.
+
+## 1.0.4（5210，源码准备 / source preparation）
 
 - 优化模型卡片两排布局，对齐品牌、模型类型和能力图标。
 - 完善助手多选删除、独立滚动列表与编辑页顶部样式。
 - 改进工具、MCP 面板以及记忆和图像说明气泡。
-- 本构建沿用 1.0.4，GitHub 标签为 `v1.0.4-build.5210`；旧 5206 预览包保留。
+- 此构建完成源码同步与打包准备，后续由 5211 替代，未发布独立 Release。
 
 ### English
 
 - Refine two-row model cards and align brand, kind and capability icons.
 - Improve assistant multi-select deletion, independent list scrolling and the native editor header.
 - Refine tools/MCP panels and memory/image information popovers.
-- Keep version 1.0.4 and identify this build with tag `v1.0.4-build.5210`; retain the earlier 5206 preview.
+- Source synchronization and packaging were prepared, then superseded by 5211 before a separate Release was published.
 
 ## 1.0.4（5206）
 

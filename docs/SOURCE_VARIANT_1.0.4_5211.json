@@ -1,0 +1,302 @@
+{
+  "kind": "release",
+  "phoneSourceVersion": "1.0.4",
+  "phoneSourceBuild": "5211",
+  "projectVersion": "1.0.4",
+  "projectBuild": "5211",
+  "remoteBaseCommit": "3a8d71384aed00008ff653ad413b7e3a5efbb9ac",
+  "productFilesChanged": [
+    "Mocca/AssistantViews.swift",
+    "Mocca.xcodeproj/project.pbxproj"
+  ],
+  "inheritedPortableDifferences": [
+    {
+      "path": "Configuration/Local.xcconfig.example",
+      "reason": "Retained established portable configuration and reviewed assets."
+    },
+    {
+      "path": "Configuration/Shared.xcconfig",
+      "reason": "Retained established portable configuration and reviewed assets."
+    },
+    {
+      "path": "Mocca.xcodeproj/project.pbxproj",
+      "reason": "Version 1.0.4 (5211), with existing portable signing configuration preserved."
+    },
+    {
+      "path": "Mocca.xcodeproj/xcshareddata/xcschemes/Mocca.xcscheme",
+      "reason": "Retained opt-in StoreKit simulation."
+    },
+    {
+      "path": "Mocca/AppBuildConfiguration.swift",
+      "reason": "Retained established portable configuration and reviewed assets."
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/13C18B10-8560-4A33-BB77-1A730A30F874.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/211A5F18-283A-4461-BEF7-95826C9AF495.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/EB991A9B-972E-49D5-B2E0-3D70B315E0AC.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/AppIcon.icon/Assets/F76DE743-76F8-4C27-A6D5-C1115049E79B.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/AppModel.swift",
+      "reason": "Retained neutral synthetic keyboard-preview wording."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Contents.json",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@2x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@3x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@2x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@3x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@2x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@3x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@2x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@3x.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar.png",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar@2x.png",
+      "reason": "Retained established portable configuration and reviewed assets."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar@3x.png",
+      "reason": "Retained established portable configuration and reviewed assets."
+    },
+    {
+      "path": "Mocca/Assets.xcassets/AssistantAvatar.imageset/Contents.json",
+      "reason": "Retained the previously published, reviewed asset selection and avatar artwork."
+    },
+    {
+      "path": "Mocca/BackupService.swift",
+      "reason": "Retained neutral backup-error wording; validation is unchanged."
+    },
+    {
+      "path": "Mocca/GenerationFeatures.swift",
+      "reason": "Retained configurable background task identifiers."
+    },
+    {
+      "path": "Mocca/Info.plist",
+      "reason": "Retained background task identifiers derived from bundle identity and explicit sponsorship setting."
+    },
+    {
+      "path": "Mocca/LobeIcons-LICENSE.txt",
+      "reason": "Retained established portable configuration and reviewed assets."
+    },
+    {
+      "path": "Mocca/MoccaCalendar.swift",
+      "reason": "Retained neutral synthetic calendar-preview wording."
+    },
+    {
+      "path": "Mocca/SettingsViews.swift",
+      "reason": "Retained sponsorship visibility and destination gates."
+    },
+    {
+      "path": "Mocca/SponsorStore.swift",
+      "reason": "Retained disabled sponsorship operation gates."
+    }
+  ],
+  "phoneDevelopmentCommit": "46dc81c8bfea0a3510cbcacde2775153b5240163",
+  "tag": "v1.0.4",
+  "portableSourceSHA256": {
+    "Mocca/Localizable.xcstrings": "8f8417c82f6fbb699c06b17465e9d99c9982f2f3d8ba76a14f4cfceb5d0e2ca6",
+    "Mocca/Sponsor.storekit": "f6595f4bec08092935dfdcbec02de8f934cb4e080e96bddf89fc1e52ea580ef9",
+    "Mocca/BackupService.swift": "2caf5a57e9dc6c5a5af899aef7e670987c765678ac20cc616ab8b445b766c300",
+    "Mocca/AssistantViews.swift": "e56b2cba931d7c311b55502a9db06ec6af8a8ef6a4ff26973b521e23c7e452f3",
+    "Mocca/Mocca.entitlements": "f31fa6631b878c3eacd7295eabc62feaa001d9ecbd3f425df01f63cbcfcedd9c",
+    "Mocca/MoccaApp.swift": "fe12246c18997555a028c4755c273b838724707d6bd7e72c8f29b14a28ccaf6a",
+    "Mocca/GenerationActivityAttributes.swift": "d01f005f582e3940c992924bf1d31e50bf1146e00217a4f54875ad8e2b05baf8",
+    "Mocca/ProviderModels.swift": "bb8cb56e07f3110b9413a16169450c3a8f3e6f3857a86bb1afd51a7a07d5e928",
+    "Mocca/GenerationFeatures.swift": "6ab64ef159a7c292833d04854e0d815f303a84843d1decd798dcda67174f0d18",
+    "Mocca/ProviderViews.swift": "6483a490a1f8eeaa42596733ec866a8d491ce8cd106d53abf30cc7bc38d3a7b9",
+    "Mocca/SearchResultAvatar.swift": "d3fa1aab61eb334995c0759358105528a93c66164740502f07b6748944385338",
+    "Mocca/SecureStore.swift": "08459a26c77a07aee6230bcd60c407872374a687a32c2654905c1455661b713f",
+    "Mocca/MessageMarkdownView.swift": "e7b71e419c075e5387366ddc5191e0264047373b40ffc63b3fd40265cb8a80bd",
+    "Mocca/GoogleFontsCatalog.swift": "8e05303265985344603bfbede8a0aa64a9d3917b9adafe11ab1b8d1de1373d3a",
+    "Mocca/ChatRequestPreparation.swift": "6bc949ea6454fad83877bda49d57b94191b4f82b2f4307f652d2b6a8d8ef80e1",
+    "Mocca/SearchServices.swift": "b3412fa09a1c3db19d23021dd0068d0beafb2bf005c62197ae5c31385266401b",
+    "Mocca/QuickPhrases.swift": "f6bef646b0bb295501d050bfc6ed50a0ff2e9ab4f60f6609f9c3158a5941b785",
+    "Mocca/BottomToolsSheet.swift": "f8f5b4d9325c1ee1bf0058566f211d615e24d1eb8c5a2a7797e6b65dd119d60d",
+    "Mocca/DraftEditing.swift": "9296032522fbb84e30a9d4506be6f891f97fa51008c946a009a130384b892f7e",
+    "Mocca/AppModel.swift": "9bae074e3bc7836e3f54367020d2704b4ed84b0eb021d44cd7130df8e6599fb9",
+    "Mocca/NativeMultilineTextEditor.swift": "f49161dd988f94d061190b0d0ecaba01d670593ca8b9ae347c4510e34bc08c69",
+    "Mocca/PromptInjection.swift": "e14d5b3cfe9180c7e6bf5c35ec1dad4f958ab2496a6535d72255858176a8e622",
+    "Mocca/CodeSyntaxTextStyler.swift": "7efc6c2e10e8fb8bf3aede39b618d5ef4492e7ffa589c7cb68074691602dd91f",
+    "Mocca/UserProfileView.swift": "b37af05f8b5ace2a4334c777382155b02b1abc3e3f5cf29fe4fb3b89ac7f3295",
+    "Mocca/LobeIcons-LICENSE.txt": "add9d7531d1b21646317a8958e38fc727506fa39d24bdecb44154d943c82753a",
+    "Mocca/CodeHighlighting-LICENSE.txt": "5c12184ce3c882f5d3175baca9cd6f8f4ab0efce80f67ae709de32f4cea3c1ca",
+    "Mocca/VoiceServiceViews.swift": "11398ad2e31e809a3b836edbbf14e19f9817ec14744238cef75b389abdf4d2fb",
+    "Mocca/AssistantFileViews.swift": "8bf202513773c5112219db9d87b15ee4e8784de5c5397dc9cd4dbb2ae758f823",
+    "Mocca/RecentMemory.swift": "39ef9e0ad0771f0a9a292e5b03b1ddddc2849c830ca02952455b2214ef2d52a7",
+    "Mocca/UserProfile.swift": "2401822ceddda537e3dc225a1e2d0892ad2bd6801564f8c7009f4d3e580c06db",
+    "Mocca/MarkdownTableSupport.swift": "95495477bb26a55f78b2a1f438b97413132e09830981fd62859607e6b97d9bd2",
+    "Mocca/InfoPlist.xcstrings": "701cd324918acf440d1e0dd570864b64878d35f3b56511cca8f9effff08e0d42",
+    "Mocca/RootView.swift": "8d4ddbb3942d8def53ef1c5527b6e61c61ad3d3260da23f214afb92f15af303f",
+    "Mocca/AIMessageReactionCodec.swift": "144c24f1ba74e7db324e49bd894140a0bfcad14742bf4d335f3a067db734682a",
+    "Mocca/OffscreenStreamingDisplayPolicy.swift": "d6c4682f9549f23c180525748792a90834ea33304d28fa9e18c38ec4f00250b0",
+    "Mocca/ToolCalling.swift": "9405a4305328dbb26f1f5692139ee4217bacf556f2ca6ba6f5e2627257bcd889",
+    "Mocca/MoccaCalendar.swift": "9ba9adea5fc8a0dbd009a5d4d567cba99a891bb4ad4f96aaec2ea60e7620ad4e",
+    "Mocca/SettingsViews.swift": "65b8d18774e6a51d80fe46288fa4926ecf0fbc591cb5438a9b5b13312579f42c",
+    "Mocca/AssistantModels.swift": "073ad6216d3fef13b2105b0e7f778a72e899b27cb4cb952bf6a93c5ce46ef784",
+    "Mocca/VoiceServices.swift": "39ac9255f256cf897d3266493c5452976f729978e875479a1acc1ad1945ac9e8",
+    "Mocca/AppBuildConfiguration.swift": "4e768c521811e6b9debda11a94083c9b8b007ba3944b454fd0004de65543b3f8",
+    "Mocca/ConversationStore.swift": "7e46ef243541a96cdc5d3f2ac8852c065056d033b600251aa03a7c71530dce38",
+    "Mocca/AssistantFiles.swift": "50d77dff1ea95cb4cb2f0a7eae4616ca84ea22d3a900a539a072a13ec468ea9f",
+    "Mocca/AssistantFileRuntime.swift": "33974741f7ac9e9f194bd08d7ce13645db81d91034b7bb81d455c44b94d5d0d0",
+    "Mocca/AppLocalization.swift": "878c290a688549d02df2ac67b8ca72a13b0759328eed01238d5bd29632333e5c",
+    "Mocca/CodeSyntaxHighlighter.swift": "9bfb0d739bad002d37cfdbb43ac5aa385810cba4656cbdb88dd00aa90afbef95",
+    "Mocca/PrivacyInfo.xcprivacy": "f953ba99994eddf8fe1c7d1723ca44a2da3df5ac96b05f09f375fa3d76f465cc",
+    "Mocca/ConversationContentSearch.swift": "d0fd82fced5c73a9fb455f9775bebe018275f4b13f475ba88c239ef9c30c5849",
+    "Mocca/ComposerView.swift": "24923f575dc313c257e05947a30e6e8ef7685995a202f1dabe236787307dfb11",
+    "Mocca/MoccaCalendarViews.swift": "ecbcca3ed56b18b4862d7380b1a14e4c3218df72d65f790b340a82c9327937a8",
+    "Mocca/SponsorPage.swift": "6316c9eb49ca231a2d740a68511a05bc01d1f077d36febac4251105b75c32a60",
+    "Mocca/ChatContentMutation.swift": "3b9df5eb39a1999bb1e78887516ce04f0caec5366e57bda8ed62f3bbc983bafa",
+    "Mocca/TextSelectionEdgeAutoscroll.swift": "071871c5b9229cb86ac02ac82ad423b25b15f8363760c601af1b892d6c05d235",
+    "Mocca/AppFontStore.swift": "dce7d5ab8e3193fdb9d85ce8677136ed32ea88cd13260c6a0ad14b6d36516ec4",
+    "Mocca/AIChatService.swift": "7a8555f1c45965b296e2139f9e27af698ae8e9322b7c2d9bb581e8dff09832f7",
+    "Mocca/NativeChatTranscript.swift": "86f3568275cf3c17b7b64e7f92bb3bcca189c5dd7569fd3cc9499d15b4c2df31",
+    "Mocca/SponsorStore.swift": "9ea8cf1e16df28aaf1a6acfd3751cab78fa84510976e9918bf4795b0722ba5ca",
+    "Mocca/PromptInjectionViews.swift": "2136f42bbed763258d6a5e7d1057d78f938cd1a6def04028e17e2f41294cb26f",
+    "Mocca/UserProfileNotes.swift": "2dd5895378926064bf34c38dbf4505e504c8ebc4be60afa0fed706dcefd3126e",
+    "Mocca/ComposerNativeTextInput.swift": "1abc284ff6484eb38a1fcec520f1a91e7d8775921586ad32eef2193f411fc060",
+    "Mocca/BackgroundImageCropEditor.swift": "6563aa554534185cce0d1ee621aed782c521dcefba2d5e05c907489bd117e001",
+    "Mocca/Info.plist": "1b5881e7a415773cf98924441d86049c26fe4d3edd4dec10456b24c01af2c536",
+    "Mocca/Attachments.swift": "144b30e129d15cc952ac06b94397a676d8eb41033979f19658dda12ac45b0034",
+    "Mocca/PastedTextAttachment.swift": "4cb63c2cf8f39f99de4ca9edcf360c5b9c4bedad45fe74041695b94cc3f20994",
+    "Mocca/MCP.swift": "6cbaac24d60c89d63d1248f17af9f49b06ca181d563845ecdf5bcc44238f15c7",
+    "Mocca/Assets.xcassets/Contents.json": "0fd49ba3c3585c709678e0046a821c3c60685ec7063720d30d3a3448be3a208b",
+    "Mocca/Assets.xcassets/SearchZhipu.imageset/zhipu-color.svg": "11458b1c8248002dea8780be1b665f1c12080cf46ebc56ca665d6dac76bbe998",
+    "Mocca/Assets.xcassets/SearchZhipu.imageset/Contents.json": "143557b382e4892f66e3fd0ebdf849732f210532dfa599743d017d5cd598e357",
+    "Mocca/Assets.xcassets/ProviderTensdaq.imageset/tensdaq-color.svg": "8d18498c0cbeb8fcd970e0ea5e76407e82214ca34b5ee57f5ce1f056ae6e30f0",
+    "Mocca/Assets.xcassets/ProviderTensdaq.imageset/Contents.json": "58a7be81b6eb60f67dbe719657fc1773a2150ae938b63c78caba3bf33bdf73c5",
+    "Mocca/Assets.xcassets/SearchJina.imageset/jina-color.svg": "16bd1037dbf6340ab866c56d62e5910d92d821505b9c81fc903b56e96f2f18ad",
+    "Mocca/Assets.xcassets/SearchJina.imageset/Contents.json": "131697c9959262e0f684679bd594e83250072c7048fd9fa283e699221234bf0a",
+    "Mocca/Assets.xcassets/SearchSearXNG.imageset/searxng-color.svg": "514f0a45b14791d718025d1825d18c9b3b5765354d21c3560a54fb74f352a0eb",
+    "Mocca/Assets.xcassets/SearchSearXNG.imageset/Contents.json": "ca30f9f7341926af6a972aa540d5ddc0c0a144664fe80c627b16afe600e4cd02",
+    "Mocca/Assets.xcassets/SearchExa.imageset/exa-color.svg": "4fbf68721dd62af721d695b1c4855e228ba6483d93f1474c178e52a74f51ffa7",
+    "Mocca/Assets.xcassets/SearchExa.imageset/Contents.json": "fe6fbd0ecaa48ee730687f24c1f5ee5331d00c3b30f52bfa1bbf58db98b62743",
+    "Mocca/Assets.xcassets/SearchPerplexity.imageset/perplexity-color.svg": "0ce6199794b72a2786be7d2e794cd7b8794c3e59e0b5193fb44459f7e0293f57",
+    "Mocca/Assets.xcassets/SearchPerplexity.imageset/Contents.json": "0f666b3d7c1f258ec41dcc7f60f641e86da93bd399e3bc5ebfa53a4635c37b6b",
+    "Mocca/Assets.xcassets/ProviderAIHubMix.imageset/Contents.json": "e312ca5b69b27f4e233cc91ee9c4bd83f7e29e402a67f77e73ce33162af539f4",
+    "Mocca/Assets.xcassets/ProviderAIHubMix.imageset/aihubmix-color.svg": "f0184fed247fa103db45322e04b5f31b6bab7063ae19f8ebd61bf149bb627b2f",
+    "Mocca/Assets.xcassets/SearchSerper.imageset/serper.svg": "afbe4581175f77a50c627a21fb7cf76d7568e603c4fa7d0299fda037e875d92f",
+    "Mocca/Assets.xcassets/SearchSerper.imageset/Contents.json": "525c18231f368dc560f4c10d0ee999f4614870aecda870e1a2f9d4665dfcf9e0",
+    "Mocca/Assets.xcassets/ProviderSiliconFlow.imageset/siliconflow-color.svg": "a02d8d7ccb81739fbc720e2e5daaf149013dd5088605dc2dce1b71df0784d424",
+    "Mocca/Assets.xcassets/ProviderSiliconFlow.imageset/Contents.json": "8d107df58281d5513c7c181c173a4305fb883f0d0811451e86c1baf99eddce9d",
+    "Mocca/Assets.xcassets/ProviderGemini.imageset/gemini-color.svg": "e6679530137fd9d53c7790130c08f1ddbffbc4850513b5bf0e7bf1d0c2cbdd32",
+    "Mocca/Assets.xcassets/ProviderGemini.imageset/Contents.json": "b6d92efc0884fcd06e81782242cb7b4f471b37aadc31686fc270ad041140ac18",
+    "Mocca/Assets.xcassets/SearchLinkUp.imageset/linkup.svg": "ae10144200793c8aa340452fcc1a9c292e2ccaf3a2cad00121f8867d6cbc4709",
+    "Mocca/Assets.xcassets/SearchLinkUp.imageset/Contents.json": "072f47751b7fdbd174196771a7b22d8b43b9352248e24c558de5673392c88bf2",
+    "Mocca/Assets.xcassets/ProviderByteDance.imageset/Contents.json": "f3a8cf4bfbea441fd9594aaa7bdabea9c42b8cb76c44cd81bc62fad53aec852d",
+    "Mocca/Assets.xcassets/ProviderByteDance.imageset/bytedance-color.svg": "98ba636bfab6fde03c75aee70cd1d7575f743bd383e0779384b3abf497679507",
+    "Mocca/Assets.xcassets/AccentColor.colorset/Contents.json": "35e43d3ce89798dd2a227282d9a21530876e61708baca2a22dbec1fd45fdbf8e",
+    "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar@3x.png": "cb9096576cc1e270f2147d7a514ffb0c2122e04a9e4522255e06015c49d2def0",
+    "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar.png": "1f58adc11de14cf30f5b05b38b60f517e648804d3b334aaf5c29f39cea7e3291",
+    "Mocca/Assets.xcassets/AssistantAvatar.imageset/AssistantAvatar@2x.png": "95450f85151d2b6124a1ddc9f39da93d96313a12f5f3baa33f894ea2c70263a6",
+    "Mocca/Assets.xcassets/AssistantAvatar.imageset/Contents.json": "7f9cf84738d5d966ba93e0f06a8e6e23d5dd58b68ab7d53d203af91f1f01c8a7",
+    "Mocca/Assets.xcassets/ProviderDeepSeek.imageset/deepseek-color.svg": "315469d407c9a4fb13a6a7bb5fea41f4ebf51a63dd0fce8f7dcb17ea3fe4a40e",
+    "Mocca/Assets.xcassets/ProviderDeepSeek.imageset/Contents.json": "34adde368c73f70ceef40555793af9e267696127c3ccac09c3fabf1c52546e9a",
+    "Mocca/Assets.xcassets/SearchMetaso.imageset/metaso-color.svg": "efebfcf52da0c5518e1d4498f6a882cf47efb51e2412a2d2e83fb9cb66828794",
+    "Mocca/Assets.xcassets/SearchMetaso.imageset/Contents.json": "1c24246fbe88c5a24604c218ac19d5a2755ab13f1c54150d7fcbc4409fdb6a53",
+    "Mocca/Assets.xcassets/ProviderZhipu.imageset/zhipu-color.svg": "11458b1c8248002dea8780be1b665f1c12080cf46ebc56ca665d6dac76bbe998",
+    "Mocca/Assets.xcassets/ProviderZhipu.imageset/Contents.json": "143557b382e4892f66e3fd0ebdf849732f210532dfa599743d017d5cd598e357",
+    "Mocca/Assets.xcassets/ProviderMocca.imageset/Contents.json": "1e7eab24b21fe44c5e1adf4b536331dc816e2b9d0bf48c4b7d46b5a468e8d6b2",
+    "Mocca/Assets.xcassets/ProviderMocca.imageset/mocca.png": "7b38a95ae79c6aabf9f1c04929401119bf8820541510321b89861ad8b73db109",
+    "Mocca/Assets.xcassets/ProviderAlibabaCloud.imageset/Contents.json": "01d1acd5dc0cad0d006ce2370d0787b00f924e94735d5491b5c274d1b017384c",
+    "Mocca/Assets.xcassets/ProviderAlibabaCloud.imageset/alibabacloud-color.svg": "12dec5017d6e9de1ed7c7d872d31bf38943a095705d394cd1a8c473d952043d0",
+    "Mocca/Assets.xcassets/ProviderClaude.imageset/claude-color.svg": "7473b3ed6919108a75de8f71a3996ea28ff916aadd65decaf81f21e3d1e75df2",
+    "Mocca/Assets.xcassets/ProviderClaude.imageset/Contents.json": "fb12077e48a44c556104946c46137cde95b2c609758ff92df2f224a84006db28",
+    "Mocca/Assets.xcassets/SearchBocha.imageset/bocha-color.svg": "f021fad98e822286da6fc2602fc5eaacf2339fa817de9b91485dce4228a140be",
+    "Mocca/Assets.xcassets/SearchBocha.imageset/Contents.json": "9791da93bf3aaa81a9095edcf5e354c3c57f68853ca1654e6ff180524cdfbbb2",
+    "Mocca/Assets.xcassets/ProviderGrok.imageset/Contents.json": "a26b4c36edbe4babb9b16c797302037f25f8049828fc3165ef6c9a834e3235cc",
+    "Mocca/Assets.xcassets/ProviderGrok.imageset/grok.svg": "151c57145a3fdebca04d880b7eb091c32b2104f166b983f0824852decee64978",
+    "Mocca/Assets.xcassets/SearchDuckDuckGo.imageset/Contents.json": "a7f8cb008564fe966337d77284aaa68cca992e64a03d7decdf4ca2d5dec45dca",
+    "Mocca/Assets.xcassets/SearchDuckDuckGo.imageset/duckduckgo-color.svg": "c364a8f93619468e4c2487d717a224ed9f494ed54e336a7fdae47f5e0fa0839f",
+    "Mocca/Assets.xcassets/SearchQuerit.imageset/Contents.json": "c2e715a7c68caa7d81f91e6e149a8f09c285d46d4bc5189b4b5f1886ad547241",
+    "Mocca/Assets.xcassets/SearchQuerit.imageset/querit-color.svg": "4c5880df74be7ed2f955f3832f150fbf9186c0e9bd3cbf8e50bb74bcbc57667e",
+    "Mocca/Assets.xcassets/SearchBrave.imageset/brave-color.svg": "c07f520677e764764ee25dfd56d42a8ae9be267a1ecbce0826ce63325f641d64",
+    "Mocca/Assets.xcassets/SearchBrave.imageset/Contents.json": "8029d92173fd40f78ba34f42deefc971d67bd234c7d5d5a7d0e3ab4ae83b1659",
+    "Mocca/Assets.xcassets/ProviderOpenAI.imageset/openai.svg": "308cf6f9301da0edd8e92a9a948d80a43ca9f635dd3650857e50c749ae3a5a33",
+    "Mocca/Assets.xcassets/ProviderOpenAI.imageset/Contents.json": "279bd98ed3c90884f449de28ddebcbe4aec7ccf5c94001055b38c73b08f9b994",
+    "Mocca/Assets.xcassets/ProviderOpenRouter.imageset/Contents.json": "b7f5371e1eed333c93974d03da4e72a5329893543f264b724f64d981f51f0298",
+    "Mocca/Assets.xcassets/ProviderOpenRouter.imageset/openrouter.svg": "9397f793c513eab9fe28dec817a0cb57abc22ab858459072cc16d28c9c33a7f4",
+    "Mocca/Assets.xcassets/SearchBing.imageset/bing-color.svg": "32f40ba4a10feca6c017ad17985229577a80fe039dd51fe2e86d996d3450437f",
+    "Mocca/Assets.xcassets/SearchBing.imageset/Contents.json": "8b6b643d3834d7fed6a9c15165958fb682b09f8ce357de916e5eff02f1db17fa",
+    "Mocca/Assets.xcassets/SearchOllama.imageset/Contents.json": "e2fd87e9bc76eb26a0b649db002f54337e2961a49c955d44c043a640a1b4fdc1",
+    "Mocca/Assets.xcassets/SearchOllama.imageset/ollama.svg": "16b636eea2547cb2af5207f1050b32fd810ff2220f055699d6534d6f1c57832e",
+    "Mocca/Assets.xcassets/DefaultUserAvatar.imageset/DefaultUserAvatar@3x.png": "4ccbf821a9aa84fe0a9388c1668c227513296dc9f5a7abd081638cb5de0e38ef",
+    "Mocca/Assets.xcassets/DefaultUserAvatar.imageset/DefaultUserAvatar@2x.png": "a4f0b18a7f17df63fa960736e039dda6ab9769aa780e112c02fc46f6dd937d88",
+    "Mocca/Assets.xcassets/DefaultUserAvatar.imageset/Contents.json": "f2e3370eebc17d89274b084a9c4408e315f451cc0d24d4bf0f86cffcbf03f56d",
+    "Mocca/Assets.xcassets/DefaultUserAvatar.imageset/DefaultUserAvatar.png": "ec25e1f67b011771c4944dd3af163ecececeff47244cb0531f472eb610787410",
+    "Mocca/Assets.xcassets/DefaultAssistantAvatar.imageset/DefaultAssistantAvatar@2x.png": "95450f85151d2b6124a1ddc9f39da93d96313a12f5f3baa33f894ea2c70263a6",
+    "Mocca/Assets.xcassets/DefaultAssistantAvatar.imageset/DefaultAssistantAvatar@3x.png": "cb9096576cc1e270f2147d7a514ffb0c2122e04a9e4522255e06015c49d2def0",
+    "Mocca/Assets.xcassets/DefaultAssistantAvatar.imageset/Contents.json": "f4e54b4a9a88cf25ea5e05ed0546ba7d36f3523dcf0ee5f14b3e6c2ed9fe5cd0",
+    "Mocca/Assets.xcassets/DefaultAssistantAvatar.imageset/DefaultAssistantAvatar.png": "1f58adc11de14cf30f5b05b38b60f517e648804d3b334aaf5c29f39cea7e3291",
+    "Mocca/Assets.xcassets/SearchTavily.imageset/Contents.json": "91da92132cc611e2b126a9457a921028eea27f7fbc2bf43ee0421ed9cc94496d",
+    "Mocca/Assets.xcassets/SearchTavily.imageset/tavily-color.svg": "e0af07fdc28df8c9beee547e9c052a66d63d55fe1a31020908af5965076ecc03",
+    "Mocca/AppIcon.icon/icon.json": "3e7751943d7df1dd06847f3924ef15bcd8eafedcaea0411b1a015b3d633d6f6b",
+    "Mocca/AppIcon.icon/Assets/whiskers.png": "5351ae61f395f00beabd93219f6f5e41a858beb3f25233fb90ce40fd04ad6a61",
+    "Mocca/AppIcon.icon/Assets/bubble.png": "78c6431aec947710ee58c12de163921a95ddad7f534f6fd49e31176853e1aebe",
+    "Mocca/AppIcon.icon/Assets/dots.png": "17086632e8c78206501e5d806a929aee93c7524a2792ca32a295b9eb04a30617",
+    "Mocca/AppIcon.icon/Assets/background.png": "461fa732930cb2c9eadfeff154b9c0d692fca09e5a5d5296c2b082849a8537c8",
+    "Mocca/AppIcon.icon/Assets/eyes.png": "63f1221583ef873f752379c1e302c0dde26d9bb7efb95be126ad64dee6b95c25",
+    "Mocca/AppIcon.icon/Assets/cat-face.png": "6011bd8b8fb4eebd2fe80b35f932f6497405b8f399ab005abd53ef21444a2f40",
+    "Mocca.xcodeproj/project.pbxproj": "26da333a7b21eee840619da3f0f460ee4f1cb4ccf3f8e0acfc443f1f12ee0089",
+    "Mocca.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved": "38d9614dbf9efe7b5f6d7e06c72cba50eff11a7f859e059aa7eb0860e7517dca",
+    "Mocca.xcodeproj/xcshareddata/xcschemes/Mocca.xcscheme": "fb6ca73929694ffee92865e9fa60ea0109cd7f024ab9d83b7ab919f9bccef168",
+    "GenerationActivityExtension/GenerationActivityExtension.swift": "6a3a548268f1be6a15a4114764e566cc75e3cb304089898f6a5382fce72aba34",
+    "GenerationActivityExtension/Info.plist": "8f256d7b87d388be15d29422adc7a2c4b36358b96c6eb3d6cd072fde933bc88a",
+    "Configuration/Local.xcconfig.example": "036c11be277759388b26557e3e78e35b2e7fb52dea79b683559a4d23c06b3f11",
+    "Configuration/Shared.xcconfig": "e0884278f5c2f60084c3fe30ac6d0aa084b7dd2fc527f31578bc29be0d18af93"
+  },
+  "sourceSyncCommit": "3a8d71384aed00008ff653ad413b7e3a5efbb9ac",
+  "verification": {
+    "phoneAppearance": "accepted by user after 5211 in-place deployment",
+    "uiCasesPassed": 3,
+    "portableArm64Build": "PASS",
+    "appStoreArchive": "PASS",
+    "publicSigningConfigurationPreserved": true,
+    "releaseTagPolicy": "Historical tag is preserved; BUILD-INFO.json and release notes identify the exact 5211 source commit.",
+    "portableIPA": "PASS"
+  },
+  "tagSourceCommit": "fd92bc98e440ea265f5e5c61fa42c66f42c26ab6"
+}
