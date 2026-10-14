@@ -1280,11 +1280,15 @@ private struct ProviderModelsWorkspaceView: View {
             .presentationContentInteraction(.scrolls)
         }
         .sheet(item: $editingItem) { item in
-            ModelConfigurationEditorSheet(item: item) { updated in
+            ModelConfigurationEditorSheet(item: item, onSave: { updated in
                 guard let index = configuration.models.firstIndex(where: { $0.id == updated.id }) else { return false }
                 configuration.models[index] = updated
                 return true
-            }
+            }, onDelete: {
+                guard configuration.models.contains(where: { $0.id == item.model.id }) else { return false }
+                configuration.models.removeAll { $0.id == item.model.id }
+                return true
+            })
         }
         .alert(L10n.lookup("添加模型"), isPresented: $isAddPresented) {
             TextField(L10n.lookup("模型 ID"), text: $manualModelID)
@@ -1465,6 +1469,7 @@ private struct ProviderModelCapabilityChips: View {
 private struct ProviderCapabilityFlowLayout: Layout {
     var horizontalSpacing: CGFloat
     var verticalSpacing: CGFloat
+    var centersItemsVertically = false
 
     func sizeThatFits(
         proposal: ProposedViewSize,
@@ -1502,30 +1507,36 @@ private struct ProviderCapabilityFlowLayout: Layout {
         subviews: Subviews,
         cache: inout ()
     ) {
-        var x = bounds.minX
         var y = bounds.minY
-        var rowHeight: CGFloat = 0
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var rowStart = 0
 
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            let proposedX = x == bounds.minX ? x : x + horizontalSpacing
-            // The measured intrinsic width can lose a fraction of a point when
-            // positioned in its parent. Keep that rounding from adding a row.
-            if x > bounds.minX, proposedX + size.width > bounds.maxX + 0.5 {
-                x = bounds.minX
-                y += rowHeight + verticalSpacing
-                rowHeight = 0
-            } else {
-                x = proposedX
+        while rowStart < subviews.count {
+            var rowEnd = rowStart + 1
+            var rowWidth = sizes[rowStart].width
+            var rowHeight = sizes[rowStart].height
+            // Match measurement's rounding tolerance so placement cannot
+            // introduce an extra row at a fractional width.
+            while rowEnd < subviews.count,
+                  rowWidth + horizontalSpacing + sizes[rowEnd].width <= bounds.width + 0.5 {
+                rowWidth += horizontalSpacing + sizes[rowEnd].width
+                rowHeight = max(rowHeight, sizes[rowEnd].height)
+                rowEnd += 1
             }
 
-            subview.place(
-                at: CGPoint(x: x, y: y),
-                anchor: .topLeading,
-                proposal: ProposedViewSize(width: size.width, height: size.height)
-            )
-            x += size.width
-            rowHeight = max(rowHeight, size.height)
+            var x = bounds.minX
+            for index in rowStart..<rowEnd {
+                let size = sizes[index]
+                let offset = centersItemsVertically ? (rowHeight - size.height) / 2 : 0
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y + offset),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: size.width, height: size.height)
+                )
+                x += size.width + horizontalSpacing
+            }
+            y += rowHeight + verticalSpacing
+            rowStart = rowEnd
         }
     }
 }
@@ -2021,10 +2032,17 @@ private struct ProviderModelCatalogGlyph: View {
 struct ModelSelectorView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @ScaledMetric(relativeTo: .body) private var modelNameSize: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption) private var modelSourceSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption) private var capabilityIconSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption) private var modelKindSize: CGFloat = 10
     @State private var query = ""
     @State private var favoritesOnly = false
     @State private var activeProviderID: UUID?
     @State private var editingModelItem: ModelSelectorItem?
+    @State private var isProviderSettingsPresented = false
+    @State private var modelToDelete: ModelSelectorItem?
+    @State private var isDeleteErrorPresented = false
     @State private var searchCollapsedProviderIDs: Set<UUID> = []
     @FocusState private var searchFocused: Bool
     let context: SettingsPageContext
@@ -2098,17 +2116,7 @@ struct ModelSelectorView: View {
 
                         Spacer()
 
-                        Button {
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 34, height: 34)
-                                .background(Circle().fill(Color.primary.opacity(0.055)))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(L10n.lookup("关闭模型选择"))
+                        addModelButton
                     }
                     .padding(.horizontal, 18)
                     .frame(minHeight: 44)
@@ -2147,12 +2155,57 @@ struct ModelSelectorView: View {
             // Search reveals matches without overwriting the saved browsing state.
             searchCollapsedProviderIDs = []
         }
+        .toolbar {
+            if context == .navigation {
+                ToolbarItem(placement: .primaryAction) { addModelButton }
+            }
+        }
+        .sheet(isPresented: $isProviderSettingsPresented) {
+            ProviderSettingsView()
+        }
+        .alert(L10n.lookup("删除模型？"), isPresented: Binding(
+            get: { modelToDelete != nil },
+            set: { if !$0 { modelToDelete = nil } }
+        ), presenting: modelToDelete) { item in
+            Button(L10n.lookup("删除模型"), role: .destructive) {
+                if !model.deleteModel(providerID: item.provider.id, modelID: item.model.id) {
+                    isDeleteErrorPresented = true
+                }
+                modelToDelete = nil
+            }
+            Button(L10n.lookup("取消"), role: .cancel) { modelToDelete = nil }
+        } message: { item in
+            Text(L10n.format("将从当前服务商移除「%@」，聊天记录会保留。", [item.model.displayName]))
+        }
+        .alert(L10n.lookup("无法删除模型"), isPresented: $isDeleteErrorPresented) {
+            Button(L10n.lookup("好"), role: .cancel) {}
+        } message: {
+            Text(L10n.lookup("模型没有删除成功，请重试。"))
+        }
         .sheet(item: $editingModelItem) { item in
             ModelConfigurationEditorSheet(item: item)
                 .presentationDetents([.fraction(0.72), .large])
                 .presentationDragIndicator(.hidden)
                 .presentationBackground(Color(uiColor: .systemBackground))
         }
+    }
+
+    private var addModelButton: some View {
+        Button {
+            searchFocused = false
+            isProviderSettingsPresented = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.primary)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color.primary.opacity(0.055)))
+                .frame(width: 44, height: 44, alignment: .trailing)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L10n.lookup("添加模型"))
+        .accessibilityIdentifier("modelSelector.add")
     }
 
     private func searchField(proxy: ScrollViewProxy) -> some View {
@@ -2202,8 +2255,8 @@ struct ModelSelectorView: View {
     }
 
     private func modelList(proxy: ScrollViewProxy) -> some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
+        List {
+            Group {
                 if let inheritedChoiceTitle {
                     inheritedChoiceCard(title: inheritedChoiceTitle)
                         .id("inherited-choice")
@@ -2240,9 +2293,16 @@ struct ModelSelectorView: View {
                         .padding(.vertical, 44)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.bottom, availableProviders.count > 1 ? 12 : 26)
+            .listRowInsets(EdgeInsets(top: 0, leading: 18, bottom: 0, trailing: 18))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
         }
+        .listStyle(.plain)
+        .listRowSpacing(10)
+        .environment(\.defaultMinListRowHeight, 0)
+        .scrollContentBackground(.hidden)
+        .contentMargins(.top, 0, for: .scrollContent)
+        .contentMargins(.bottom, availableProviders.count > 1 ? 12 : 26, for: .scrollContent)
         .scrollDismissesKeyboard(.interactively)
     }
 
@@ -2262,14 +2322,14 @@ struct ModelSelectorView: View {
     }
 
     private func providerSectionHeader(_ provider: ProviderConfiguration) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Button {
                 toggleProviderCollapsed(provider.id)
             } label: {
-                HStack(spacing: 8) {
-                    ProviderGlyph(provider: provider, size: 26)
+                HStack(spacing: 10) {
+                    ProviderGlyph(provider: provider, size: 28)
                     Text(provider.name)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: modelNameSize, weight: .medium))
                         .lineLimit(1)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
@@ -2329,115 +2389,104 @@ struct ModelSelectorView: View {
         let isFavorite = model.isFavoriteModel(providerID: item.provider.id, modelID: item.model.id)
         let rowID = showsProvider ? item.favoriteID : item.providerID
 
-        return VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 4) {
-                HStack(spacing: 11) {
-                    modelAvatar(item)
-                        .overlay(alignment: .bottomTrailing) {
-                            if isSelected {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.primary)
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(Color(uiColor: .systemBackground))
-                                }
-                                .frame(width: 16, height: 16)
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color(uiColor: .systemBackground), lineWidth: 2)
-                                )
-                                .offset(x: 2, y: 2)
-                                .accessibilityHidden(true)
-                            }
-                        }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.model.displayName)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Text(modelSource(item, showsProvider: showsProvider))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
+        return HStack(spacing: 10) {
+            modelAvatar(item)
+                .overlay(alignment: .bottomTrailing) {
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color(uiColor: .systemBackground), Color.primary)
+                            .offset(x: 2, y: 2)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
                 }
-                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                .frame(width: 30)
                 .contentShape(Rectangle())
-                .gesture(
-                    LongPressGesture(minimumDuration: 0.38, maximumDistance: 18)
-                        .exclusively(before: TapGesture())
-                        .onEnded { gesture in
-                            switch gesture {
-                            case .first:
-                                searchFocused = false
-                                editingModelItem = item
-                            case .second:
-                                select(selection)
-                            }
+                .gesture(modelSelectionGesture(item, selection: selection))
+                .accessibilityHidden(true)
+
+            VStack(spacing: 0) {
+                HStack(spacing: 4) {
+                    Text(item.model.displayName)
+                        .font(.system(size: modelNameSize, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .gesture(modelSelectionGesture(item, selection: selection))
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityValue(isSelected ? L10n.lookup("已选择") : L10n.lookup("未选择"))
+                        .accessibilityAction { select(selection) }
+                        .accessibilityAction(named: Text(L10n.lookup("编辑模型"))) {
+                            editingModelItem = item
                         }
-                )
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityValue(isSelected ? L10n.lookup("已选择") : L10n.lookup("未选择"))
-                .accessibilityAction { select(selection) }
-                .accessibilityAction(named: Text(L10n.lookup("编辑模型"))) {
-                    editingModelItem = item
+                        .accessibilityIdentifier("modelSelector.select.\(rowID)")
+
+                    Button {
+                        model.toggleFavoriteModel(providerID: item.provider.id, modelID: item.model.id)
+                    } label: {
+                        Image(systemName: isFavorite ? "heart.fill" : "heart")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(isFavorite ? Color.red.opacity(0.8) : Color.secondary.opacity(0.58))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isFavorite ? L10n.lookup("取消收藏模型") : L10n.lookup("收藏模型"))
+                    .accessibilityIdentifier("modelSelector.favorite.\(rowID)")
                 }
-                .accessibilityIdentifier("modelSelector.select.\(rowID)")
 
                 Button {
-                    model.toggleFavoriteModel(providerID: item.provider.id, modelID: item.model.id)
+                    searchFocused = false
+                    editingModelItem = item
                 } label: {
-                    Image(systemName: isFavorite ? "heart.fill" : "heart")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(
-                            isFavorite
-                                ? Color.red.opacity(0.8)
-                                : Color.secondary.opacity(0.58)
-                        )
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
+                    HStack(spacing: 4) {
+                        modelTags(item, showsProvider: showsProvider)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32)
+                    }
+                    .padding(.vertical, 3)
+                    .frame(minHeight: 32)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(isFavorite ? L10n.lookup("取消收藏模型") : L10n.lookup("收藏模型"))
-                .accessibilityIdentifier("modelSelector.favorite.\(rowID)")
+                .accessibilityLabel("\(L10n.lookup("编辑模型")) · \(item.model.displayName)")
+                .accessibilityValue(modelCapabilityDescription(item.model.capabilities))
+                .accessibilityIdentifier("modelSelector.edit.\(rowID)")
             }
-            .padding(.leading, 14)
-            .padding(.trailing, 6)
-
-            Button {
-                searchFocused = false
-                editingModelItem = item
-            } label: {
-                HStack(spacing: 10) {
-                    modelTags(item)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 5)
-                .frame(minHeight: 46)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(L10n.lookup("编辑模型")) · \(item.model.displayName)")
-            .accessibilityValue(modelCapabilityDescription(item.model.capabilities))
-            .accessibilityIdentifier("modelSelector.edit.\(rowID)")
         }
-        .padding(.top, 9)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(modelCardBackground(selected: isSelected))
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                searchFocused = false
+                modelToDelete = item
+            } label: {
+                Label(L10n.lookup("删除模型"), systemImage: "trash")
+            }
+            .tint(.red)
+        }
+        .accessibilityAction(named: Text(L10n.lookup("删除模型"))) {
+            modelToDelete = item
+        }
+    }
+
+    private func modelSelectionGesture(_ item: ModelSelectorItem, selection: ModelSelection) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.38, maximumDistance: 18)
+            .exclusively(before: TapGesture())
+            .onEnded { gesture in
+                switch gesture {
+                case .first:
+                    searchFocused = false
+                    editingModelItem = item
+                case .second:
+                    select(selection)
+                }
+            }
     }
 
     private func inheritedChoiceCard(title: String) -> some View {
@@ -2491,46 +2540,65 @@ struct ModelSelectorView: View {
     }
 
     private func modelAvatar(_ item: ModelSelectorItem) -> some View {
-        ProviderGlyph(provider: item.provider, size: 38)
+        ProviderGlyph(provider: item.provider, size: 30)
     }
 
-    private func modelSource(_ item: ModelSelectorItem, showsProvider: Bool) -> String {
-        let protocolName = item.provider.type.title
-        guard showsProvider, item.provider.name != protocolName else { return protocolName }
-        return "\(item.provider.name) · \(protocolName)"
-    }
-
-    private func modelTags(_ item: ModelSelectorItem) -> some View {
+    private func modelTags(_ item: ModelSelectorItem, showsProvider: Bool) -> some View {
         let capabilities = item.model.capabilities
-        return ProviderCapabilityFlowLayout(horizontalSpacing: 10, verticalSpacing: 6) {
+        return ProviderCapabilityFlowLayout(horizontalSpacing: 8, verticalSpacing: 5, centersItemsVertically: true) {
+            Group {
+                if let icon = item.model.modelBrandIcon {
+                    Image(icon.assetName)
+                        .renderingMode(icon.usesTemplateRendering ? .template : .original)
+                        .resizable()
+                        .scaledToFit()
+                        .foregroundStyle(.secondary)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 12, height: 12)
+            .accessibilityHidden(true)
+
+            // Custom provider aliases distinguish favorites; protocol names
+            // such as OpenAI are redundant with the brand mark and grouping.
+            if showsProvider && item.provider.name != item.provider.type.title {
+                Text(item.provider.name)
+                    .font(.system(size: modelSourceSize))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 72, alignment: .leading)
+            }
+
             Text(L10n.lookup(capabilities.kind.title))
-                .font(.caption.weight(.medium))
+                .font(.system(size: modelKindSize, weight: .medium))
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 7))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 5))
                 .fixedSize()
 
             if capabilities.input.contains(.image) {
-                capabilityLabel(L10n.lookup("识图"), systemImage: "photo")
+                capabilityIcon(L10n.lookup("识图"), systemImage: "photo")
             }
             if capabilities.output.contains(.image) {
-                capabilityLabel(L10n.lookup("生图"), systemImage: "photo.badge.plus")
+                capabilityIcon(L10n.lookup("生图"), systemImage: "photo.badge.plus")
             }
             if capabilities.abilities.contains(.reasoning) {
-                capabilityLabel(L10n.lookup(ModelAbility.reasoning.title), systemImage: ModelAbility.reasoning.systemImage)
+                capabilityIcon(L10n.lookup(ModelAbility.reasoning.title), systemImage: ModelAbility.reasoning.systemImage)
             }
             if capabilities.abilities.contains(.tool) {
-                capabilityLabel(L10n.lookup(ModelAbility.tool.shortTitle), systemImage: ModelAbility.tool.systemImage)
+                capabilityIcon(L10n.lookup(ModelAbility.tool.shortTitle), systemImage: ModelAbility.tool.systemImage)
             }
         }
     }
 
-    private func capabilityLabel(_ title: String, systemImage: String) -> some View {
+    private func capabilityIcon(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.caption)
+            .labelStyle(.iconOnly)
+            .font(.system(size: capabilityIconSize))
             .foregroundStyle(.secondary)
-            .padding(.vertical, 4)
+            .frame(minWidth: 18, minHeight: 18)
             .fixedSize()
     }
 
@@ -2559,7 +2627,7 @@ struct ModelSelectorView: View {
                         HStack(spacing: 8) {
                             providerAvatar(provider)
                             Text(provider.name)
-                                .font(.system(size: 15, weight: .medium))
+                                .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
                         }
@@ -2582,7 +2650,7 @@ struct ModelSelectorView: View {
     }
 
     private func providerAvatar(_ provider: ProviderConfiguration) -> some View {
-        ProviderGlyph(provider: provider, size: 28)
+        ProviderGlyph(provider: provider, size: 24)
     }
 
     private func filteredItems(for provider: ProviderConfiguration) -> [ModelSelectorItem] {
@@ -2617,10 +2685,10 @@ struct ModelSelectorView: View {
     }
 
     private func modelCardBackground(selected: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
             .fill(selected ? Color.primary.opacity(0.065) : Color.primary.opacity(0.035))
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(
                         selected ? Color.primary.opacity(0.36) : Color.primary.opacity(0.045),
                         lineWidth: selected ? 1 : 0.6
@@ -2719,6 +2787,7 @@ private struct ModelConfigurationEditorSheet: View {
 
     let item: ModelSelectorItem
     let onSave: ((ModelConfiguration) -> Bool)?
+    let onDelete: (() -> Bool)?
 
     @State private var tab: ModelEditTab = .basic
     @State private var displayName: String
@@ -2729,14 +2798,18 @@ private struct ModelConfigurationEditorSheet: View {
     @State private var enabledBuiltInTools: Set<ModelBuiltInTool>
     @State private var isLeaveConfirmationPresented = false
     @State private var isSaveErrorPresented = false
-    @State private var didSave = false
+    @State private var didResolve = false
+    @State private var isDeleteConfirmationPresented = false
+    @State private var isDeleteErrorPresented = false
 
     init(
         item: ModelSelectorItem,
-        onSave: ((ModelConfiguration) -> Bool)? = nil
+        onSave: ((ModelConfiguration) -> Bool)? = nil,
+        onDelete: (() -> Bool)? = nil
     ) {
         self.item = item
         self.onSave = onSave
+        self.onDelete = onDelete
         _displayName = State(initialValue: item.model.displayName)
         _capabilities = State(initialValue: item.model.capabilities)
         _usesAutomaticCapabilities = State(initialValue: item.model.capabilityOverride == nil)
@@ -2805,6 +2878,20 @@ private struct ModelConfigurationEditorSheet: View {
             Button(L10n.lookup("继续编辑"), role: .cancel) {}
         } message: {
             Text(onSave == nil ? L10n.lookup("模型修改尚未保存。") : L10n.lookup("确认后会保留到供应商草稿，最后请保存供应商。"))
+        }
+        .alert(L10n.lookup("删除模型？"), isPresented: $isDeleteConfirmationPresented) {
+            Button(L10n.lookup("删除模型"), role: .destructive, action: deleteModel)
+            Button(L10n.lookup("取消"), role: .cancel) {}
+        } message: {
+            Text(L10n.format("将从当前服务商移除「%@」，聊天记录会保留。", [item.model.displayName]))
+            if onSave != nil {
+                Text(L10n.lookup("删除会保留在服务商草稿中，保存服务商后生效。"))
+            }
+        }
+        .alert(L10n.lookup("无法删除模型"), isPresented: $isDeleteErrorPresented) {
+            Button(L10n.lookup("好"), role: .cancel) {}
+        } message: {
+            Text(L10n.lookup("模型没有删除成功，请重试。"))
         }
         .alert(L10n.lookup("无法保存模型"), isPresented: $isSaveErrorPresented) {
             Button(L10n.lookup("好"), role: .cancel) {}
@@ -2915,6 +3002,21 @@ private struct ModelConfigurationEditorSheet: View {
 
             fieldLabel(L10n.lookup("能力"))
             abilityToggles
+
+            if onSave == nil || onDelete != nil {
+                Button(role: .destructive) {
+                    isDeleteConfirmationPresented = true
+                } label: {
+                    Label(L10n.lookup("删除模型"), systemImage: "trash")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+                .accessibilityIdentifier("modelEditor.delete")
+            }
         }
     }
 
@@ -3412,6 +3514,23 @@ private struct ModelConfigurationEditorSheet: View {
         }
     }
 
+    private func deleteModel() {
+        if let onDelete {
+            guard onDelete() else {
+                isDeleteErrorPresented = true
+                return
+            }
+        } else {
+            guard onSave == nil,
+                  appModel.deleteModel(providerID: item.provider.id, modelID: item.model.id) else {
+                isDeleteErrorPresented = true
+                return
+            }
+        }
+        didResolve = true
+        dismiss()
+    }
+
     private func save() {
         let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         var updated = item.model
@@ -3440,12 +3559,12 @@ private struct ModelConfigurationEditorSheet: View {
                 return
             }
         }
-        didSave = true
+        didResolve = true
         dismiss()
     }
 
     private var hasUnsavedChanges: Bool {
-        !didSave && (
+        !didResolve && (
             displayName != item.model.displayName
                 || usesAutomaticCapabilities != (item.model.capabilityOverride == nil)
                 || (!usesAutomaticCapabilities && capabilities != item.model.capabilities)

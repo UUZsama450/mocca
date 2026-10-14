@@ -48,6 +48,8 @@ Chats and attachments are stored locally. Requests send the data needed for the 
 
 The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The **1.0.4 (5206)** GitHub IPA preview requires your own signing; see [installation](docs/INSTALLATION.md) and [source verification](docs/SNAPSHOT_1.0.4.md). App Store updates are reviewed separately and released manually after approval.
 
+The `main` branch also includes unreleased source progress adopted in phone build **1.0.4 (5210)**. This does not replace the **5206** downloadable preview. See [version and release tracking](docs/RELEASE_TRACKING.md).
+
 ## Build locally
 
 Built with SwiftUI and UIKit.

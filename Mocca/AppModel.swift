@@ -5391,45 +5391,57 @@ final class AppModel {
     }
 
     func deleteAssistant(_ id: UUID) {
-        guard requireConversationPersistence() else { return }
-        guard assistants.count > 1,
-              let index = assistants.firstIndex(where: { $0.id == id }) else { return }
+        _ = deleteAssistants([id])
+    }
+
+    @discardableResult
+    func deleteAssistants(_ ids: Set<UUID>) -> Bool {
+        let removed = assistants.filter { ids.contains($0.id) }
+        guard !removed.isEmpty, removed.count < assistants.count,
+              requireConversationPersistence() else { return false }
+        let removedIDs = Set(removed.map(\.id))
+        let assistantIDs = Set(removedIDs.map(\.uuidString))
 
         // 对齐旧 Kelivo：删除助手时同时删除归属它的单聊；群聊保留剩余成员，不足两人则删除。
-        let assistantID = id.uuidString
         let shouldDeleteConversation: (Conversation) -> Bool = { conversation in
             if conversation.groupAssistantIDs.count >= 2 {
-                return conversation.groupAssistantIDs.contains(assistantID) && conversation.groupAssistantIDs.count <= 2
+                let members = Set(conversation.groupAssistantIDs)
+                return !members.isDisjoint(with: assistantIDs) && members.subtracting(assistantIDs).count < 2
             }
-            return conversation.assistantID == assistantID
+            return conversation.assistantID.map(assistantIDs.contains) ?? false
         }
         let deletedConversationIDs = Set(
             conversations.lazy.filter(shouldDeleteConversation).map(\.id)
         )
         discardComposerPackets(for: deletedConversationIDs)
-        for conversation in conversations where shouldDeleteConversation(conversation) {
+        for conversation in conversations where deletedConversationIDs.contains(conversation.id) {
             stopStreaming(ifConversationID: conversation.id)
             conversationMessageStore[conversation.id] = nil
         }
-        conversations.removeAll(where: shouldDeleteConversation)
+        conversations.removeAll { deletedConversationIDs.contains($0.id) }
         unsavedDraftConversationIDs.subtract(deletedConversationIDs)
-        for conversationIndex in conversations.indices where conversations[conversationIndex].groupAssistantIDs.contains(assistantID) {
-            conversations[conversationIndex].groupAssistantIDs.removeAll { $0 == assistantID }
-            conversations[conversationIndex].groupModelSelections?.removeValue(forKey: assistantID)
-            if conversations[conversationIndex].assistantID == assistantID {
+        for conversationIndex in conversations.indices {
+            guard conversations[conversationIndex].groupAssistantIDs.contains(where: assistantIDs.contains) else { continue }
+            conversations[conversationIndex].groupAssistantIDs.removeAll { assistantIDs.contains($0) }
+            for assistantID in assistantIDs {
+                conversations[conversationIndex].groupModelSelections?.removeValue(forKey: assistantID)
+            }
+            if let owner = conversations[conversationIndex].assistantID, assistantIDs.contains(owner) {
                 conversations[conversationIndex].assistantID = conversations[conversationIndex].groupAssistantIDs.first
             }
         }
 
-        AssistantMediaStore.remove(assistants[index].avatar)
-        AssistantMediaStore.remove(assistants[index].background)
-        quickPhrases.removeAll { !$0.isGlobal && $0.assistantID == assistantID }
+        for assistant in removed {
+            AssistantMediaStore.remove(assistant.avatar)
+            AssistantMediaStore.remove(assistant.background)
+        }
+        quickPhrases.removeAll { !$0.isGlobal && assistantIDs.contains($0.assistantID ?? "") }
         QuickPhrasePersistence.save(quickPhrases)
-        preferences.groupAssistantBubbleColors.removeValue(forKey: assistantID)
+        for assistantID in assistantIDs { preferences.groupAssistantBubbleColors.removeValue(forKey: assistantID) }
         AppPreferences.savePreferences(preferences)
-        assistants.remove(at: index)
+        assistants.removeAll { removedIDs.contains($0.id) }
         AssistantPersistence.saveAssistants(assistants)
-        if currentAssistantID == id {
+        if removedIDs.contains(currentAssistantID) {
             currentAssistantID = assistants[0].id
             AssistantPersistence.saveCurrentAssistantID(currentAssistantID)
         }
@@ -5449,6 +5461,7 @@ final class AppModel {
             allowDestructiveConversationReduction: true,
             allowDestructiveMessageReduction: true
         )
+        return true
     }
 
     private func adoptAssistantForConversationEntry(_ conversation: Conversation) {
@@ -6882,6 +6895,19 @@ final class AppModel {
             repairSelection()
         }
         repairDedicatedModelSelections()
+        return true
+    }
+
+    @discardableResult
+    func deleteModel(providerID: UUID, modelID: String) -> Bool {
+        // Use the current provider, preserving edits to its other models.
+        guard var provider = providers.first(where: { $0.id == providerID }),
+              provider.models.contains(where: { $0.id == modelID }) else { return false }
+        provider.models.removeAll { $0.id == modelID }
+        guard upsertProvider(provider) else { return false }
+        if isFavoriteModel(providerID: providerID, modelID: modelID) {
+            toggleFavoriteModel(providerID: providerID, modelID: modelID)
+        }
         return true
     }
 

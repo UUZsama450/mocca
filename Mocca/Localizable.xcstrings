@@ -1,6 +1,141 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "%@说明": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ information"
+          }
+        }
+      }
+    },
+    "请保留至少一个助手，并在聊天数据加载完成后重试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep at least one assistant and try again after chat data has finished loading."
+          }
+        }
+      }
+    },
+    "无法删除助手": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to Delete Assistants"
+          }
+        }
+      }
+    },
+    "删除所选的 %@ 个助手及其单聊？相关群聊会移除这些成员，不足两人的群聊也会删除。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the %@ selected assistants and their individual chats? They will be removed from group chats; groups with fewer than two remaining members will also be deleted."
+          }
+        }
+      }
+    },
+    "删除所选（%@）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Selected (%@)"
+          }
+        }
+      }
+    },
+    "已选择 %@ 个助手": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ assistants selected"
+          }
+        }
+      }
+    },
+    "至少保留一个助手": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep at least one assistant"
+          }
+        }
+      }
+    },
+    "点按进入编辑；点击右上角“编辑”可以多选删除或调整顺序。至少保留一个助手。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap an assistant to edit. Use Edit to select multiple assistants for deletion or reorder them. Keep at least one assistant."
+          }
+        }
+      }
+    },
+    "删除会保留在服务商草稿中，保存服务商后生效。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The deletion stays in the provider draft until you save the provider."
+          }
+        }
+      }
+    },
+    "删除模型？": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete model?"
+          }
+        }
+      }
+    },
+    "将从当前服务商移除「%@」，聊天记录会保留。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove “%@” from this provider? Your chat history will be kept."
+          }
+        }
+      }
+    },
+    "无法删除模型": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to delete model"
+          }
+        }
+      }
+    },
+    "模型没有删除成功，请重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model could not be deleted. Please try again."
+          }
+        }
+      }
+    },
     "从列表添加": {
       "extractionState": "manual",
       "localizations": {

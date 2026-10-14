@@ -390,11 +390,24 @@ struct AssistantEditorView: View {
         .presentationBackground(Color(uiColor: .systemGroupedBackground))
     }
 
-    private var editorContent: some View {
-        VStack(spacing: 0) {
-            tabBar
+    @ViewBuilder
+    private var editorTabLayout: some View {
+        if #available(iOS 26.0, *) {
             selectedTabContent
+                .safeAreaBar(edge: .top, spacing: 0) { tabBar }
+                .scrollEdgeEffectStyle(.soft, for: .top)
+        } else {
+            VStack(spacing: 0) {
+                tabBar
+                    .background(Color(uiColor: .systemGroupedBackground))
+                    .overlay(alignment: .bottom) { Divider().opacity(0.45) }
+                selectedTabContent
+            }
         }
+    }
+
+    private var editorContent: some View {
+        editorTabLayout
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? L10n.lookup("助手") : profile.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -557,10 +570,7 @@ struct AssistantEditorView: View {
             .padding(.horizontal, 16)
         }
         .padding(.vertical, 9)
-        .background(Color(uiColor: .systemGroupedBackground))
-        .overlay(alignment: .bottom) {
-            Divider().opacity(0.45)
-        }
+        .accessibilityIdentifier("assistantEditor.tabs")
     }
 
     @ViewBuilder
@@ -2007,9 +2017,15 @@ private struct AssistantMemorySettingsView: View {
                     .frame(minHeight: 44)
                 }
             } header: {
-                Text(L10n.lookup("跨聊天连续性"))
-            } footer: {
-                Text(L10n.lookup("自动整理同一助手最近的聊天，形成会持续更新的近期背景；它与长期记忆分开保存。"))
+                HStack(spacing: 5) {
+                    Text(L10n.lookup("跨聊天连续性"))
+                    SettingsInfoButton(title: L10n.lookup("近期记忆"), identifier: "assistantMemory.recentInfo") {
+                        SettingsInfoText(
+                            title: L10n.lookup("近期记忆"),
+                            text: L10n.lookup("自动整理同一助手最近的聊天，形成会持续更新的近期背景；它与长期记忆分开保存。")
+                        )
+                    }
+                }
             }
 
             Section {
@@ -2023,12 +2039,18 @@ private struct AssistantMemorySettingsView: View {
                         || model.recentContextSummaryConversations(for: profile.id).isEmpty
                 )
             } header: {
-                Text(L10n.lookup("手动整理"))
+                HStack(spacing: 5) {
+                    Text(L10n.lookup("手动整理"))
+                    SettingsInfoButton(title: L10n.lookup("手动整理"), identifier: "assistantMemory.manualInfo") {
+                        SettingsInfoText(
+                            title: L10n.lookup("手动整理"),
+                            text: L10n.lookup("这是一次性的手动快照：选择聊天、生成总结，再立即保存为一条长期记忆；不会替代会自动更新的近期记忆。")
+                        )
+                    }
+                }
             } footer: {
                 if !isPersistedAssistant {
                     Text(L10n.lookup("请先保存这个助手，再从它的聊天中创建长期记忆。"))
-                } else {
-                    Text(L10n.lookup("这是一次性的手动快照：选择聊天、生成总结，再立即保存为一条长期记忆；不会替代会自动更新的近期记忆。"))
                 }
             }
 
