@@ -3331,50 +3331,98 @@ private func byteString(_ bytes: Int64) -> String {
 struct AssistantManagementView: View {
     @Environment(AppModel.self) private var model
     @State private var editingAssistant: AssistantProfile?
-    @State private var assistantToDelete: AssistantProfile?
+    @State private var selectedAssistantIDs: Set<UUID> = []
+    @State private var pendingDeletionIDs: Set<UUID> = []
+    @State private var isDeleteErrorPresented = false
     @State private var editMode: EditMode = .inactive
+
+    private var canDeleteSelection: Bool {
+        !selectedAssistantIDs.isEmpty && selectedAssistantIDs.count < model.assistants.count
+    }
 
     var body: some View {
         List {
             Section {
                 ForEach(model.assistants) { assistant in
                     Button {
-                        editingAssistant = assistant
+                        if editMode == .active {
+                            if !selectedAssistantIDs.insert(assistant.id).inserted {
+                                selectedAssistantIDs.remove(assistant.id)
+                            }
+                        } else {
+                            editingAssistant = assistant
+                        }
                     } label: {
-                        AssistantSummaryRow(
-                            assistant: assistant,
-                            isCurrent: assistant.id == model.currentAssistantID,
-                            accessorySystemImage: "chevron.right"
-                        )
+                        HStack(spacing: 12) {
+                            if editMode == .active {
+                                Image(systemName: selectedAssistantIDs.contains(assistant.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 22))
+                                    .foregroundStyle(selectedAssistantIDs.contains(assistant.id) ? Color.accentColor : Color.secondary)
+                                    .accessibilityHidden(true)
+                            }
+                            AssistantSummaryRow(
+                                assistant: assistant,
+                                isCurrent: assistant.id == model.currentAssistantID,
+                                accessorySystemImage: editMode == .active ? nil : "chevron.right"
+                            )
+                        }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .deleteDisabled(model.assistants.count <= 1)
-                }
-                .onDelete { offsets in
-                    guard let offset = offsets.first,
-                          model.assistants.indices.contains(offset)
-                    else { return }
-                    assistantToDelete = model.assistants[offset]
+                    .accessibilityValue(editMode == .active
+                        ? L10n.lookup(selectedAssistantIDs.contains(assistant.id) ? "已选择" : "未选择") : "")
+                    .accessibilityIdentifier("assistantManagement.row.\(assistant.id.uuidString)")
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if editMode != .active && model.assistants.count > 1 {
+                            Button { pendingDeletionIDs = [assistant.id] } label: {
+                                Label(L10n.lookup("删除"), systemImage: "trash")
+                            }
+                            .tint(.red)
+                        }
+                    }
                 }
                 .onMove(perform: model.moveAssistants)
             } header: {
-                Text(L10n.lookup("助手列表"))
-                    .textCase(nil)
+                Text(L10n.lookup("助手列表")).textCase(nil)
             } footer: {
-                Text(L10n.lookup("点按进入编辑；点击右上角“编辑”可以调整顺序或删除。删除助手会同时删除属于它的单聊。"))
+                Text(L10n.lookup("点按进入编辑；点击右上角“编辑”可以多选删除或调整顺序。至少保留一个助手。"))
             }
         }
         .settingsGroupedPageStyle()
         .environment(\.editMode, $editMode)
         .navigationTitle(L10n.lookup("助手"))
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if editMode == .active {
+                HStack(spacing: 12) {
+                    Text(selectedAssistantIDs.count == model.assistants.count
+                        ? L10n.lookup("至少保留一个助手")
+                        : L10n.format("已选择 %@ 个助手", [String(selectedAssistantIDs.count)]))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button(L10n.format("删除所选（%@）", [String(selectedAssistantIDs.count)]), role: .destructive) {
+                        pendingDeletionIDs = selectedAssistantIDs
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(!canDeleteSelection)
+                    .accessibilityIdentifier("assistantManagement.deleteSelected")
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.regularMaterial)
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(editMode == .active ? L10n.lookup("完成") : L10n.lookup("编辑")) {
                     withAnimation(.easeInOut(duration: 0.18)) {
+                        selectedAssistantIDs = []
                         editMode = editMode == .active ? .inactive : .active
                     }
                 }
+                .accessibilityIdentifier("assistantManagement.edit")
                 Button {
                     editingAssistant = AssistantProfile(name: L10n.lookup("新助手"), temperature: 0.6)
                 } label: {
@@ -3383,125 +3431,112 @@ struct AssistantManagementView: View {
                 .accessibilityLabel(L10n.lookup("新建助手"))
             }
         }
+        .onChange(of: model.assistants.map(\.id)) { _, ids in
+            selectedAssistantIDs.formIntersection(ids)
+        }
         .navigationDestination(item: $editingAssistant) { assistant in
             AssistantEditorView(profile: assistant, presentationContext: .navigation) { saved in
                 model.upsertAssistant(saved)
             }
         }
-        .alert(L10n.lookup("删除助手"), isPresented: deleteConfirmationBinding) {
-            Button(L10n.lookup("取消"), role: .cancel) {
-                assistantToDelete = nil
-            }
+        .alert(L10n.lookup("删除助手"), isPresented: Binding(
+            get: { !pendingDeletionIDs.isEmpty },
+            set: { if !$0 { pendingDeletionIDs = [] } }
+        )) {
+            Button(L10n.lookup("取消"), role: .cancel) { pendingDeletionIDs = [] }
             Button(L10n.lookup("删除"), role: .destructive) {
-                if let assistantToDelete {
-                    model.deleteAssistant(assistantToDelete.id)
+                let ids = pendingDeletionIDs
+                pendingDeletionIDs = []
+                if model.deleteAssistants(ids) {
+                    selectedAssistantIDs.subtract(ids)
+                } else {
+                    isDeleteErrorPresented = true
                 }
-                assistantToDelete = nil
             }
         } message: {
-            if let assistantToDelete {
-                Text(L10n.format("删除助手“%@”？属于它的聊天也会一起删除。", [String(describing: assistantToDelete.name)]))
-            }
+            Text(L10n.format("删除所选的 %@ 个助手及其单聊？相关群聊会移除这些成员，不足两人的群聊也会删除。", [String(pendingDeletionIDs.count)]))
+        }
+        .alert(L10n.lookup("无法删除助手"), isPresented: $isDeleteErrorPresented) {
+            Button(L10n.lookup("好"), role: .cancel) {}
+        } message: {
+            Text(L10n.lookup("请保留至少一个助手，并在聊天数据加载完成后重试。"))
         }
     }
-
-    private var deleteConfirmationBinding: Binding<Bool> {
-        Binding(
-            get: { assistantToDelete != nil },
-            set: { isPresented in
-                if !isPresented {
-                    assistantToDelete = nil
-                }
-            }
-        )
-    }
 }
 
-private struct ImageContextInfoAnchorKey: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = nextValue() ?? value
-    }
-}
-
-private struct ImageContextInfoOverlay: View {
-    let anchorRect: CGRect
-    let containerSize: CGSize
-    let onDismiss: () -> Void
-
-    private let bubbleColor = Color(red: 0.16, green: 0.16, blue: 0.17)
-
-    private var bubbleWidth: CGFloat {
-        min(340, max(260, containerSize.width - 32))
-    }
-
-    private var bubbleX: CGFloat {
-        let preferredX = anchorRect.midX - 116
-        let maximumX = max(16, containerSize.width - bubbleWidth - 16)
-        return min(max(preferredX, 16), maximumX)
-    }
-
-    private var pointerX: CGFloat {
-        min(max(anchorRect.midX - bubbleX, 24), bubbleWidth - 24)
-    }
+/// Settings explanations share native positioning, dismissal and animation.
+/// Its state stays local so opening a bubble does not rebuild the whole form.
+struct SettingsInfoButton<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var isPresented = false
+    @State private var explanationHeight: CGFloat = 420
+    let title: String
+    let identifier: String
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Color.clear
+        Button {
+            model.performListItemHaptic()
+            // Let the system choose a side with enough room before shrinking
+            // a short explanation; growing after placement can go offscreen.
+            if !isPresented { explanationHeight = 420 }
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.body.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
-                .onTapGesture(perform: onDismiss)
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 0) {
-                    Color.clear
-                        .frame(width: pointerX - 10, height: 1)
-
-                    Image(systemName: "arrowtriangle.up.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(bubbleColor)
-                        .frame(width: 20, height: 11)
-
-                    Spacer(minLength: 0)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    infoItem(
-                        title: L10n.lookup("图片压缩"),
-                        text: L10n.lookup("百分比表示新图片保存时的 JPEG 质量，不是尺寸比例；最长边会限制为 2048 像素。")
-                    )
-
-                    infoItem(
-                        title: L10n.lookup("历史图片"),
-                        text: L10n.lookup("关闭时只发送本轮新选图片；开启后可用滑杆选择当前上下文中最新 1–10 张，最右端“无上限”会发送其中全部未折叠历史图片。本轮新图不占上限，折叠后的旧图不再重发。")
-                    )
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 16)
-                .foregroundStyle(.white)
-                .background(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(bubbleColor)
-                )
-                .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L10n.format("%@说明", [title]))
+        .accessibilityHint(L10n.lookup("显示或隐藏说明气泡"))
+        .accessibilityValue(isPresented ? L10n.lookup("已展开") : L10n.lookup("已收起"))
+        .accessibilityIdentifier(identifier)
+        .popover(isPresented: $isPresented) {
+            ScrollView {
+                explanation
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        ceil(geometry.size.height)
+                    } action: { height in
+                        explanationHeight = height
+                    }
             }
-            .frame(width: bubbleWidth, alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture { }
-            .offset(x: bubbleX, y: anchorRect.maxY + 2)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(L10n.lookup("图片与上下文说明"))
-            .accessibilityAction(.escape, onDismiss)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(width: 320)
+            .frame(height: min(explanationHeight, verticalSizeClass == .compact ? 220 : 420))
+            .textCase(nil)
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+            .preferredColorScheme(colorScheme)
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(.regularMaterial)
+            .accessibilityIdentifier(identifier + ".popover")
+            .accessibilityAction(.escape) { isPresented = false }
         }
     }
 
-    private func infoItem(title: String, text: String) -> some View {
+    private var explanation: some View {
+        VStack(alignment: .leading, spacing: 14, content: content)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(18)
+    }
+}
+
+struct SettingsInfoText: View {
+    let title: String
+    let text: String
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.body.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.primary)
             Text(text)
-                .font(.body)
-                .foregroundStyle(.white.opacity(0.92))
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -3510,7 +3545,6 @@ private struct ImageContextInfoOverlay: View {
 struct PreferencesPage: View {
     @Environment(AppModel.self) private var model
     @State private var activeSheet: PreferencesSheetRoute?
-    @State private var showsImageContextInfo = false
 
     fileprivate init(initialSheet: PreferencesSheetRoute? = nil) {
         _activeSheet = State(initialValue: initialSheet)
@@ -3734,20 +3768,16 @@ struct PreferencesPage: View {
                 HStack(spacing: 5) {
                     Text(L10n.lookup("图片与上下文"))
 
-                    Button {
-                        model.performListItemHaptic()
-                        showsImageContextInfo.toggle()
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: 32, height: 28)
-                            .contentShape(Rectangle())
+                    SettingsInfoButton(title: L10n.lookup("图片与上下文"), identifier: "preferences.imageContextInfo") {
+                        SettingsInfoText(
+                            title: L10n.lookup("图片压缩"),
+                            text: L10n.lookup("百分比表示新图片保存时的 JPEG 质量，不是尺寸比例；最长边会限制为 2048 像素。")
+                        )
+                        SettingsInfoText(
+                            title: L10n.lookup("历史图片"),
+                            text: L10n.lookup("关闭时只发送本轮新选图片；开启后可用滑杆选择当前上下文中最新 1–10 张，最右端“无上限”会发送其中全部未折叠历史图片。本轮新图不占上限，折叠后的旧图不再重发。")
+                        )
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(L10n.lookup("图片与上下文说明"))
-                    .accessibilityHint(L10n.lookup("显示或隐藏说明气泡"))
-                    .accessibilityValue(showsImageContextInfo ? L10n.lookup("已展开") : L10n.lookup("已收起"))
-                    .anchorPreference(key: ImageContextInfoAnchorKey.self, value: .bounds) { $0 }
                 }
             } footer: {
                 Text(L10n.lookup("压缩质量只影响新加入的图片；历史图片选项只影响后续请求。选择“无上限”可能增加请求耗时与模型用量。"))
@@ -3776,17 +3806,6 @@ struct PreferencesPage: View {
             }
         }
         .settingsGroupedPageStyle()
-        .overlayPreferenceValue(ImageContextInfoAnchorKey.self) { anchor in
-            GeometryReader { proxy in
-                if showsImageContextInfo, let anchor {
-                    ImageContextInfoOverlay(
-                        anchorRect: proxy[anchor],
-                        containerSize: proxy.size,
-                        onDismiss: { showsImageContextInfo = false }
-                    )
-                }
-            }
-        }
         .navigationTitle(L10n.lookup("偏好设置"))
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $activeSheet) { sheet in

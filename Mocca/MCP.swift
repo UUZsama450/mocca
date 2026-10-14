@@ -769,11 +769,24 @@ struct MCPServerSelectionView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let assistantID: UUID
-    @State private var contentHeight: CGFloat = 296
+    @State private var rowHeights: [String: CGFloat] = [:]
     @State private var selectedDetent: PresentationDetent = .height(360)
 
     private var compactDetent: PresentationDetent {
-        .height(max(220, min(contentHeight + 64, UIScreen.main.bounds.height * 0.72)))
+        // Native inset-grouped rows use the same 11-point vertical inset.
+        let content: CGFloat
+        if connectedServers.isEmpty {
+            content = max(160, rowHeights["empty"] ?? 160) + 22
+        } else {
+            let actions = ["all", "clear"].reduce(CGFloat(0)) {
+                $0 + max(44, (rowHeights[$1] ?? 22) + 22)
+            }
+            let servers = connectedServers.reduce(CGFloat(0)) {
+                $0 + max(44, (rowHeights[$1.id.uuidString] ?? 40) + 22)
+            }
+            content = actions + servers + 16 + 28
+        }
+        return .height(min(content + 64 + 16, UIScreen.main.bounds.height * 0.72))
     }
 
     private var selectedIDs: Set<UUID> {
@@ -788,64 +801,58 @@ struct MCPServerSelectionView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+            List {
+                Section {
                     if connectedServers.isEmpty {
                         ContentUnavailableView(L10n.lookup("没有可用 MCP 服务器"), systemImage: "terminal", description: Text(L10n.lookup("先在设置里添加并同步服务器工具")))
-                            .frame(minHeight: 160)
+                            .mcpSelectionRowHeight("empty")
                     } else {
-                        HStack(spacing: 12) {
-                            Button(L10n.lookup("全选")) {
-                                model.setMCPServers(connectedServers.map(\.id), forAssistantID: assistantID)
-                            }
-                            Button(L10n.lookup("清空"), role: .destructive) {
-                                model.setMCPServers([], forAssistantID: assistantID)
-                            }
+                        Button(L10n.lookup("全选")) {
+                            model.setMCPServers(connectedServers.map(\.id), forAssistantID: assistantID)
                         }
-                        .buttonStyle(.bordered)
-                        .tint(.primary)
-                    }
-                    if !connectedServers.isEmpty {
-                        Text(L10n.lookup("服务器"))
-                            .font(.caption).foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
-                        VStack(spacing: 0) {
-                            ForEach(connectedServers) { server in
-                                let isSelected = selectedIDs.contains(server.id)
-                                Toggle(isOn: Binding(
-                                    get: { isSelected },
-                                    set: { model.toggleMCPServer(server.id, enabled: $0, forAssistantID: assistantID) }
-                                )) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(server.normalizedName)
-                                        Text(L10n.format("%@/%@ 个工具", [String(server.tools.filter(\.enabled).count), String(server.tools.count)]))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .fixedSize(horizontal: false, vertical: true)
-                                }
-                                .tint(.primary.opacity(0.7))
-                                .padding(14)
-                                if server.id != connectedServers.last?.id {
-                                    Divider().padding(.leading, 14)
-                                }
-                            }
+                        .mcpSelectionRowHeight("all")
+                        Button(L10n.lookup("清空"), role: .destructive) {
+                            model.setMCPServers([], forAssistantID: assistantID)
                         }
-                        .background(Color(uiColor: .secondarySystemGroupedBackground),
-                                    in: RoundedRectangle(cornerRadius: 18))
+                        .mcpSelectionRowHeight("clear")
                     }
                 }
-                .padding(16)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                    guard height.isFinite, height > 0, abs(contentHeight - height) > 1 else { return }
-                    let previous = compactDetent
-                    contentHeight = ceil(height)
-                    if selectedDetent == previous {
-                        withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = compactDetent }
+                .listRowInsets(EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 16))
+
+                if !connectedServers.isEmpty {
+                    Section(L10n.lookup("服务器")) {
+                        ForEach(connectedServers) { server in
+                            let isSelected = selectedIDs.contains(server.id)
+                            Toggle(isOn: Binding(
+                                get: { isSelected },
+                                set: { model.toggleMCPServer(server.id, enabled: $0, forAssistantID: assistantID) }
+                            )) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(server.normalizedName)
+                                    Text(L10n.format("%@/%@ 个工具", [String(server.tools.filter(\.enabled).count), String(server.tools.count)]))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .mcpSelectionRowHeight(server.id.uuidString)
+                            .listRowInsets(EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 16))
+                        }
                     }
                 }
             }
-            .scrollBounceBehavior(.basedOnSize)
+            .listStyle(.insetGrouped)
+            .listSectionSpacing(16)
+            .contentMargins(.top, 12, for: .scrollContent)
+            .contentMargins(.bottom, 4, for: .scrollContent)
+            .environment(\.defaultMinListRowHeight, 44)
+            .onPreferenceChange(MCPSelectionRowHeights.self) { heights in
+                guard heights != rowHeights else { return }
+                let previous = compactDetent
+                rowHeights = heights
+                if selectedDetent == previous {
+                    withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = compactDetent }
+                }
+            }
             .settingsGroupedPageStyle()
             .navigationTitle(L10n.lookup("MCP 服务器"))
             .navigationBarTitleDisplayMode(.inline)
@@ -859,5 +866,24 @@ struct MCPServerSelectionView: View {
         .presentationDetents([compactDetent, selectedDetent, .large], selection: $selectedDetent)
         .presentationDragIndicator(.visible)
         .onAppear { selectedDetent = compactDetent }
+    }
+}
+
+private struct MCPSelectionRowHeights: PreferenceKey {
+    static var defaultValue: [String: CGFloat] { [:] }
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
+private extension View {
+    func mcpSelectionRowHeight(_ id: String) -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: MCPSelectionRowHeights.self,
+                                       value: [id: ceil(proxy.size.height)])
+            }
+            .allowsHitTesting(false)
+        }
     }
 }

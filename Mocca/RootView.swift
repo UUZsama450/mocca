@@ -18818,6 +18818,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             colorScheme: colorScheme
         )
 
+        GeometryReader { geometry in
         VStack(spacing: 0) {
             HStack {
                 Text("Mocca")
@@ -18968,16 +18969,13 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 5)
+            .accessibilityIdentifier("drawer.assistants.toggle")
 
             if assistantsExpanded {
-                VStack(spacing: 5) {
-                    ForEach(filteredAssistants) { assistant in
-                        assistantRow(assistant)
-                    }
-                }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 12)
-                .transition(.opacity)
+                assistantList(viewportHeight: geometry.size.height)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 12)
+                    .transition(.opacity)
             }
 
             Button {
@@ -19188,6 +19186,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        }
         .frame(width: width)
         .frame(maxHeight: .infinity)
         // The drawer intentionally stays mounted for smooth dragging. Reset
@@ -19246,6 +19245,37 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                 Text(L10n.format("删除“%@”及其中的消息？", [String(describing: conversationToDelete.title)]))
             }
         }
+    }
+
+    private func assistantList(viewportHeight: CGFloat) -> some View {
+        let assistants = filteredAssistants
+        let contentHeight = CGFloat(assistants.count) * 44 + CGFloat(max(0, assistants.count - 1)) * 5
+        // Keep the drawer header, group entry, conversation area and bottom
+        // actions visible, including on shorter or keyboard-reduced screens.
+        let reservedHeight = safeAreaInsets.top + safeAreaInsets.bottom + 64 + 75 + 57 + 144 + 12
+            + (isSearchModeActive ? 58 : 0)
+        let preferredHeight: CGFloat = 7 * 44 + 6 * 5
+        let maximumHeight = max(44, min(preferredHeight, viewportHeight - reservedHeight))
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 5) {
+                    ForEach(assistants) { assistant in
+                        assistantRow(assistant)
+                            .id(assistant.id)
+                    }
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier("drawer.assistants.list")
+            .onAppear {
+                proxy.scrollTo(model.currentAssistantID, anchor: .center)
+            }
+            .onChange(of: normalizedQuery) { _, _ in
+                if let first = assistants.first { proxy.scrollTo(first.id, anchor: .top) }
+            }
+        }
+        .frame(height: min(contentHeight, maximumHeight))
     }
 
     private var searchPlaceholder: String {
@@ -19427,6 +19457,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("drawer.assistant.\(assistant.id.uuidString)")
         .contextMenu {
             Button {
                 model.isSettingsPresented = true

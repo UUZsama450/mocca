@@ -209,7 +209,7 @@ struct BottomToolsSheet: View {
 
     @State private var isToolsSheetVisible = false
     @State private var contentHeights: [BottomToolsRoute: CGFloat] = [:]
-    @State private var selectedDetent: PresentationDetent = .height(357)
+    @State private var selectedDetent: PresentationDetent = .height(355)
     @State private var isMCPSelectionPresented = false
     @State private var isSearchSettingsPresented = false
     @State private var isWorldBookSettingsPresented = false
@@ -223,7 +223,9 @@ struct BottomToolsSheet: View {
     }
 
     private var selectionCheckmarkColor: Color {
-        .primary
+        appModel.preferences.themePaletteID == .defaultPalette
+            ? Color(uiColor: .systemBlue)
+            : Color.primary.opacity(0.72)
     }
 
     private var allowsTransitionRefresh: Bool {
@@ -423,13 +425,13 @@ struct BottomToolsSheet: View {
 
     private func preferredDetent(for route: BottomToolsRoute) -> PresentationDetent {
         let initialHeight: CGFloat = switch route {
-        case .root: 328
-        case .more: 282
-        case .instruction, .worldBook: 210
-        case .contextManagement: 248
+        case .root: 326
+        case .more: 238
+        case .instruction, .worldBook: 206
+        case .contextManagement: 246
         case .groupChat: 460
         }
-        let height = max(180, (contentHeights[route] ?? initialHeight) + 29)
+        let height = max(120, (contentHeights[route] ?? initialHeight) + 29)
         return height > UIScreen.main.bounds.height * 0.70 ? detailDetent : .height(height)
     }
 
@@ -454,192 +456,228 @@ struct BottomToolsSheet: View {
 
 private struct BottomToolsRootView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var model: BottomToolsModel
     let onSearchSettings: () -> Void
     let onWorldBookSettings: () -> Void
     let onAction: (BottomToolAction) -> Void
 
+    private var themeAccent: Color {
+        Color(uiColor: appModel.themeActionUIColor)
+    }
+
+    private var reasoningEnabled: Bool {
+        (appModel.currentAssistant.thinkingBudget ?? 0) != 0
+    }
+
+    private var reasoningStatus: String {
+        guard let budget = appModel.currentAssistant.thinkingBudget, budget != 0 else { return L10n.lookup("关闭") }
+        switch budget {
+        case ..<0: return L10n.lookup("自动")
+        case 1_024: return L10n.lookup("低")
+        case 4_096: return L10n.lookup("中")
+        case 8_192: return L10n.lookup("高")
+        case 16_384: return L10n.lookup("极高")
+        default: return "\(budget) tokens"
+        }
+    }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
                     quickAction(.camera, systemName: "camera", title: L10n.lookup("拍照"))
                     quickAction(.photos, systemName: "photo", title: L10n.lookup("照片"))
                     quickAction(.uploadFile, systemName: "paperclip", title: L10n.lookup("上传文件"))
                 }
-                let layout = dynamicTypeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(spacing: 10))
-                    : AnyLayout(HStackLayout(spacing: 10))
-                layout {
-                    searchCard
-                    worldBookCard
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label(L10n.lookup("思维链强度"), systemImage: "brain.head.profile")
-                            .font(.subheadline.weight(.medium))
-                        Spacer(minLength: 0)
-                        if let budget = appModel.currentAssistant.thinkingBudget,
-                           budget > 0, !ThinkingBudgetControl.budgets.contains(budget) {
-                            Text("\(budget) tokens").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    ThinkingBudgetSelector(
-                        budget: appModel.currentAssistant.thinkingBudget ?? 0,
-                        onCommit: { value in
-                            guard value != (appModel.currentAssistant.thinkingBudget ?? 0) else { return }
-                            var assistant = appModel.currentAssistant
-                            assistant.thinkingBudget = value == 0 ? nil : value
-                            appModel.updateAssistant(assistant)
-                        }
-                    )
-                    .frame(height: dynamicTypeSize.isAccessibilitySize ? 104 : 48)
-                }
-                .padding(12)
-                .background(ToolsCardBackground())
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
 
-                Button { model.open(.more) } label: {
-                    ToolDetailRowLabel(
-                        systemName: "ellipsis.circle", title: L10n.lookup("更多工具"),
-                        subtitle: L10n.lookup("MCP · 指令 · 上下文"), showsDisclosure: true
+                VStack(spacing: 2) {
+                    HStack(spacing: 0) {
+                        Button {
+                            appModel.performCardHaptic()
+                            onSearchSettings()
+                        } label: {
+                            CompactToolRowLabel(
+                                systemName: "globe", title: L10n.lookup("联网搜索"),
+                                subtitle: searchRetentionLabel(appModel.preferences.searchToolResultRetentionTurns),
+                                isChecked: appModel.currentAssistant.searchEnabled,
+                                showsCheckmark: false, accent: themeAccent
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(L10n.lookup("联网搜索"))
+                        .accessibilityValue(searchStatus)
+                        .accessibilityHint(L10n.lookup("打开搜索设置"))
+                        .accessibilityIdentifier("tools.search")
+                        Toggle(L10n.lookup("联网搜索"), isOn: Binding(
+                            get: { appModel.currentAssistant.searchEnabled },
+                            set: { enabled in
+                                guard enabled != appModel.currentAssistant.searchEnabled else { return }
+                                toggleSearch()
+                            }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: .green))
+                        .accessibilityIdentifier("tools.search.toggle")
+                        .padding(.trailing, 15)
+                    }
+
+                    CompactToolRowLabel(
+                        systemName: "book",
+                        title: L10n.lookup("世界书"),
+                        subtitle: worldBookStatus,
+                        isChecked: worldBookEnabled,
+                        showsCheckmark: false,
+                        accent: themeAccent
                     )
+                    .contentShape(Rectangle())
+                    .highPriorityGesture(
+                        LongPressGesture(minimumDuration: 0.42, maximumDistance: 24)
+                            .exclusively(before: TapGesture())
+                            .onEnded { value in
+                                switch value {
+                                case .first(true):
+                                    appModel.performCardHaptic()
+                                    onWorldBookSettings()
+                                case .second: model.open(.worldBook)
+                                default: break
+                                }
+                            }
+                    )
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityLabel(L10n.lookup("世界书"))
+                    .accessibilityValue(worldBookStatus)
+                    .accessibilityIdentifier("tools.world")
+                    .accessibilityHint(L10n.lookup("轻点选择世界书，长按打开设置"))
+                    .accessibilityAction { model.open(.worldBook) }
+                    .accessibilityAction(named: Text(L10n.lookup("打开世界书设置"))) {
+                        onWorldBookSettings()
+                    }
+
+                    Menu {
+                        Picker(L10n.lookup("思维链强度"), selection: thinkingBudgetSelection) {
+                            Label(L10n.lookup("自动"), systemImage: "wand.and.stars").tag(-1)
+                            Label(L10n.lookup("关闭"), systemImage: "pause.circle").tag(0)
+                            Label(L10n.lookup("低"), systemImage: "gauge.low").tag(1_024)
+                            Label(L10n.lookup("中"), systemImage: "gauge.medium").tag(4_096)
+                            Label(L10n.lookup("高"), systemImage: "gauge.high").tag(8_192)
+                            Label(L10n.lookup("极高"), systemImage: "bolt.fill").tag(16_384)
+                        }
+                    } label: {
+                        CompactToolRowLabel(
+                            systemName: "brain.head.profile",
+                            title: L10n.lookup("思维链强度"),
+                            subtitle: reasoningStatus,
+                            isChecked: reasoningEnabled,
+                            showsCheckmark: false,
+                            accent: themeAccent
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .menuOrder(.fixed)
+                    .accessibilityLabel(L10n.lookup("思维链强度"))
+                    .accessibilityValue(reasoningStatus)
+                    .accessibilityIdentifier("tools.reasoning")
+
+                    navigationRow(
+                        systemName: "ellipsis.circle",
+                        title: L10n.lookup("更多工具"),
+                        subtitle: L10n.lookup("MCP · 指令 · 上下文"),
+                        route: .more
+                    )
+                    .accessibilityIdentifier("tools.more")
                 }
-                .buttonStyle(.plain)
-                .background(ToolsCardBackground())
-                .accessibilityIdentifier("tools.more")
+                .padding(.horizontal, 10)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 6)
             .toolsContentHeight(.root)
         }
         .scrollBounceBehavior(.basedOnSize)
     }
 
-    private var searchCard: some View {
-        featureLabel(systemName: "globe", title: L10n.lookup("联网搜索"),
-                     subtitle: searchStatus, isChecked: appModel.currentAssistant.searchEnabled)
-            .contentShape(RoundedRectangle(cornerRadius: 18))
-            .highPriorityGesture(featureGesture(tap: toggleSearch, longPress: {
-                appModel.performCardHaptic()
-                onSearchSettings()
-            }))
-            .accessibilityElement(children: .ignore)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(L10n.lookup("联网搜索"))
-            .accessibilityValue(searchStatus)
-            .accessibilityHint(L10n.lookup("轻点切换，长按打开设置"))
-            .accessibilityAction { toggleSearch() }
-            .accessibilityAction(named: Text(L10n.lookup("打开搜索设置"))) { onSearchSettings() }
-            .accessibilityIdentifier("tools.search")
-    }
-
-    private var worldBookCard: some View {
-        featureLabel(systemName: "book", title: L10n.lookup("世界书"),
-                     subtitle: worldBookStatus, isChecked: false, showsDisclosure: true)
-            .contentShape(RoundedRectangle(cornerRadius: 18))
-            .highPriorityGesture(featureGesture(tap: { model.open(.worldBook) }, longPress: {
-                appModel.performCardHaptic()
-                onWorldBookSettings()
-            }))
-            .accessibilityElement(children: .ignore)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(L10n.lookup("世界书"))
-            .accessibilityValue(worldBookStatus)
-            .accessibilityHint(L10n.lookup("轻点选择世界书，长按打开设置"))
-            .accessibilityAction { model.open(.worldBook) }
-            .accessibilityAction(named: Text(L10n.lookup("打开世界书设置"))) { onWorldBookSettings() }
-            .accessibilityIdentifier("tools.world")
-    }
-
-    private func featureGesture(tap: @escaping () -> Void, longPress: @escaping () -> Void) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.42, maximumDistance: 24)
-            .exclusively(before: TapGesture())
-            .onEnded { value in
-                switch value {
-                case .first(true): longPress()
-                case .second: tap()
-                default: break
-                }
-            }
-    }
-
-    private func featureLabel(systemName: String, title: String, subtitle: String,
-                              isChecked: Bool, showsDisclosure: Bool = false) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemName).font(.system(size: 20, weight: .regular)).frame(width: 22)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.weight(.medium))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Image(systemName: showsDisclosure ? "chevron.right" : "checkmark")
-                .font(.system(size: showsDisclosure ? 11 : 13, weight: .medium))
-                .foregroundStyle(showsDisclosure ? .secondary : .primary)
-                .opacity(showsDisclosure || isChecked ? 1 : 0)
-        }
-        .foregroundStyle(.primary)
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 72, maxHeight: .infinity, alignment: .leading)
-        .background(ToolsCardBackground())
-    }
-
-    private func quickAction(_ action: BottomToolAction, systemName: String, title: String) -> some View {
-        Button { onAction(action) } label: {
-            HStack(spacing: 6) {
-                Image(systemName: systemName).font(.system(size: 21, weight: .regular))
-                Text(title).font(.callout).fixedSize(horizontal: false, vertical: true)
+    private func quickAction(
+        _ action: BottomToolAction,
+        systemName: String,
+        title: String
+    ) -> some View {
+        Button {
+            onAction(action)
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: systemName)
+                    .font(.system(size: 27, weight: .medium))
+                Text(title)
+                    .font(.system(size: 15, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
             }
             .foregroundStyle(.primary)
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, minHeight: 62)
-            .background(ToolsCardBackground())
+            .frame(maxWidth: .infinity)
+            .frame(height: 84)
+            .background(ToolQuickActionBackground())
         }
         .buttonStyle(.plain)
     }
 
+    private func navigationRow(
+        systemName: String,
+        title: String,
+        subtitle: String? = nil,
+        route: BottomToolsRoute
+    ) -> some View {
+        Button {
+            model.open(route)
+        } label: {
+            CompactToolRowLabel(
+                systemName: systemName,
+                title: title,
+                subtitle: subtitle,
+                showsDisclosure: true,
+                disclosureFont: .system(size: 13, weight: .regular),
+                accent: themeAccent
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var thinkingBudgetSelection: Binding<Int> {
+        Binding(
+            get: { appModel.currentAssistant.thinkingBudget ?? 0 },
+            set: { value in
+                var assistant = appModel.currentAssistant
+                assistant.thinkingBudget = value == 0 ? nil : value
+                appModel.updateAssistant(assistant)
+            }
+        )
+    }
+
     private var searchStatus: String {
         let state = appModel.currentAssistant.searchEnabled ? L10n.lookup("开启") : L10n.lookup("关闭")
-        let turns = appModel.preferences.searchToolResultRetentionTurns
-        let retention = turns < 0 ? L10n.lookup("永久保留")
-            : turns == 0 ? L10n.lookup("仅当前回复") : L10n.format("保留 %@ 轮", [String(turns)])
-        return "\(state) · \(retention)"
+        return "\(state) · \(searchRetentionLabel(appModel.preferences.searchToolResultRetentionTurns))"
     }
 
     private var worldBookStatus: String {
         let books = appModel.bottomToolWorldBooks
         let count = books.filter { $0.enabled && $0.selected }.count
-        if count > 0 { return L10n.format("已启用 %@ 项", [String(count)]) }
+        if count > 0 { return L10n.format("已启用 %@ 项", [String(describing: count)]) }
         return books.contains { $0.selected } ? L10n.lookup("关闭") : L10n.lookup("未选择")
+    }
+
+    private var worldBookEnabled: Bool {
+        appModel.bottomToolWorldBooks.contains { $0.enabled && $0.selected }
+    }
+
+    private func searchRetentionLabel(_ value: Int) -> String {
+        if value < 0 { return L10n.lookup("永久保留") }
+        if value == 0 { return L10n.lookup("仅当前回复") }
+        return L10n.format("保留 %@ 轮", [String(describing: value)])
     }
 
     private func toggleSearch() {
         var assistant = appModel.currentAssistant
         assistant.searchEnabled.toggle()
         appModel.updateAssistant(assistant)
-    }
-}
-
-private struct ToolsCardBackground: View {
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var fillColor: Color {
-        if colorScheme == .dark {
-            return Color(uiColor: .secondarySystemGroupedBackground).opacity(0.58)
-        }
-        // Match the model picker's unselected cards: a faint tint over the sheet glass.
-        return Color.primary.opacity(0.035)
-    }
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(fillColor)
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.065), lineWidth: 0.5)
-            }
     }
 }
 
@@ -662,166 +700,18 @@ private extension View {
     }
 }
 
-/// UIKit owns the touch sequence, including cancellation by the sheet's pan.
-/// Scrubbing changes only the local highlight; persistence happens once on lift.
-private struct ThinkingBudgetSelector: UIViewRepresentable {
-    let budget: Int
-    let onCommit: (Int) -> Void
-
-    func makeUIView(context: Context) -> ThinkingBudgetControl { ThinkingBudgetControl() }
-    func updateUIView(_ view: ThinkingBudgetControl, context: Context) {
-        view.onCommit = onCommit
-        let category: UIContentSizeCategory = switch context.environment.dynamicTypeSize {
-        case .xSmall: .extraSmall
-        case .small: .small
-        case .medium: .medium
-        case .large: .large
-        case .xLarge: .extraLarge
-        case .xxLarge: .extraExtraLarge
-        case .xxxLarge: .extraExtraExtraLarge
-        case .accessibility1: .accessibilityMedium
-        case .accessibility2: .accessibilityLarge
-        case .accessibility3: .accessibilityExtraLarge
-        case .accessibility4: .accessibilityExtraExtraLarge
-        case .accessibility5: .accessibilityExtraExtraExtraLarge
-        @unknown default: .large
-        }
-        view.configure(budget: budget, contentSize: category)
-    }
-}
-
-private final class ThinkingBudgetControl: UIControl {
-    static let budgets = [0, -1, 1_024, 4_096, 8_192, 16_384]
-    private var titles: [String] { ["关闭", "自动", "低", "中", "高", "极高"].map(L10n.lookup) }
-    private let highlight = UIView()
-    private var labels: [UILabel] = []
-    private var committedBudget = 0
-    private var contentSize: UIContentSizeCategory = .large
-    private var previewIndex: Int?
-    private let feedback = UISelectionFeedbackGenerator()
-    var onCommit: ((Int) -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        layer.cornerRadius = 14
-        backgroundColor = UIColor { $0.userInterfaceStyle == .dark
-            ? UIColor(white: 0.08, alpha: 0.52) : UIColor(white: 0, alpha: 0.035) }
-        highlight.backgroundColor = UIColor { $0.userInterfaceStyle == .dark
-            ? UIColor(white: 0.25, alpha: 1) : UIColor(white: 0, alpha: 0.08) }
-        highlight.layer.cornerRadius = 10
-        highlight.isUserInteractionEnabled = false
-        addSubview(highlight)
-        for _ in Self.budgets {
-            let label = UILabel()
-            label.textAlignment = .center
-            label.numberOfLines = 2
-            label.isUserInteractionEnabled = false
-            addSubview(label)
-            labels.append(label)
-        }
-        isAccessibilityElement = true
-        accessibilityIdentifier = "tools.reasoning"
-        accessibilityTraits = .adjustable
-        isMultipleTouchEnabled = false
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    func configure(budget: Int, contentSize: UIContentSizeCategory) {
-        committedBudget = budget < 0 ? -1 : budget
-        self.contentSize = contentSize
-        accessibilityLabel = L10n.lookup("思维链强度")
-        for (index, label) in labels.enumerated() {
-            label.text = titles[index]
-            label.font = UIFontMetrics(forTextStyle: .caption1)
-                .scaledFont(for: .systemFont(ofSize: 13, weight: .medium), maximumPointSize: 20,
-                            compatibleWith: UITraitCollection(preferredContentSizeCategory: contentSize))
-        }
-        updateHighlight()
-    }
-
-    private var columns: Int { contentSize.isAccessibilityCategory ? 3 : 6 }
-    private var rows: Int { 6 / columns }
-    private var displayedIndex: Int? { previewIndex ?? Self.budgets.firstIndex(of: committedBudget) }
-
-    private func segmentFrame(_ index: Int) -> CGRect {
-        let column = effectiveUserInterfaceLayoutDirection == .rightToLeft
-            ? columns - 1 - index % columns : index % columns
-        let width = max(0, bounds.width - 8) / CGFloat(columns)
-        let height = max(0, bounds.height - 8) / CGFloat(rows)
-        return CGRect(x: 4 + CGFloat(column) * width, y: 4 + CGFloat(index / columns) * height,
-                      width: width, height: height).insetBy(dx: 1.5, dy: 0)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        for (index, label) in labels.enumerated() { label.frame = segmentFrame(index) }
-        highlight.isHidden = displayedIndex == nil
-        if let index = displayedIndex { highlight.frame = segmentFrame(index) }
-    }
-
-    private func index(at point: CGPoint) -> Int {
-        let width = max(1, bounds.width - 8) / CGFloat(columns)
-        let height = max(1, bounds.height - 8) / CGFloat(rows)
-        let visualColumn = min(columns - 1, max(0, Int(floor((point.x - 4) / width))))
-        let column = effectiveUserInterfaceLayoutDirection == .rightToLeft ? columns - 1 - visualColumn : visualColumn
-        let row = min(rows - 1, max(0, Int(floor((point.y - 4) / height))))
-        return row * columns + column
-    }
-
-    private func updateHighlight() {
-        for (index, label) in labels.enumerated() {
-            label.textColor = index == displayedIndex ? .label : .secondaryLabel
-        }
-        accessibilityValue = displayedIndex.map { titles[$0] } ?? "\(committedBudget) tokens"
-        setNeedsLayout()
-    }
-
-    private func preview(_ touch: UITouch) {
-        let index = index(at: touch.location(in: self))
-        if index != previewIndex {
-            previewIndex = index
-            feedback.selectionChanged()
-            updateHighlight()
-        }
-    }
-
-    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
-        feedback.prepare()
-        preview(touch)
-        return true
-    }
-
-    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
-        preview(touch)
-        return true
-    }
-
-    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
-        if let touch { preview(touch) }
-        if let index = previewIndex { commit(index) }
-        previewIndex = nil
-        updateHighlight()
-    }
-
-    override func cancelTracking(with event: UIEvent?) {
-        previewIndex = nil
-        updateHighlight()
-    }
-
-    private func commit(_ index: Int) {
-        let value = Self.budgets[index]
-        guard value != committedBudget else { return }
-        committedBudget = value
-        onCommit?(value)
-    }
-
-    override func accessibilityIncrement() { adjust(1) }
-    override func accessibilityDecrement() { adjust(-1) }
-    private func adjust(_ offset: Int) {
-        commit(min(5, max(0, (Self.budgets.firstIndex(of: committedBudget) ?? 0) + offset)))
-        feedback.selectionChanged()
-        updateHighlight()
+/// A light web symbol: one meridian ellipse and one equator inside the globe.
+private struct ToolsSearchGlobe: Shape {
+    func path(in rect: CGRect) -> Path {
+        let diameter = min(rect.width, rect.height)
+        let globe = CGRect(x: rect.midX - diameter / 2, y: rect.midY - diameter / 2,
+                           width: diameter, height: diameter).insetBy(dx: 0.8, dy: 0.8)
+        var path = Path()
+        path.addEllipse(in: globe)
+        path.addEllipse(in: globe.insetBy(dx: globe.width * 0.28, dy: 0))
+        path.move(to: CGPoint(x: globe.minX, y: globe.midY))
+        path.addLine(to: CGPoint(x: globe.maxX, y: globe.midY))
+        return path
     }
 }
 
@@ -830,24 +720,28 @@ private struct MoreToolsView: View {
     @Bindable var model: BottomToolsModel
     let onMCP: () -> Void
 
+    private var themeAccent: Color {
+        Color(uiColor: appModel.themeAccentUIColor)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ToolsSheetHeader(title: L10n.lookup("更多工具"), back: model.back, titleWeight: .semibold)
 
             ScrollView {
-                VStack(spacing: 0) {
+                VStack(spacing: 2) {
                     Button(action: onMCP) {
-                        ToolDetailRowLabel(
+                        CompactToolRowLabel(
                             systemName: "hammer",
                             title: L10n.lookup("MCP 服务器"),
                             subtitle: appModel.currentAssistantMCPStatusText,
-                            showsDisclosure: true
+                            isChecked: !appModel.currentAssistant.mcpServerIDs.isEmpty,
+                            showsDisclosure: true,
+                            accent: themeAccent
                         )
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("tools.mcp")
-
-                    Divider().padding(.leading, 48)
 
                     navigationRow(
                         systemName: "square.3.layers.3d",
@@ -855,7 +749,6 @@ private struct MoreToolsView: View {
                         subtitle: selectionStatus(appModel.bottomToolInstructions.filter(\.selected).count),
                         route: .instruction
                     )
-                    Divider().padding(.leading, 48)
                     navigationRow(
                         systemName: "point.3.connected.trianglepath.dotted",
                         title: L10n.lookup("上下文管理"),
@@ -863,9 +756,8 @@ private struct MoreToolsView: View {
                         route: .contextManagement
                     )
                 }
-                .background(ToolsCardBackground())
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
                 .toolsContentHeight(.more, headerHeight: 62)
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -881,11 +773,12 @@ private struct MoreToolsView: View {
         Button {
             model.open(route)
         } label: {
-            ToolDetailRowLabel(
+            CompactToolRowLabel(
                 systemName: systemName,
                 title: title,
                 subtitle: subtitle,
-                showsDisclosure: true
+                showsDisclosure: true,
+                accent: themeAccent
             )
         }
         .buttonStyle(.plain)
@@ -896,42 +789,65 @@ private struct MoreToolsView: View {
     }
 }
 
-private struct ToolDetailRowLabel: View {
+private struct CompactToolRowLabel: View {
     let systemName: String
     let title: String
     let subtitle: String?
+    var isChecked = false
+    var showsCheckmark = true
     var showsDisclosure = false
+    var showsMenuIndicator = false
+    var disclosureFont: Font = .system(size: 17, weight: .semibold)
+    let accent: Color
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemName)
-                .font(.system(size: 21, weight: .regular))
-                .foregroundStyle(.secondary)
-                .frame(width: 24)
+        HStack(spacing: 15) {
+            Group {
+                if systemName == "globe" {
+                    ToolsSearchGlobe()
+                        .stroke(style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
+                        .frame(width: 22, height: 22)
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: systemName)
+                        .font(.system(size: 22, weight: .medium))
+                }
+            }
+                .foregroundStyle(isChecked ? accent : Color.primary)
+                .frame(width: 31)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.body.weight(.medium))
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(.primary)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption)
+                        .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 10)
 
-            if showsDisclosure {
+            if showsMenuIndicator {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.secondary.opacity(0.70))
+            }
+            if isChecked && showsCheckmark {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(accent)
+            }
+            if !showsMenuIndicator && showsDisclosure {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(disclosureFont)
                     .foregroundStyle(.secondary.opacity(0.70))
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(minHeight: 68)
+        .padding(.horizontal, 15)
+        .frame(height: 56)
         .contentShape(Rectangle())
     }
 }
@@ -939,7 +855,7 @@ private struct ToolDetailRowLabel: View {
 private struct ToolsSheetHeader: View {
     let title: String
     let back: () -> Void
-    var titleWeight: Font.Weight = .medium
+    var titleWeight: Font.Weight = .bold
 
     var body: some View {
         HStack {
@@ -997,7 +913,7 @@ private struct InstructionToolsView: View {
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 4)
                     .toolsContentHeight(.instruction, headerHeight: 62)
                 }
             }
@@ -1039,7 +955,7 @@ private struct WorldBookToolsView: View {
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 4)
                     .toolsContentHeight(.worldBook, headerHeight: 62)
                 }
             }
@@ -1151,7 +1067,7 @@ private struct ContextToolsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
-            .padding(.bottom, 6)
+            .padding(.bottom, 4)
             .toolsContentHeight(.contextManagement, headerHeight: 62)
             Spacer()
         }
@@ -1184,7 +1100,7 @@ private struct ContextToolsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .frame(minHeight: 80)
-            .background(ToolsCardBackground())
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
     }
@@ -1206,10 +1122,10 @@ private func selectionRow(
                 .frame(width: 32)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.body.weight(.medium))
+                    .font(.system(size: 17, weight: .semibold))
                 if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.caption)
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1222,12 +1138,26 @@ private func selectionRow(
         }
         .foregroundStyle(.primary)
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(minHeight: subtitle.isEmpty ? 56 : 66)
+        .frame(height: subtitle.isEmpty ? 56 : 66)
         .background(
             selected ? Color.primary.opacity(0.08) : Color.primary.opacity(0.035),
             in: RoundedRectangle(cornerRadius: 16)
         )
     }
     .buttonStyle(.plain)
+}
+
+private struct ToolQuickActionBackground: View {
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        if #available(iOS 26.0, *) {
+            shape
+                .fill(Color.primary.opacity(0.045))
+                .glassEffect(.regular, in: shape)
+        } else {
+            shape
+                .fill(Color.primary.opacity(0.055))
+                .overlay(shape.stroke(Color.primary.opacity(0.10), lineWidth: 0.6))
+        }
+    }
 }
