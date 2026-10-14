@@ -2,15 +2,17 @@
 
 更新时间 / Updated: 2026-10-15
 
-| 项目 / Channel | 对应版本 / Identity | 状态 / Meaning |
+| Channel | Version | Distribution |
 | --- | --- | --- |
-| GitHub main 源码 / source | 手机基线 / phone baseline **1.0.4 (5210)** | 已采用改动 / adopted source progress |
-| Xcode 工程默认值 / project defaults | **1.0.4 (5210)** | 本次发布构建 / release build |
-| GitHub 下载包 / downloadable preview | [**1.0.4 (5210)**](https://github.com/UUZsama450/mocca/releases/tag/v1.0.4-build.5210) | 新预览包，需自行签名；旧 5206 保留 / new preview requiring own signing; 5206 retained |
-| App Store | [商店页面 / store listing](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) | 1.0.4 (5210) 单独送审，审核通过后手动发布 / separate 5210 submission and manual release |
+| GitHub main 源码 / source | **1.0.4 (5211)** | 用户确认的助手顶部修复 / accepted assistant-header fix |
+| Xcode 工程默认值 / project defaults | **1.0.4 (5211)** | 可配置签名 / configurable signing |
+| GitHub 下载包 / preview | [**1.0.4 (5211)**](https://github.com/UUZsama450/mocca/releases/tag/v1.0.4) | 沿用原发布页，需要自行签名 / same release page, own signing required |
+| App Store | **1.0.4 (5211)** | 单独送审，通过后手动发布 / separate review, manual release after approval |
 
-本次在源码同步之后，另行发布 **1.0.4（5210）** 的 GitHub 预览包，并提交对应 App Store 构建。两者使用同一份已采用功能源码，但公开工程保留可配置签名、默认关闭赞助和经过整理的素材；GitHub IPA 需要自行签名，不能视作 App Store 签名包。
+两种发行包使用同一份已采用的功能源码。公开工程保留可配置签名、默认关闭赞助和整理过的素材，因此 GitHub IPA 与 App Store 签名包不相同。
 
-旧标签 `v1.0.4` 和 5206 附件保持不变，新构建使用 `v1.0.4-build.5210`。公开源码提交、产品输入校验值和两种发行形式记录在[本次发布验证](RELEASE_1.0.4_5210.md)与随包 `BUILD-INFO.json` 中。
+原 `v1.0.4` 标签仍指向历史 5206 源码。5211 的确切源码提交、源码归档及校验值在发布说明和 `BUILD-INFO.json` 中明确标注；请使用 5211 对应源码链接，不要把页面底部自动生成的旧标签源码归档误认为 5211。旧附件在替换前已本地备份并校验。5210 未作为单独 Release 发布。
 
-This release follows the source-only sync with a separate **1.0.4 (5210)** preview and corresponding App Store submission. Both share the adopted feature source; portable signing, disabled sponsorship and reviewed assets distinguish the GitHub package. The original `v1.0.4` / 5206 download remains unchanged. See the release verification and packaged build manifest for provenance. Store approval and publication are separate from GitHub availability.
+The existing release page carries the refreshed 5211 download. The historical `v1.0.4` Git tag is preserved; the release notes and build manifest identify the exact 5211 source commit and source archive. GitHub's automatic tag archives retain the original tag snapshot. The App Store update is reviewed independently; GitHub availability does not mean the store update is live.
+
+See [release verification](RELEASE_1.0.4_5211.md).

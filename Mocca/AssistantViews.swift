@@ -394,7 +394,10 @@ struct AssistantEditorView: View {
     private var editorTabLayout: some View {
         if #available(iOS 26.0, *) {
             selectedTabContent
-                .safeAreaBar(edge: .top, spacing: 0) { tabBar }
+                .safeAreaBar(edge: .top, spacing: 0) {
+                    tabBar
+                        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea(edges: .top))
+                }
                 .scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             VStack(spacing: 0) {
@@ -406,12 +409,18 @@ struct AssistantEditorView: View {
         }
     }
 
+    private var editorNavigationBackgroundVisibility: Visibility {
+        if #available(iOS 26.0, *) { return .hidden }
+        return .automatic
+    }
+
     private var editorContent: some View {
         editorTabLayout
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? L10n.lookup("助手") : profile.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(presentationContext == .navigation)
+        .toolbarBackground(editorNavigationBackgroundVisibility, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(action: requestDismissal) {
