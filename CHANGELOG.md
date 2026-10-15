@@ -1,5 +1,13 @@
 # 更新记录 / Changelog
 
+## 1.0.4（5216）
+
+- 修复切换日历等助手分页时，顶部分页栏自动滚回最左侧的问题。
+- 保留顶部内容遮挡、系统滚动边缘效果和 5215 的说明气泡修复。
+
+- Preserve the horizontal tab-strip position when switching assistant pages, including Calendar.
+- Retain header occlusion, the native scroll edge and the settings-popover fix from 5215.
+
 ## 1.0.4（5215）
 
 - 修复打开“图片与上下文”和记忆说明时界面可能卡住的问题。

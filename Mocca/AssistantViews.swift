@@ -393,12 +393,16 @@ struct AssistantEditorView: View {
     @ViewBuilder
     private var editorTabLayout: some View {
         if #available(iOS 26.0, *) {
-            selectedTabContent
-                .safeAreaBar(edge: .top, spacing: 0) {
-                    tabBar
-                        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea(edges: .top))
-                }
-                .scrollEdgeEffectStyle(.soft, for: .top)
+            // Keep the bar attached to one stable container while the page's
+            // Form changes, preserving the tab strip's horizontal scroll state.
+            ZStack {
+                selectedTabContent
+            }
+            .safeAreaBar(edge: .top, spacing: 0) {
+                tabBar
+                    .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea(edges: .top))
+            }
+            .scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             VStack(spacing: 0) {
                 tabBar
