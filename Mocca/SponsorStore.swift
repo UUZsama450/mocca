@@ -454,7 +454,6 @@ final class SponsorStore {
         !SponsorTier.productIDs.isSubset(of: Set(productsByID.keys))
     }
     private(set) var purchasingTier: SponsorTier?
-    private(set) var isRestoringPurchases = false
     private var statusKey: String?
     private var statusArguments: [String] = []
     var statusMessage: String? {
@@ -502,7 +501,7 @@ final class SponsorStore {
 
     func purchase(_ tier: SponsorTier) async {
         guard AppBuildConfiguration.sponsorshipEnabled else { return }
-        guard purchasingTier == nil, !isRestoringPurchases else { return }
+        guard purchasingTier == nil else { return }
         guard let product = product(for: tier) else {
             setStatus("这个投喂项目暂时没有载入，请稍后重试。", isError: true)
             return
@@ -530,28 +529,6 @@ final class SponsorStore {
             }
         } catch {
             setStatus("暂时无法连接 App Store，请稍后再试。", isError: true)
-        }
-    }
-
-    func restorePurchases() async {
-        guard AppBuildConfiguration.sponsorshipEnabled else { return }
-        guard purchasingTier == nil, !isRestoringPurchases else { return }
-
-        isRestoringPurchases = true
-        setStatus("正在向 App Store 查找以前的投喂记录…")
-        statusIsError = false
-        defer { isRestoringPurchases = false }
-
-        do {
-            try await AppStore.sync()
-            await refreshStatistics()
-            if statistics.total > 0 {
-                setStatus("已经找回 %@ 次投喂记录，买过档位的永久纪念装扮已放回衣柜。", arguments: [String(statistics.total)])
-            } else {
-                setStatus("这个 Apple Account 暂时没有可恢复的投喂记录。")
-            }
-        } catch {
-            setStatus("暂时无法向 App Store 恢复购买，请稍后再试。", isError: true)
         }
     }
 
@@ -591,7 +568,7 @@ final class SponsorStore {
             }
         } catch {
             // Keep any products already loaded when a retry has a transient error.
-            // Product loading must not replace purchase/restore status messages.
+            // Product loading must not replace purchase status messages.
             productLoadingErrorKey = "投喂项目暂时无法载入，请稍后重试。"
             let failure = error as NSError
             let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError

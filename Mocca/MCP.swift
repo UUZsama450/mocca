@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import SwiftUI
 
 enum MCPTransportType: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -74,7 +75,7 @@ enum JSONValue: Codable, Hashable, Sendable {
         switch self {
         case let .string(value): value
         case let .number(value):
-            value.rounded() == value ? Int(value) : value
+            Int(exactly: value).map { $0 as Any } ?? value
         case let .bool(value): value
         case let .object(value): value.mapValues(\.anyValue)
         case let .array(value): value.map(\.anyValue)
@@ -90,10 +91,14 @@ enum JSONValue: Codable, Hashable, Sendable {
     static func fromAny(_ value: Any?) -> JSONValue {
         guard let value else { return .null }
         if value is NSNull { return .null }
-        if let value = value as? Bool { return .bool(value) }
-        if let value = value as? Int { return .number(Double(value)) }
-        if let value = value as? Double { return .number(value) }
-        if let value = value as? Float { return .number(Double(value)) }
+        // JSONSerialization bridges both booleans and numbers through NSNumber.
+        // A conditional Bool cast also accepts numeric 0/1 on Darwin.
+        if let value = value as? NSNumber {
+            if CFGetTypeID(value) == CFBooleanGetTypeID() {
+                return .bool(value.boolValue)
+            }
+            return .number(value.doubleValue)
+        }
         if let value = value as? String { return .string(value) }
         if let value = value as? [Any] { return .array(value.map(Self.fromAny)) }
         if let value = value as? [String: Any] { return .object(value.mapValues(Self.fromAny)) }
@@ -560,6 +565,7 @@ struct MCPSettingsView: View {
                             MCPServerRow(server: server)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("mcp.server.\(server.id)")
                     }
                     .onDelete { offsets in
                         model.deleteMCPServers(at: offsets)
@@ -577,21 +583,31 @@ struct MCPSettingsView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityLabel(L10n.lookup("添加 MCP 服务器"))
+                .accessibilityIdentifier("mcp.addServer")
             }
         }
         .sheet(isPresented: $isAddingServer) {
             NavigationStack {
                 MCPServerEditorView(server: MCPServerConfig()) { server, refreshTools in
-                    model.upsertMCPServer(server, refreshTools: refreshTools)
+                    saveServer(server, refreshTools: refreshTools)
                 }
             }
         }
         .sheet(item: $editingServer) { server in
             NavigationStack {
                 MCPServerEditorView(server: server) { updated, refreshTools in
-                    model.upsertMCPServer(updated, refreshTools: refreshTools)
+                    saveServer(updated, refreshTools: refreshTools)
                 }
             }
+        }
+    }
+
+    private func saveServer(_ server: MCPServerConfig, refreshTools: Bool) {
+        model.upsertMCPServer(server, refreshTools: refreshTools)
+        // A successful draft sync already validated this exact connection.
+        if !refreshTools, server.enabled {
+            model.mcpRuntimeStates[server.id] = MCPServerRuntimeState(status: .connected)
         }
     }
 }
@@ -639,6 +655,10 @@ private struct MCPServerEditorView: View {
     @State private var draft: MCPServerConfig
     @State private var headersText: String
     @State private var isRefreshing = false
+    @State private var refreshTask: Task<Void, Never>?
+    @State private var refreshID: UUID?
+    @State private var synchronizedConnection: MCPServerConfig?
+    @State private var syncError: String?
     let onSave: (MCPServerConfig, Bool) -> Void
 
     init(server: MCPServerConfig, onSave: @escaping (MCPServerConfig, Bool) -> Void) {
@@ -652,6 +672,7 @@ private struct MCPServerEditorView: View {
             Section {
                 Toggle(L10n.lookup("启用"), isOn: $draft.enabled)
                 TextField(L10n.lookup("名称"), text: $draft.name)
+                    .accessibilityIdentifier("mcp.serverName")
                 Picker(L10n.lookup("传输"), selection: $draft.transport) {
                     ForEach(MCPTransportType.allCases) { transport in
                         Text(L10n.lookup(transport.title)).tag(transport)
@@ -661,6 +682,7 @@ private struct MCPServerEditorView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
+                    .accessibilityIdentifier("mcp.serverURL")
             } footer: {
                 Text(L10n.lookup("移动端优先支持 Streamable HTTP。SSE 服务器如果也接受 JSON-RPC POST，可在这里使用。"))
             }
@@ -681,16 +703,25 @@ private struct MCPServerEditorView: View {
 
             Section {
                 Button {
-                    save(refreshTools: false)
-                    isRefreshing = true
-                    Task {
-                        await model.refreshMCPTools(serverID: draft.id)
-                        isRefreshing = false
-                    }
+                    synchronizeTools()
                 } label: {
                     Label(isRefreshing ? L10n.lookup("同步中") : L10n.lookup("同步工具"), systemImage: "arrow.triangle.2.circlepath")
                 }
-                .disabled(isRefreshing)
+                .disabled(isRefreshing || !draft.enabled || draft.normalizedURLString.isEmpty)
+                .accessibilityIdentifier("mcp.syncTools")
+                if let syncError {
+                    Text(syncError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("mcp.syncError")
+                } else if hasSynchronizedConnection {
+                    Label(L10n.format("已同步 %@ 个工具", [String(draft.tools.count)]), systemImage: "checkmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("mcp.syncSuccess")
+                }
+            } footer: {
+                Text(L10n.lookup("同步仅更新当前草稿，点保存后生效。"))
             }
 
             Section(L10n.lookup("工具")) {
@@ -711,6 +742,7 @@ private struct MCPServerEditorView: View {
             ToolbarItem(placement: .cancellationAction) {
                 Button(L10n.lookup("取消")) { dismiss() }
                     .foregroundStyle(.primary)
+                    .accessibilityIdentifier("mcp.cancelServer")
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button(L10n.lookup("保存")) {
@@ -718,13 +750,76 @@ private struct MCPServerEditorView: View {
                     dismiss()
                 }
                     .foregroundStyle(.primary)
+                    .disabled(isRefreshing || draft.normalizedURLString.isEmpty)
+                    .accessibilityIdentifier("mcp.saveServer")
+            }
+        }
+        .onChange(of: connection) { _, _ in
+            cancelSynchronization()
+            syncError = nil
+        }
+        .onDisappear { cancelSynchronization() }
+    }
+
+    // Only connection fields participate in invalidating a pending sync.
+    // Name and per-tool preferences may be edited while the request runs.
+    private var connection: MCPServerConfig {
+        MCPServerConfig(id: draft.id, enabled: draft.enabled, transport: draft.transport,
+                        url: draft.normalizedURLString, headers: parseHeaders(headersText))
+    }
+
+    private var hasSynchronizedConnection: Bool {
+        synchronizedConnection?.hasSameConnection(as: connection) == true
+    }
+
+    private func synchronizeTools() {
+        cancelSynchronization()
+        let requestedConnection = connection
+        let requestID = UUID()
+        refreshID = requestID
+        isRefreshing = true
+        syncError = nil
+        refreshTask = Task { @MainActor in
+            defer {
+                if refreshID == requestID {
+                    isRefreshing = false
+                    refreshID = nil
+                    refreshTask = nil
+                }
+            }
+            do {
+                let tools = try await MCPHTTPClient.listTools(server: requestedConnection,
+                                                             timeoutSeconds: model.mcpRequestTimeoutSeconds)
+                guard !Task.isCancelled, refreshID == requestID,
+                      requestedConnection.hasSameConnection(as: connection) else { return }
+                let previous = Dictionary(draft.tools.map { ($0.name, $0) },
+                                          uniquingKeysWith: { _, latest in latest })
+                draft.tools = tools.map { tool in
+                    guard let old = previous[tool.name] else { return tool }
+                    var copy = tool
+                    copy.enabled = old.enabled
+                    copy.needsApproval = old.needsApproval
+                    return copy
+                }
+                synchronizedConnection = requestedConnection
+            } catch {
+                guard !Task.isCancelled, refreshID == requestID else { return }
+                synchronizedConnection = nil
+                syncError = error.localizedDescription
             }
         }
     }
 
-    private func save(refreshTools: Bool = true) {
+    private func cancelSynchronization() {
+        refreshID = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        isRefreshing = false
+    }
+
+    private func save() {
         draft.headers = parseHeaders(headersText)
-        onSave(draft, refreshTools)
+        onSave(draft, !hasSynchronizedConnection)
     }
 
     private func parseHeaders(_ text: String) -> [String: String] {
@@ -758,8 +853,10 @@ private struct MCPToolEditorRow: View {
                     }
                 }
             }
+            .accessibilityIdentifier("mcp.tool.enabled.\(tool.name)")
             Toggle("调用前询问", isOn: $tool.needsApproval)
                 .font(.caption)
+                .accessibilityIdentifier("mcp.tool.approval.\(tool.name)")
         }
         .padding(.vertical, 4)
     }
@@ -769,24 +866,13 @@ struct MCPServerSelectionView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let assistantID: UUID
-    @State private var rowHeights: [String: CGFloat] = [:]
-    @State private var selectedDetent: PresentationDetent = .height(360)
+    @State private var contentHeight: CGFloat = 180
+    @State private var selectedDetent: PresentationDetent = .height(283)
+    @State private var isManagingServers = false
 
     private var compactDetent: PresentationDetent {
-        // Native inset-grouped rows use the same 11-point vertical inset.
-        let content: CGFloat
-        if connectedServers.isEmpty {
-            content = max(160, rowHeights["empty"] ?? 160) + 22
-        } else {
-            let actions = ["all", "clear"].reduce(CGFloat(0)) {
-                $0 + max(44, (rowHeights[$1] ?? 22) + 22)
-            }
-            let servers = connectedServers.reduce(CGFloat(0)) {
-                $0 + max(44, (rowHeights[$1.id.uuidString] ?? 40) + 22)
-            }
-            content = actions + servers + 16 + 28
-        }
-        return .height(min(content + 64 + 16, UIScreen.main.bounds.height * 0.72))
+        // Match the tools menu: 29-point grabber area and 62-point header.
+        .height(min(contentHeight + 91, UIScreen.main.bounds.height * 0.72))
     }
 
     private var selectedIDs: Set<UUID> {
@@ -801,89 +887,148 @@ struct MCPServerSelectionView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    if connectedServers.isEmpty {
-                        ContentUnavailableView(L10n.lookup("没有可用 MCP 服务器"), systemImage: "terminal", description: Text(L10n.lookup("先在设置里添加并同步服务器工具")))
-                            .mcpSelectionRowHeight("empty")
-                    } else {
-                        Button(L10n.lookup("全选")) {
-                            model.setMCPServers(connectedServers.map(\.id), forAssistantID: assistantID)
-                        }
-                        .mcpSelectionRowHeight("all")
-                        Button(L10n.lookup("清空"), role: .destructive) {
-                            model.setMCPServers([], forAssistantID: assistantID)
-                        }
-                        .mcpSelectionRowHeight("clear")
-                    }
-                }
-                .listRowInsets(EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 16))
-
-                if !connectedServers.isEmpty {
-                    Section(L10n.lookup("服务器")) {
-                        ForEach(connectedServers) { server in
-                            let isSelected = selectedIDs.contains(server.id)
-                            Toggle(isOn: Binding(
-                                get: { isSelected },
-                                set: { model.toggleMCPServer(server.id, enabled: $0, forAssistantID: assistantID) }
-                            )) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(server.normalizedName)
-                                    Text(L10n.format("%@/%@ 个工具", [String(server.tools.filter(\.enabled).count), String(server.tools.count)]))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .mcpSelectionRowHeight(server.id.uuidString)
-                            .listRowInsets(EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 16))
-                        }
-                    }
-                }
-            }
-            .listStyle(.insetGrouped)
-            .listSectionSpacing(16)
-            .contentMargins(.top, 12, for: .scrollContent)
-            .contentMargins(.bottom, 4, for: .scrollContent)
-            .environment(\.defaultMinListRowHeight, 44)
-            .onPreferenceChange(MCPSelectionRowHeights.self) { heights in
-                guard heights != rowHeights else { return }
-                let previous = compactDetent
-                rowHeights = heights
-                if selectedDetent == previous {
-                    withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = compactDetent }
-                }
-            }
-            .settingsGroupedPageStyle()
-            .navigationTitle(L10n.lookup("MCP 服务器"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.lookup("完成")) { dismiss() }
-                        .foregroundStyle(.primary)
-                }
-            }
+            navigationSurface
+                .navigationTitle(L10n.lookup("MCP 服务器"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.hidden, for: .navigationBar)
         }
+        .tint(Color(uiColor: model.themeActionUIColor))
         .presentationDetents([compactDetent, selectedDetent, .large], selection: $selectedDetent)
-        .presentationDragIndicator(.visible)
+        .presentationDragIndicator(.hidden)
         .onAppear { selectedDetent = compactDetent }
-    }
-}
-
-private struct MCPSelectionRowHeights: PreferenceKey {
-    static var defaultValue: [String: CGFloat] { [:] }
-    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
-    }
-}
-
-private extension View {
-    func mcpSelectionRowHeight(_ id: String) -> some View {
-        background {
-            GeometryReader { proxy in
-                Color.clear.preference(key: MCPSelectionRowHeights.self,
-                                       value: [id: ceil(proxy.size.height)])
-            }
-            .allowsHitTesting(false)
+        .onChange(of: isManagingServers) { _, managing in
+            if !managing { selectedDetent = compactDetent }
         }
+        .sheet(isPresented: $isManagingServers) {
+            // Present at the final height instead of resizing the compact sheet
+            // while NavigationStack snapshots its outgoing page for a push.
+            NavigationStack {
+                MCPSettingsView()
+                    .toolbar(.visible, for: .navigationBar)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                isManagingServers = false
+                            } label: {
+                                Image(systemName: "chevron.left")
+                            }
+                            .accessibilityLabel(L10n.lookup("返回"))
+                            .accessibilityIdentifier("mcp.closeManagement")
+                        }
+                    }
+            }
+            .tint(Color(uiColor: model.themeActionUIColor))
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private var navigationSurface: some View {
+        if #available(iOS 18.0, *) {
+            selectionPage.containerBackground(.clear, for: .navigation)
+        } else {
+            selectionPage
+        }
+    }
+
+    private var selectionPage: some View {
+        VStack(spacing: 0) {
+            Capsule(style: .continuous)
+                .fill(Color.secondary.opacity(0.44))
+                .frame(width: 50, height: 5)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+
+            ToolsSheetHeader(
+                title: L10n.lookup("MCP 服务器"),
+                back: { dismiss() },
+                titleWeight: .semibold,
+                backIdentifier: "mcp.closeSelection",
+                trailingAction: {
+                    isManagingServers = true
+                },
+                trailingAccessibilityLabel: L10n.lookup("管理 MCP 服务器"),
+                trailingIdentifier: "mcp.manageServers"
+            )
+
+            ScrollView {
+                selectionContent
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 12)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(key: MCPSelectionContentHeight.self,
+                                                   value: ceil(proxy.size.height))
+                        }
+                    }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onPreferenceChange(MCPSelectionContentHeight.self) { height in
+            guard height.isFinite, height > 0, abs(height - contentHeight) > 1 else { return }
+            let previous = compactDetent
+            contentHeight = height
+            if !isManagingServers, selectedDetent == previous {
+                withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = compactDetent }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectionContent: some View {
+        if connectedServers.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "hammer")
+                    .font(.system(size: 32, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(L10n.lookup("没有可用 MCP 服务器"))
+                    .font(.system(size: 17, weight: .semibold))
+                Text(L10n.lookup("点右上角＋添加并同步服务器工具"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 24)
+        } else {
+            VStack(spacing: 2) {
+                ForEach(connectedServers) { server in
+                    Toggle(isOn: Binding(
+                        get: { selectedIDs.contains(server.id) },
+                        set: { model.toggleMCPServer(server.id, enabled: $0, forAssistantID: assistantID) }
+                    )) {
+                        HStack(spacing: 15) {
+                            Image(systemName: "hammer")
+                                .font(.system(size: 22, weight: .medium))
+                                .frame(width: 31)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(server.normalizedName)
+                                    .font(.system(size: 18, weight: .medium))
+                                    .lineLimit(2)
+                                Text(L10n.format("%@/%@ 个工具", [String(server.tools.filter(\.enabled).count), String(server.tools.count)]))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .tint(Color(uiColor: model.themeSwitchUIColor))
+                    .padding(.horizontal, 15)
+                    .frame(minHeight: 56)
+                    .accessibilityIdentifier("mcp.selection.\(server.id)")
+                }
+            }
+        }
+    }
+}
+
+private struct MCPSelectionContentHeight: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

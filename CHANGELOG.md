@@ -1,5 +1,15 @@
 # 更新记录 / Changelog
 
+## 1.0.4（5219）
+
+- 移除消耗型赞助的“恢复购买”入口与系统同步调用，保留已有纪念装扮记录。
+- 简化赞助说明，移除“永久”和换机恢复承诺，更新中英文帮助与隐私说明。
+- 改进聊天中的 MCP 服务器管理、独立选择与返回体验；供应商设置排在默认模型之前。
+
+- Remove the Restore Purchases action and system sync for consumable tips while preserving existing decoration records.
+- Clarify sponsorship wording, removing permanence and cross-device restoration claims from help and privacy text.
+- Improve chat MCP server management, individual selection and return behavior; place Providers before Default Models in settings.
+
 ## 1.0.4（5216）
 
 - 修复切换日历等助手分页时，顶部分页栏自动滚回最左侧的问题。
