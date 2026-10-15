@@ -4,9 +4,9 @@
 
 ## Source snapshot / 源码快照
 
-This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0.4 (5211)** with the adopted phone UI changes. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
+This repository began with a prepared snapshot of development build 1.0 (5058) and now tracks **1.0.4 (5215)** with the adopted phone UI changes. It has an independent Git history; earlier experimental branches, private development metadata and local verification outputs remain outside this repository. Kelivo attribution, licenses, compatibility identifiers and source provenance are retained. See [source baseline](SOURCE_BASELINE.md).
 
-本仓库从开发版 1.0（5058）的源码快照开始，当前为 **1.0.4（5211）**，纳入手机已确认的界面改动，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
+本仓库从开发版 1.0（5058）的源码快照开始，当前为 **1.0.4（5215）**，纳入手机已确认的界面改动，使用独立的 Git 历史。早期实验分支、私人开发元数据和本机验证产物保留在原本的本地目录。Kelivo 来源、许可证、兼容标识与源码基线记录继续保留。
 
 This is a portable source snapshot for the public [UUZsama450/mocca](https://github.com/UUZsama450/mocca) repository. Configurable signing identity, disabled-by-default sponsorship and the reviewed asset set distinguish it from the device build. The GitHub release includes an unsigned IPA preview; App Store review and manual publication are tracked separately.
 
@@ -30,9 +30,9 @@ Historical notes retain their original build context. Their presence does not me
 
 ## Verification boundary / 验证范围
 
-The 1.0.4 portable source is compiled and checked separately from the phone build. Commands, results and limits are recorded in [current source verification](RELEASE_1.0.4_5211.md). Earlier snapshot results remain historical evidence. Device interaction, real purchases and release signing require their own verification.
+The 1.0.4 portable source is compiled and checked separately from the phone build. Commands, results and limits are recorded in [current source verification](RELEASE_1.0.4_5215.md). Earlier snapshot results remain historical evidence. Device interaction, real purchases and release signing require their own verification.
 
-1.0.4 可移植源码独立进行编译与检查，命令、结果和限制记录在[本次变更与验证](RELEASE_1.0.4_5211.md)中。旧快照的结果继续作为历史证据保留。真机交互、实际购买和发布签名需要分别验证。
+1.0.4 可移植源码独立进行编译与检查，命令、结果和限制记录在[本次变更与验证](RELEASE_1.0.4_5215.md)中。旧快照的结果继续作为历史证据保留。真机交互、实际购买和发布签名需要分别验证。
 
 Generated apps, build caches, device logs, private chats, backups, signing credentials and machine-local overrides are outside the source snapshot. See [.gitignore](../.gitignore) for exclusion rules. Ignore rules support this boundary; they do not replace reviewing the tracked tree and Git history before publication.
 

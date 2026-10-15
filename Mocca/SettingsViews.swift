@@ -3472,7 +3472,7 @@ struct SettingsInfoButton<Content: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var isPresented = false
-    @State private var explanationHeight: CGFloat = 420
+    @State private var presenter = SettingsInfoPopoverAnchor<AnyView>.Coordinator()
     let title: String
     let identifier: String
     @ViewBuilder var content: () -> Content
@@ -3480,10 +3480,7 @@ struct SettingsInfoButton<Content: View>: View {
     var body: some View {
         Button {
             model.performListItemHaptic()
-            // Let the system choose a side with enough room before shrinking
-            // a short explanation; growing after placement can go offscreen.
-            if !isPresented { explanationHeight = 420 }
-            isPresented.toggle()
+            presenter.toggle()
         } label: {
             Image(systemName: "info.circle")
                 .font(.body.weight(.medium))
@@ -3496,25 +3493,21 @@ struct SettingsInfoButton<Content: View>: View {
         .accessibilityHint(L10n.lookup("显示或隐藏说明气泡"))
         .accessibilityValue(isPresented ? L10n.lookup("已展开") : L10n.lookup("已收起"))
         .accessibilityIdentifier(identifier)
-        .popover(isPresented: $isPresented) {
-            ScrollView {
-                explanation
-                    .onGeometryChange(for: CGFloat.self) { geometry in
-                        ceil(geometry.size.height)
-                    } action: { height in
-                        explanationHeight = height
-                    }
+        .background {
+            SettingsInfoPopoverAnchor<AnyView>(
+                presenter: presenter,
+                isPresented: $isPresented,
+                identifier: identifier,
+                colorScheme: colorScheme,
+                maximumHeight: verticalSizeClass == .compact ? 220 : 420
+            ) {
+                AnyView(explanation
+                    .textCase(nil)
+                    .environment(\.dynamicTypeSize, dynamicTypeSize)
+                    .environment(\.colorScheme, colorScheme)
+                    .accessibilityAction(.escape) { [weak presenter] in presenter?.dismiss() }
+                )
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .frame(width: 320)
-            .frame(height: min(explanationHeight, verticalSizeClass == .compact ? 220 : 420))
-            .textCase(nil)
-            .environment(\.dynamicTypeSize, dynamicTypeSize)
-            .preferredColorScheme(colorScheme)
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(.regularMaterial)
-            .accessibilityIdentifier(identifier + ".popover")
-            .accessibilityAction(.escape) { isPresented = false }
         }
     }
 
@@ -3522,6 +3515,194 @@ struct SettingsInfoButton<Content: View>: View {
         VStack(alignment: .leading, spacing: 14, content: content)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(18)
+    }
+}
+
+/// A Form section header can keep invalidating SwiftUI's popover presentation
+/// preferences on iOS 27. Present from a stable UIKit anchor instead, with an
+/// independent content host and a size chosen once before the native animation.
+/// No presentation/background preference or measured size flows into the Form.
+private struct SettingsInfoPopoverAnchor<Content: View>: UIViewRepresentable {
+    let presenter: Coordinator
+    @Binding var isPresented: Bool
+    let identifier: String
+    let colorScheme: ColorScheme
+    let maximumHeight: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    func makeCoordinator() -> Coordinator { presenter }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.configure(self, anchor: view)
+    }
+
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        coordinator.invalidate(anchor: view)
+    }
+
+    final class Coordinator: NSObject, UIPopoverPresentationControllerDelegate {
+        private var configuration: SettingsInfoPopoverAnchor?
+        private weak var anchor: UIView?
+        private var presented: SettingsInfoHostingController?
+        private var isDismissing = false
+        private var reopenAfterDismissal = false
+
+        func configure(_ configuration: SettingsInfoPopoverAnchor, anchor: UIView) {
+            self.configuration = configuration
+            self.anchor = anchor
+        }
+
+        func toggle() {
+            // The action consults UIKit, not the cached accessibility state.
+            // Even if every dismissal notification is missed, the next tap
+            // opens a fresh popover rather than toggling a stale Bool off.
+            guard !isDismissing else {
+                reopenAfterDismissal = true
+                return
+            }
+            if let presented, isVisible(presented) {
+                dismiss()
+            } else {
+                show()
+            }
+        }
+
+        private func isVisible(_ controller: UIViewController) -> Bool {
+            guard controller.presentingViewController?.presentedViewController === controller,
+                  let view = controller.viewIfLoaded, view.window != nil,
+                  !view.bounds.isEmpty, !controller.isBeingDismissed else { return false }
+            var ancestor: UIView? = view
+            while let current = ancestor {
+                if current.isHidden || current.alpha <= 0.01 { return false }
+                ancestor = current.superview
+            }
+            return true
+        }
+
+        func dismiss() { dismiss(reopen: false) }
+
+        private func dismiss(reopen: Bool) {
+            reopenAfterDismissal = reopen
+            guard !isDismissing else { return }
+            guard let presented else {
+                configuration?.isPresented = false
+                return
+            }
+            isDismissing = true
+            presented.dismiss(animated: true) { [weak self, weak presented] in
+                guard let self else { return }
+                if let presented { self.finishDismissal(of: presented) }
+                let reopen = self.reopenAfterDismissal
+                self.reopenAfterDismissal = false
+                if reopen, self.presented == nil { self.show() }
+            }
+        }
+
+        private func show() {
+            guard let configuration, let anchor, let window = anchor.window else { return }
+            if let stale = presented {
+                if stale.presentingViewController?.presentedViewController === stale {
+                    dismiss(reopen: true)
+                    return
+                }
+                finishDismissal(of: stale)
+            }
+            var responder: UIResponder? = anchor
+            while responder != nil, !(responder is UIViewController) {
+                responder = responder?.next
+            }
+            guard let presenter = responder as? UIViewController,
+                  presenter.presentedViewController == nil else {
+                configuration.isPresented = false
+                return
+            }
+
+            let width = min(320, max(1, window.bounds.width - window.safeAreaInsets.left - window.safeAreaInsets.right - 32))
+            let limit = min(configuration.maximumHeight,
+                            max(1, window.bounds.height - window.safeAreaInsets.top - window.safeAreaInsets.bottom - 32))
+            let content = configuration.content().frame(width: width)
+            let host = SettingsInfoHostingController(rootView: AnyView(content))
+            host.onDismissal = { [weak self] controller in
+                self?.finishDismissal(of: controller)
+            }
+            host.overrideUserInterfaceStyle = configuration.colorScheme == .dark ? .dark : .light
+            host.sizingOptions = []
+            let naturalHeight = ceil(host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+            let height = min(max(1, naturalHeight), limit)
+            // Let the scroll viewport follow UIKit's actual bounds, including
+            // a smaller placement after rotation. Short copy remains still.
+            host.rootView = AnyView(
+                ScrollView { content }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(width: width)
+                    .accessibilityIdentifier(configuration.identifier + ".popover")
+            )
+            host.view.backgroundColor = .clear
+            host.preferredContentSize = CGSize(width: width, height: height)
+            host.modalPresentationStyle = .popover
+            guard let popover = host.popoverPresentationController else { return }
+            popover.delegate = self
+            popover.sourceView = anchor
+            popover.sourceRect = .null
+            popover.permittedArrowDirections = [.up, .down]
+            if #available(iOS 26.1, *) {
+                popover.backgroundEffect = UIBlurEffect(style: .regular)
+            }
+            presented = host
+            presenter.present(host, animated: true)
+            configuration.isPresented = true
+        }
+
+        func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
+
+        func adaptivePresentationStyle(for controller: UIPresentationController,
+                                       traitCollection: UITraitCollection) -> UIModalPresentationStyle { .none }
+
+        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+            finishDismissal(of: presentationController.presentedViewController)
+        }
+
+        private func finishDismissal(of controller: UIViewController) {
+            // Both the delegate and lifecycle completion may report the same
+            // dismissal. An older callback must not clear a newer popover.
+            guard controller === presented else { return }
+            presented = nil
+            isDismissing = false
+            configuration?.isPresented = false
+        }
+
+        func invalidate(anchor view: UIView) {
+            // List headers can replace their backing UIView while keeping the
+            // button alive. Teardown of an old anchor must not clear the new one.
+            guard anchor === view else { return }
+            configuration = nil
+            anchor = nil
+            reopenAfterDismissal = false
+            presented?.dismiss(animated: false)
+            presented = nil
+            isDismissing = false
+        }
+    }
+}
+
+private final class SettingsInfoHostingController: UIHostingController<AnyView> {
+    var onDismissal: ((UIViewController) -> Void)?
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // The presentation delegate only covers interactive dismissals. A
+        // presenter/system-driven dismissal must also clear the SwiftUI state,
+        // otherwise the next tap merely toggles an invisible popover off.
+        if isBeingDismissed || presentingViewController == nil {
+            onDismissal?(self)
+        }
     }
 }
 
