@@ -79,8 +79,8 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "世界书", context: "助手与聊天", keywords: "知识库 lorebook", systemImage: "book", destination: .worldBook),
         .init(title: "快捷短语", context: "助手与聊天", keywords: "短语 快捷回复", systemImage: "bolt", destination: .quickPhrases),
         .init(title: "指令注入", context: "助手与聊天", keywords: "提示词 注入", systemImage: "square.stack.3d.up", destination: .instructionInjection),
-        .init(title: "默认模型", context: "模型与服务", keywords: "模型 语言模型", systemImage: "heart", destination: .defaultModels),
         .init(title: "供应商", context: "模型与服务", keywords: "Provider API Key 密钥", systemImage: "shippingbox", destination: .providers),
+        .init(title: "默认模型", context: "模型与服务", keywords: "模型 语言模型", systemImage: "heart", destination: .defaultModels),
         .init(title: "图像生成接口", context: "供应商", keywords: "图片 生图 OpenRouter OpenAI", systemImage: "photo.badge.plus", destination: .providers),
         .init(title: "搜索服务", context: "模型与服务", keywords: "联网搜索 web search", systemImage: "globe", destination: .searchServices),
         .init(title: "OCR 图片识别", context: "模型与服务", keywords: "OCR 图片 识别", systemImage: "eye", destination: .ocr),
@@ -202,23 +202,6 @@ struct SettingsView: View {
 
                 if showsModelsAndServicesSection {
                     Section {
-                    if settingsMatch("默认模型", keywords: "模型 语言模型") {
-                        NavigationLink {
-                        DefaultModelsOverviewView()
-                    } label: {
-                        SettingsOverviewValueRow(
-                            title: L10n.lookup("默认模型"),
-                            systemImage: "heart",
-                            value: (model.selectedModelConfiguration?.displayName ?? L10n.lookup("选择模型")),
-                            showsChevron: false
-                        )
-                    }
-                    .accessibilityLabel(L10n.lookup("默认模型"))
-                    .accessibilityValue((model.selectedModelConfiguration?.displayName ?? L10n.lookup("选择模型")))
-                    .accessibilityHint(L10n.lookup("打开默认模型设置"))
-                    .settingsOverviewRowStyle()
-                    }
-
                     if settingsMatch("供应商", keywords: "Provider API Key 密钥 图像供应商") {
                         NavigationLink {
                         ProviderSettingsView(context: .navigation)
@@ -233,6 +216,23 @@ struct SettingsView: View {
                     .accessibilityLabel(L10n.lookup("供应商"))
                     .accessibilityValue("\(model.providers.count)")
                     .accessibilityHint(L10n.lookup("打开供应商设置"))
+                    .settingsOverviewRowStyle()
+                    }
+
+                    if settingsMatch("默认模型", keywords: "模型 语言模型") {
+                        NavigationLink {
+                        DefaultModelsOverviewView()
+                    } label: {
+                        SettingsOverviewValueRow(
+                            title: L10n.lookup("默认模型"),
+                            systemImage: "heart",
+                            value: (model.selectedModelConfiguration?.displayName ?? L10n.lookup("选择模型")),
+                            showsChevron: false
+                        )
+                    }
+                    .accessibilityLabel(L10n.lookup("默认模型"))
+                    .accessibilityValue((model.selectedModelConfiguration?.displayName ?? L10n.lookup("选择模型")))
+                    .accessibilityHint(L10n.lookup("打开默认模型设置"))
                     .settingsOverviewRowStyle()
                     }
 
@@ -1923,7 +1923,7 @@ private struct MoccaDocumentationPage: View {
 
             if AppBuildConfiguration.sponsorshipEnabled {
                 Section(L10n.lookup("赞助与纪念装扮")) {
-                    Text(L10n.lookup("赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会留下对应的永久纪念装扮。换机或重装后可在赞助页使用“恢复购买”。"))
+                    Text(L10n.lookup("赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会解锁对应的纪念装扮，重复购买不会增加新装扮。"))
                         .font(.subheadline)
                     Text(L10n.lookup("购买由 Apple App Store 处理。重复购买不会增加新的装扮副本。"))
                         .font(.caption)
@@ -1945,7 +1945,7 @@ private struct MoccaDocumentationPage: View {
                 MoccaDocumentationFeature(
                     icon: "shippingbox",
                     title: L10n.lookup("购买项目暂不可用"),
-                    detail: L10n.lookup("确认设备已登录 App Store，并稍后重试。已经购买过时可使用“恢复购买”。")
+                    detail: L10n.lookup("确认设备已登录 App Store，并稍后重试。")
                 )
             }
         }
@@ -2041,7 +2041,7 @@ private struct MoccaPrivacyPolicyPage: View {
             }
 
             Section(L10n.lookup("购买")) {
-                Text(L10n.lookup("赞助交易由 Apple StoreKit 与 App Store 处理。Mocca 读取经 Apple 验证的交易记录，用于统计投喂次数、恢复已购档位及其永久纪念装扮。Mocca 不接收完整付款卡信息。"))
+                Text(L10n.lookup("赞助交易由 Apple StoreKit 与 App Store 处理。Mocca 读取经 Apple 验证的交易记录，用于显示投喂统计和对应的纪念装扮。Mocca 不接收完整付款卡信息。"))
                     .font(.subheadline)
             }
 

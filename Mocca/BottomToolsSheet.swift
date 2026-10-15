@@ -852,10 +852,14 @@ private struct CompactToolRowLabel: View {
     }
 }
 
-private struct ToolsSheetHeader: View {
+struct ToolsSheetHeader: View {
     let title: String
     let back: () -> Void
     var titleWeight: Font.Weight = .bold
+    var backIdentifier = "tools.back"
+    var trailingAction: (() -> Void)? = nil
+    var trailingAccessibilityLabel = ""
+    var trailingIdentifier = ""
 
     var body: some View {
         HStack {
@@ -867,14 +871,26 @@ private struct ToolsSheetHeader: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(L10n.lookup("返回"))
-            .accessibilityIdentifier("tools.back")
+            .accessibilityIdentifier(backIdentifier)
 
             Spacer()
             Text(title)
                 .font(.system(size: 20, weight: titleWeight))
                 .lineLimit(1)
             Spacer()
-            Color.clear.frame(width: 48, height: 48)
+            if let trailingAction {
+                Button(action: trailingAction) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 19, weight: .semibold))
+                        .frame(width: 48, height: 48)
+                        .background(Color.primary.opacity(0.06), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(trailingAccessibilityLabel)
+                .accessibilityIdentifier(trailingIdentifier)
+            } else {
+                Color.clear.frame(width: 48, height: 48)
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: 62)

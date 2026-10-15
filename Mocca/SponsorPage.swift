@@ -18,7 +18,6 @@ struct SponsorPage: View {
                 supportOptions
                 statisticsCard
                 easterEggWardrobe
-                purchaseRecovery
                 purchaseNote
             }
             .padding(.horizontal, 16)
@@ -83,7 +82,7 @@ struct SponsorPage: View {
                         Task { await store.retryLoadingProducts() }
                     }
                     .font(.subheadline.weight(.medium))
-                    .disabled(store.isLoadingProducts || store.purchasingTier != nil || store.isRestoringPurchases)
+                    .disabled(store.isLoadingProducts || store.purchasingTier != nil)
                 }
             }
             .padding(.horizontal, 20)
@@ -167,56 +166,10 @@ struct SponsorPage: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(product == nil || store.purchasingTier != nil || store.isRestoringPurchases)
+        .disabled(product == nil || store.purchasingTier != nil)
         .accessibilityHint(
-            L10n.format("打开 App Store 购买确认。首次投喂解锁小水滴和%@永久纪念装扮；重复购买不会增加新装扮", [L10n.lookup(tier.chatBadgeName)])
+            L10n.format("打开 App Store 购买确认。首次投喂解锁小水滴和%@纪念装扮；重复购买不会增加新装扮", [L10n.lookup(tier.chatBadgeName)])
         )
-    }
-
-    private var purchaseRecovery: some View {
-        Button {
-            model.performCardHaptic()
-            Task { await store.restorePurchases() }
-        } label: {
-            HStack(spacing: 11) {
-                Group {
-                    if store.isRestoringPurchases {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise.icloud")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(accentColor)
-                    }
-                }
-                .frame(width: 28, height: 28)
-                .background(accentColor.opacity(0.10), in: Circle())
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(store.isRestoringPurchases ? L10n.lookup("正在恢复购买…") : L10n.lookup("恢复购买"))
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-                    Text(L10n.lookup("找回这个 Apple Account 已购买的纪念装扮"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 6)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 13)
-            .frame(minHeight: 52)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(store.purchasingTier != nil || store.isRestoringPurchases)
-        .accessibilityLabel(L10n.lookup("恢复购买"))
-        .accessibilityHint(L10n.lookup("向 App Store 同步以前的投喂记录，不会产生新的购买"))
-        .sponsorSurface()
     }
 
     @ViewBuilder
@@ -263,7 +216,7 @@ struct SponsorPage: View {
     private var easterEggWardrobe: some View {
         if !unlockedEasterEggs.isEmpty, let selectedEasterEgg {
             VStack(alignment: .leading, spacing: 9) {
-                SponsorSectionTitle(title: L10n.lookup("彩蛋衣柜"), subtitle: L10n.lookup("永久纪念装扮 · 无功能加成"))
+                SponsorSectionTitle(title: L10n.lookup("彩蛋衣柜"), subtitle: L10n.lookup("纪念装扮 · 无功能加成"))
 
                 VStack(spacing: 15) {
                     Text(L10n.lookup("喜欢新聊天里掉下来的小家伙，就选一个头像让它住下吧。"))
@@ -386,7 +339,7 @@ struct SponsorPage: View {
     }
 
     private var purchaseNote: some View {
-        Text(L10n.lookup("投喂完全自愿，不影响聊天能力，也不会自动续费。任意档位首次投喂都会解锁 💧 小水滴；各档另会解锁页面标注的永久纪念装扮。所有装扮均为没有功能加成的纯装饰。同一档可以重复投喂，但不会重复增加装扮；每次购买都会由 App Store 单独确认。"))
+        Text(L10n.lookup("投喂完全自愿，不影响聊天能力，也不会自动续费。任意档位首次投喂都会解锁 💧 小水滴；各档另会解锁页面标注的纪念装扮。所有装扮均为没有功能加成的纯装饰。同一档可以重复投喂，但不会重复增加装扮；每次购买都会由 App Store 单独确认。"))
             .font(.caption)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.leading)

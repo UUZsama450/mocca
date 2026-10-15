@@ -368,31 +368,56 @@
     "消息详情": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Message Details" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message Details"
+          }
+        }
       }
     },
     "消息时间": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Message time" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message time"
+          }
+        }
       }
     },
     "未记录": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Not recorded" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not recorded"
+          }
+        }
       }
     },
     "未找到原供应商": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Original provider not found" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original provider not found"
+          }
+        }
       }
     },
     "返回消息操作": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Back to message actions" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to message actions"
+          }
+        }
       }
     },
     "GitHub 仓库": {
@@ -4916,17 +4941,6 @@
         }
       }
     },
-    "向 App Store 同步以前的投喂记录，不会产生新的购买": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sync past purchases with the App Store without making a new purchase"
-          }
-        }
-      }
-    },
     "向 iOS 请求后续刷新和联网处理机会。": {
       "extractionState": "manual",
       "localizations": {
@@ -7474,17 +7488,6 @@
         }
       }
     },
-    "恢复购买": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restore purchases"
-          }
-        }
-      }
-    },
     "恢复默认": {
       "extractionState": "manual",
       "localizations": {
@@ -7804,17 +7807,6 @@
         }
       }
     },
-    "找回这个 Apple Account 已购买的纪念装扮": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restore keepsakes purchased with this Apple Account"
-          }
-        }
-      }
-    },
     "投喂一下": {
       "extractionState": "manual",
       "localizations": {
@@ -7822,17 +7814,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Send a treat"
-          }
-        }
-      }
-    },
-    "投喂完全自愿，不影响聊天能力，也不会自动续费。任意档位首次投喂都会解锁 💧 小水滴；各档另会解锁页面标注的永久纪念装扮。所有装扮均为没有功能加成的纯装饰。同一档可以重复投喂，但不会重复增加装扮；每次购买都会由 App Store 单独确认。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Treats are entirely optional, do not affect chat capabilities, and never renew automatically. Your first purchase of any tier unlocks the little water drop 💧. Each tier also unlocks its listed permanent keepsake. All items are cosmetic and provide no functional benefits. Repeat purchases are allowed but do not add duplicate keepsakes. Every purchase is confirmed separately by the App Store."
           }
         }
       }
@@ -10934,17 +10915,6 @@
         }
       }
     },
-    "正在恢复购买…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restoring purchases…"
-          }
-        }
-      }
-    },
     "正在搜索…": {
       "extractionState": "manual",
       "localizations": {
@@ -11293,17 +11263,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Forever"
-          }
-        }
-      }
-    },
-    "永久纪念装扮 · 无功能加成": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Permanent keepsakes · No feature advantages"
           }
         }
       }
@@ -12833,17 +12792,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Confirming authorizes this text as memory. Discarding removes only the isolated copy. Neither changes chat history or long-term memory."
-          }
-        }
-      }
-    },
-    "确认设备已登录 App Store，并稍后重试。已经购买过时可使用“恢复购买”。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Make sure you are signed in to the App Store and try again later. Use Restore Purchases for previous purchases."
           }
         }
       }
@@ -15286,28 +15234,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sponsorship & Keepsakes"
-          }
-        }
-      }
-    },
-    "赞助交易由 Apple StoreKit 与 App Store 处理。Mocca 读取经 Apple 验证的交易记录，用于统计投喂次数、恢复已购档位及其永久纪念装扮。Mocca 不接收完整付款卡信息。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sponsorship transactions are processed by Apple StoreKit and the App Store. Mocca reads Apple-verified transactions to count purchases, restore purchased tiers, and unlock their permanent keepsakes. Mocca does not receive full payment card information."
-          }
-        }
-      }
-    },
-    "赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会留下对应的永久纪念装扮。换机或重装后可在赞助页使用“恢复购买”。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sponsorship is optional, does not affect chat features, and never renews automatically. Each tier can be purchased repeatedly. Your first purchase of a tier unlocks its permanent keepsake. Use Restore Purchases after reinstalling or changing devices."
           }
         }
       }
@@ -18458,17 +18384,6 @@
         }
       }
     },
-    "打开 App Store 购买确认。首次投喂解锁小水滴和%@永久纪念装扮；重复购买不会增加新装扮": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open App Store purchase confirmation. Your first treat unlocks the water drop and permanent %@ keepsake. Repeat purchases do not add new items."
-          }
-        }
-      }
-    },
     "选择%@彩蛋": {
       "extractionState": "manual",
       "localizations": {
@@ -21066,17 +20981,6 @@
         }
       }
     },
-    "已经找回 %@ 次投喂记录，买过档位的永久纪念装扮已放回衣柜。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restored %@ tips. Your permanent keepsakes are back in the wardrobe."
-          }
-        }
-      }
-    },
     "忽略圆括号和全角括号中的内容。": {
       "extractionState": "manual",
       "localizations": {
@@ -21143,17 +21047,6 @@
         }
       }
     },
-    "暂时无法向 App Store 恢复购买，请稍后再试。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unable to restore purchases from the App Store. Please try again later."
-          }
-        }
-      }
-    },
     "暂时无法完成投喂，请稍后再试。": {
       "extractionState": "manual",
       "localizations": {
@@ -21198,17 +21091,6 @@
         }
       }
     },
-    "正在向 App Store 查找以前的投喂记录…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Checking the App Store for previous tips…"
-          }
-        }
-      }
-    },
     "糖果": {
       "extractionState": "manual",
       "localizations": {
@@ -21216,17 +21098,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Candy"
-          }
-        }
-      }
-    },
-    "这个 Apple Account 暂时没有可恢复的投喂记录。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No previous tips were found for this Apple Account."
           }
         }
       }
@@ -22363,6 +22234,127 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show all models"
+          }
+        }
+      }
+    },
+    "添加 MCP 服务器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add MCP Server"
+          }
+        }
+      }
+    },
+    "管理 MCP 服务器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage MCP Servers"
+          }
+        }
+      }
+    },
+    "已同步 %@ 个工具": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synced %@ tools"
+          }
+        }
+      }
+    },
+    "同步仅更新当前草稿，点保存后生效。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync updates this draft only. Tap Save to apply changes."
+          }
+        }
+      }
+    },
+    "点右上角＋添加并同步服务器工具": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap + at the top right to add a server and sync its tools."
+          }
+        }
+      }
+    },
+    "投喂完全自愿，不影响聊天能力，也不会自动续费。任意档位首次投喂都会解锁 💧 小水滴；各档另会解锁页面标注的纪念装扮。所有装扮均为没有功能加成的纯装饰。同一档可以重复投喂，但不会重复增加装扮；每次购买都会由 App Store 单独确认。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tipping is optional, does not affect chat features, and does not renew automatically. Your first tip at any tier unlocks 💧 Water Drop, along with the commemorative decoration shown for that tier. Decorations are cosmetic only and add no features. You can tip at the same tier again, but this does not add duplicate decorations. The App Store confirms each purchase separately."
+          }
+        }
+      }
+    },
+    "纪念装扮 · 无功能加成": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commemorative decorations · No feature benefits"
+          }
+        }
+      }
+    },
+    "确认设备已登录 App Store，并稍后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Make sure you are signed in to the App Store on this device, then try again later."
+          }
+        }
+      }
+    },
+    "赞助交易由 Apple StoreKit 与 App Store 处理。Mocca 读取经 Apple 验证的交易记录，用于显示投喂统计和对应的纪念装扮。Mocca 不接收完整付款卡信息。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Support purchases are processed by Apple StoreKit and the App Store. Mocca reads Apple-verified transaction records to display support statistics and the corresponding commemorative decorations. Mocca does not receive full payment card details."
+          }
+        }
+      }
+    },
+    "赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会解锁对应的纪念装扮，重复购买不会增加新装扮。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Support is optional, does not affect chat features, and does not renew automatically. Each tier can be purchased again. The first purchase of a tier unlocks its commemorative decoration; repeat purchases do not add new decorations."
+          }
+        }
+      }
+    },
+    "打开 App Store 购买确认。首次投喂解锁小水滴和%@纪念装扮；重复购买不会增加新装扮": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens App Store purchase confirmation. Your first tip unlocks the water drop and %@ commemorative decorations; repeat purchases do not add new decorations."
           }
         }
       }
