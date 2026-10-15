@@ -1,5 +1,17 @@
 # 更新记录 / Changelog
 
+## 1.0.4（5215）
+
+- 修复打开“图片与上下文”和记忆说明时界面可能卡住的问题。
+- 说明气泡使用独立的原生呈现与一次性尺寸测量，保留箭头、文字排版和系统动画。
+- 保留 5211 的助手顶部、模型选择、工具面板和聊天改进。
+- 发布包不包含测试夹具、故障注入或调试器记录。
+
+- Fix the interface becoming unresponsive when opening image/context or memory explanations.
+- Present explanations through an independent native popover with one-time sizing, retaining the arrow, typography and system animation.
+- Retain the assistant-header, model-picker, tools-panel and chat improvements from 5211.
+- Distribution packages exclude test fixtures, fault injection and debugger recording.
+
 ## 1.0.4（5211）
 
 - 修复助手编辑页滚动内容穿过标题和分页栏的问题，统一顶部背景。
