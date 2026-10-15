@@ -6,6 +6,6 @@ The source matches the adopted phone build's shared explanation component. Exist
 
 Six focused simulator cases passed, including repeated reopening, memory navigation, image/context responsiveness, presenter-driven dismissal and deliberate missed-callback injection. The user confirmed the original freeze was resolved, later observed taps during another bubble's closing animation, and authorized distributing 5215. This does not establish phone FPS or temperature, or guarantee that taps during a presentation transition are queued. Tests remain in the private development fixture and are not linked into distribution packages.
 
-Release build and package verification results are recorded in the accompanying build manifest. The existing `v1.0.4` release page is reused after backing up and verifying the previous assets. Its historical Git tag remains at the original 5206 snapshot; use the explicitly linked 5215 source archive and commit for these downloads.
+Release build and package verification results are recorded in `BUILD-INFO-5215.json` and `SHA256SUMS-5215.txt`. The existing `v1.0.4` release page is reused after backing up and verifying the previous assets. Previous assets remain available with explicit versioned names. Its historical Git tag remains at the original 5206 snapshot; use the explicitly linked 5215 source archive and commit for these downloads.
 
 The GitHub IPA requires the user's own signing. App Store review is independent, with manual release after approval.
