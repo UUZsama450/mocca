@@ -25,7 +25,10 @@ struct MoccaApp: App {
                 .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
                 .appFontEnvironment(model.preferences.appFontPostScriptName)
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .background { model.flushStreamingProgress() }
+                    if phase == .background {
+                        model.pauseAllUserBatches()
+                        model.flushStreamingProgress()
+                    }
                     guard phase == .active else { return }
                     AppLocalization.shared.refreshSystemLanguage()
                     model.retryConversationStoreLoadIfNeeded()

@@ -596,7 +596,7 @@ final class DrawerHorizontalScrollProbeView: UIView {
 }
 
 private enum MarkdownReadingRhythm {
-    static let layoutSignature = "reading-rhythm-v4-list-spacing"
+    static let layoutSignature = "reading-rhythm-v5-inline-code"
 
     // Keep ordinary lines compact while giving semantic Markdown blocks a
     // clearer visual hierarchy. These values are shared by the streaming and
@@ -2222,10 +2222,7 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
               let textContainer = textContainers.first else { return }
         let fillColor = usesDarkAppearance
             ? UIColor.white.withAlphaComponent(0.12)
-            : UIColor(red: 241 / 255, green: 243 / 255, blue: 245 / 255, alpha: 1)
-        let borderColor = usesDarkAppearance
-            ? UIColor(red: 69 / 255, green: 70 / 255, blue: 79 / 255, alpha: 0.22)
-            : UIColor(red: 198 / 255, green: 198 / 255, blue: 208 / 255, alpha: 0.22)
+            : UIColor(red: 236 / 255, green: 236 / 255, blue: 238 / 255, alpha: 1)
 
         enumerateVisibleDecoration(.moccaInlineCode, forGlyphRange: glyphsToShow) { range in
             let glyphRange = self.glyphRange(
@@ -2244,16 +2241,24 @@ private final class MarkdownDecorationLayoutManager: NSLayoutManager {
                     in: textContainer
                 )
                 guard backgroundRect.width > 0, backgroundRect.height > 0 else { return }
+                // TextKit includes the paragraph's inter-line spacing in this
+                // rectangle. Leave that space clear instead of painting a
+                // tall capsule that touches the next wrapped line.
+                let characterIndex = self.characterIndexForGlyph(at: segmentRange.location)
+                let paragraph = textStorage.attribute(
+                    .paragraphStyle, at: characterIndex, effectiveRange: nil
+                ) as? NSParagraphStyle
+                backgroundRect.size.height = max(1, backgroundRect.height - (paragraph?.lineSpacing ?? 0))
                 backgroundRect.origin.x += origin.x
                 backgroundRect.origin.y += origin.y
-                backgroundRect = backgroundRect.insetBy(dx: -3, dy: -2)
+                backgroundRect = backgroundRect.insetBy(dx: -4, dy: -2)
 
-                let path = UIBezierPath(roundedRect: backgroundRect, cornerRadius: 6)
+                let path = UIBezierPath(
+                    roundedRect: backgroundRect,
+                    cornerRadius: min(12, backgroundRect.height * 0.45)
+                )
                 fillColor.setFill()
                 path.fill()
-                borderColor.setStroke()
-                path.lineWidth = 1
-                path.stroke()
             }
         }
     }
@@ -3002,6 +3007,36 @@ private enum CitationPillRenderer {
     }
 }
 
+private enum InlineCodeReadingStyle {
+    // Resolve once while preparing attributed text, never during scrolling or
+    // drawing. Paragraphs without code keep their existing reading rhythm.
+    static func applySpacing(to text: NSMutableAttributedString, fontSize: CGFloat) {
+        guard text.length > 0 else { return }
+        let source = text.string as NSString
+        var paragraphs: [NSRange] = []
+        var lastEnd = 0
+        text.enumerateAttribute(.moccaInlineCode, in: NSRange(location: 0, length: text.length)) {
+            value, range, _ in
+            guard (value as? Bool) == true else { return }
+            var cursor = max(range.location, lastEnd)
+            while cursor < NSMaxRange(range) {
+                let paragraph = source.paragraphRange(for: NSRange(location: cursor, length: 0))
+                paragraphs.append(paragraph)
+                lastEnd = NSMaxRange(paragraph)
+                cursor = lastEnd
+            }
+        }
+        for paragraph in paragraphs {
+            let existing = text.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
+                as? NSParagraphStyle
+            let style = (existing?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            style.lineSpacing = max(style.lineSpacing, fontSize * 0.7)
+            style.paragraphSpacing = max(style.paragraphSpacing, fontSize * 0.5)
+            text.addAttribute(.paragraphStyle, value: style, range: paragraph)
+        }
+    }
+}
+
 private enum UnifiedSelectableProseBuilder {
     private static let horizontalRuleLightImage = solidImage(
         color: UIColor(red: 198 / 255, green: 198 / 255, blue: 208 / 255, alpha: 0.40)
@@ -3152,6 +3187,7 @@ private enum UnifiedSelectableProseBuilder {
             }
         }
 
+        InlineCodeReadingStyle.applySpacing(to: result, fontSize: fontSize)
         return result
     }
 
@@ -3538,10 +3574,8 @@ private enum UnifiedSelectableProseBuilder {
         range: NSRange
     ) {
         guard range.length > 0 else { return }
-        let legacyInlineCodeScale: CGFloat = 13 / 15.7
-        let codeSize = baseFont.pointSize * legacyInlineCodeScale
         let monospacedFont = UIFont.monospacedSystemFont(
-            ofSize: codeSize,
+            ofSize: baseFont.pointSize,
             weight: weight
         )
 

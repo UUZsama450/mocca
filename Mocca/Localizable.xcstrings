@@ -3610,17 +3610,6 @@
         }
       }
     },
-    "分段正则表达式": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Segment Regex"
-          }
-        }
-      }
-    },
     "分组（可选）": {
       "extractionState": "manual",
       "localizations": {
@@ -10849,17 +10838,6 @@
         }
       }
     },
-    "正则表达式无效，聊天中会安全回退到内置句子拆分。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Invalid regular expression. Chat will fall back to built-in sentence splitting."
-          }
-        }
-      }
-    },
     "正在压缩上下文…": {
       "extractionState": "manual",
       "localizations": {
@@ -11098,17 +11076,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Each assistant supports up to 32 files. Select fewer files."
-          }
-        }
-      }
-    },
-    "每个匹配项作为一条气泡；留空使用内置句子拆分。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Each match becomes a separate bubble. Leave blank to use built-in sentence splitting."
           }
         }
       }
@@ -12649,17 +12616,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Leave blank for the default organization rules. This does not change the assistant's system prompt."
-          }
-        }
-      }
-    },
-    "留空则使用内置的按句拆分": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Leave blank to split by sentence"
           }
         }
       }
@@ -22355,6 +22311,388 @@
           "stringUnit": {
             "state": "translated",
             "value": "Opens App Store purchase confirmation. Your first tip unlocks the water drop and %@ commemorative decorations; repeat purchases do not add new decorations."
+          }
+        }
+      }
+    },
+    "聊天分段": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat segmentation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天分段"
+          }
+        }
+      }
+    },
+    "最多分段数": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximum segments"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最多分段数"
+          }
+        }
+      }
+    },
+    "%@ 条待发送": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ messages pending"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 条待发送"
+          }
+        }
+      }
+    },
+    "待发送": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待发送"
+          }
+        }
+      }
+    },
+    "暂停": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pause"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂停"
+          }
+        }
+      }
+    },
+    "立即发送": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send now"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "立即发送"
+          }
+        }
+      }
+    },
+    "等待合并发送": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting to send together"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待合并发送"
+          }
+        }
+      }
+    },
+    "等待本轮回复结束": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the current reply"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待本轮回复结束"
+          }
+        }
+      }
+    },
+    "请先发送或删除待发送消息，再重新生成回复。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send or delete pending messages before regenerating a reply."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先发送或删除待发送消息，再重新生成回复。"
+          }
+        }
+      }
+    },
+    "连续发送": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send multiple messages"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连续发送"
+          }
+        }
+      }
+    },
+    "气泡间距": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bubble spacing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "气泡间距"
+          }
+        }
+      }
+    },
+    "%@ 点": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ pt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 点"
+          }
+        }
+      }
+    },
+    "紧凑": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compact"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "紧凑"
+          }
+        }
+      }
+    },
+    "宽松": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spacious"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "宽松"
+          }
+        }
+      }
+    },
+    "恢复默认间距": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset spacing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复默认间距"
+          }
+        }
+      }
+    },
+    "回复分段、气泡间距与连续发送": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply segments, bubble spacing, and batched sends"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复分段、气泡间距与连续发送"
+          }
+        }
+      }
+    },
+    "自定义气泡间距": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom Bubble Spacing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自定义气泡间距"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "达到段数上限后，后续内容并入最后一段。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Once the segment limit is reached, subsequent content is included in the final segment."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "达到段数上限后，后续内容并入最后一段。"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "按自然段逐步展示助手回复，支持普通聊天和群聊。无气泡时显示为文字块，已保存的分段不受设置变更影响。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Display assistant replies progressively as natural paragraphs in single and group chats. Without bubbles, segments appear as text blocks. Saved segmentation is preserved when settings change."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按自然段逐步展示助手回复，支持普通聊天和群聊。无气泡时显示为文字块，已保存的分段不受设置变更影响。"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "开启后，可调整消息与分段内容之间的垂直间距。关闭后使用默认间距，并保留自定义数值。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When enabled, adjust the vertical spacing between messages and reply segments. Turn off to use default spacing while retaining the custom value."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启后，可调整消息与分段内容之间的垂直间距。关闭后使用默认间距，并保留自定义数值。"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "普通聊天中，连续消息在最后一次发送 %@ 秒后统一提交。回复期间新增的消息归入下一批；切换聊天、进入后台或停止生成时暂停提交，并保留待发送消息。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In single chats, consecutive messages are submitted together %@ seconds after the last send. Messages added during a reply form the next batch. Switching chats, backgrounding the app, or stopping generation pauses submission and preserves pending messages."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "普通聊天中，连续消息在最后一次发送 %@ 秒后统一提交。回复期间新增的消息归入下一批；切换聊天、进入后台或停止生成时暂停提交，并保留待发送消息。"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "等待时间": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wait time"
+          }
+        }
+      }
+    },
+    "输入框伸缩动画": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input field resize animation"
+          }
+        }
+      }
+    },
+    "开启时，输入区域随换行平滑伸缩；关闭后直接到位。手动滚动和光标闪烁不受影响。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoothly resize the input field as lines change. Turn off to update immediately. Manual scrolling and cursor blinking stay the same."
           }
         }
       }

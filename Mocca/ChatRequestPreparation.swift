@@ -13,6 +13,7 @@ enum ChatRequestPreparation {
         assistants: [AssistantProfile],
         ocrContext: (provider: ProviderConfiguration, modelID: String)?
     ) async throws -> [ChatRequestMessage] {
+        let contextMessages = contextMessages.filter { $0.isPendingUserSend != true }
         let groupConversation = conversation.flatMap {
             $0.groupAssistantIDs.count >= 2 ? $0 : nil
         }
@@ -21,10 +22,14 @@ enum ChatRequestPreparation {
         // newest eligible N historical images are uploaded, unless the user chooses
         // the explicit unlimited option. Collapsed user-image groups stay visible in
         // the transcript but are excluded from either selection.
-        let newestUserMessageID = contextMessages.last(where: { $0.role == .user })?.id
+        let newestUser = contextMessages.last(where: { $0.role == .user })
+        func isNewestUserTurn(_ message: ChatMessage) -> Bool {
+            message.role == .user && (message.id == newestUser?.id
+                || (message.userSendBatchID != nil && message.userSendBatchID == newestUser?.userSendBatchID))
+        }
         let historicalImageLimit = min(max(preferences.historicalImageResendLimit, 1), 10)
         let eligibleHistoricalImageIDs = contextMessages.flatMap { message -> [UUID] in
-            let isNewestUserMessage = message.role == .user && message.id == newestUserMessageID
+            let isNewestUserMessage = isNewestUserTurn(message)
             guard !isNewestUserMessage, message.historicalImagesCollapsed != true else { return [] }
             return message.attachments.compactMap { attachment in
                 attachment.kind == .image ? attachment.id : nil
@@ -46,7 +51,7 @@ enum ChatRequestPreparation {
             try Task.checkCancellation()
             var content = message.text
             let imageAttachments = message.attachments.filter { $0.kind == .image }
-            let isNewestUserMessage = message.role == .user && message.id == newestUserMessageID
+            let isNewestUserMessage = isNewestUserTurn(message)
             let transmittedImageAttachments = isNewestUserMessage
                 ? imageAttachments
                 : imageAttachments.filter { transmittedHistoricalImageIDs.contains($0.id) }
@@ -172,9 +177,14 @@ enum ChatRequestPreparation {
     private static func userTurnCountsAfter(_ messages: [ChatMessage]) -> [Int] {
         var counts = Array(repeating: 0, count: messages.count)
         var userTurns = 0
+        var countedBatches = Set<UUID>()
         for index in messages.indices.reversed() {
             counts[index] = userTurns
-            if messages[index].role == .user { userTurns += 1 }
+            if messages[index].role == .user {
+                if let batch = messages[index].userSendBatchID,
+                   !countedBatches.insert(batch).inserted { continue }
+                userTurns += 1
+            }
         }
         return counts
     }

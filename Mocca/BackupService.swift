@@ -1854,8 +1854,7 @@ private enum LegacyKelivoSettingsDecoder {
             providerIDMap: providerResult.providerIDMap,
             modelIDMap: providerResult.modelIDMap
         )
-        assignBool(values, "group_chat_segmented_reply_v1", to: &preferences.groupChatSegmentedReply)
-        if let v = string(values, "group_chat_segment_regex_v1") { preferences.groupChatSegmentRegex = v }
+        assignBool(values, "group_chat_segmented_reply_v1", to: &preferences.chatSegmentedReply)
         assignBool(values, "group_chat_force_assistant_bubble_v1", to: &preferences.groupChatForceAssistantBubble)
         if let v = double(values["group_chat_bubble_opacity_v1"]) { preferences.groupChatBubbleOpacity = min(max(v, 0), 1) }
         assignStyle(values, "group_chat_bubble_style_v1", to: &preferences.groupChatBubbleStyle)

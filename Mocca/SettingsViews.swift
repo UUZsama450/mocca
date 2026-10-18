@@ -41,6 +41,7 @@ private enum SettingsSearchDestination: Hashable {
     case theme
     case appFont
     case preferenceSheet(PreferencesSheetRoute)
+    case chatSegmentation
     case chatItemDisplay
     case rendering
     case chatBubbles
@@ -92,11 +93,13 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "主题设置", context: "偏好设置", keywords: "主题 颜色 原生绿色", systemImage: "paintpalette", destination: .theme),
         .init(title: "应用字体", context: "偏好设置", keywords: "字体 font", systemImage: "textformat", destination: .appFont),
         .init(title: "聊天字体大小", context: "偏好设置", keywords: "字号", systemImage: "textformat.size", destination: .preferenceSheet(.chatFont)),
+        .init(title: "聊天分段", context: "偏好设置 · 聊天内容", keywords: "回复 分段 流式 段数 上限 气泡 间距 连续 发送 等待", systemImage: "text.bubble", destination: .chatSegmentation),
         .init(title: "消息显示", context: "偏好设置", keywords: "聊天项目 显示 头像 名称 时间 操作", systemImage: "message", destination: .chatItemDisplay),
         .init(title: "排版与渲染", context: "偏好设置", keywords: "Markdown 行距 间距 HTML 代码块", systemImage: "text.alignleft", destination: .rendering),
         .init(title: "助手消息行间距", context: "偏好设置", keywords: "行距", systemImage: "arrow.up.and.down.text.horizontal", destination: .preferenceSheet(.assistantLineSpacing)),
         .init(title: "Markdown 列表间距", context: "偏好设置", keywords: "列表 行距", systemImage: "list.bullet", destination: .preferenceSheet(.assistantMarkdownListItemSpacing)),
         .init(title: "Markdown 块间距", context: "偏好设置", keywords: "段落 标题 留白", systemImage: "text.alignleft", destination: .preferenceSheet(.assistantMarkdownBlockSpacing)),
+        .init(title: "输入框伸缩动画", context: "偏好设置 · 输入框", keywords: "输入 动画 换行 光标 高度 animation", systemImage: "arrow.up.and.down", destination: .preferences),
         .init(title: "输入框占位文字", context: "偏好设置", keywords: "输入 placeholder", systemImage: "text.cursor", destination: .preferenceSheet(.inputPlaceholder)),
         .init(title: "模型入口样式", context: "偏好设置 · 输入框", keywords: "模型 名称 气泡 图标 选择", systemImage: "sparkles", destination: .preferenceSheet(.modelEntryStyle)),
         .init(title: "输入框背景透明度", context: "偏好设置", keywords: "输入 透明度 亮 暗", systemImage: "circle.lefthalf.filled", destination: .preferenceSheet(.inputOpacity)),
@@ -622,6 +625,8 @@ struct SettingsView: View {
             AppFontPreferencesPage()
         case .preferenceSheet(let sheet):
             PreferencesPage(initialSheet: sheet)
+        case .chatSegmentation:
+            ChatSegmentationPreferencesPage()
         case .chatItemDisplay:
             ChatItemDisplayPreferencesPage()
         case .rendering:
@@ -1714,7 +1719,7 @@ private struct SettingsRowLabel: View {
                 .frame(width: 32)
                 .accessibilityHidden(true)
             Text(title)
-                .fontWeight(.medium)
+                .font(.body.weight(.regular))
                 .foregroundStyle(color)
         }
         .contentShape(Rectangle())
@@ -1781,7 +1786,7 @@ private struct PreferenceNavigationRowLabel: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .fontWeight(.medium)
+                    .font(.body.weight(.regular))
                     .foregroundStyle(.primary)
                 Text(subtitle)
                     .font(.caption)
@@ -2197,29 +2202,6 @@ private struct GroupChatSettingsPage: View {
             }
 
             Section {
-                Toggle(isOn: preferenceBinding(\.groupChatSegmentedReply)) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(L10n.lookup("分段回复"))
-                        Text(L10n.lookup("群聊中，自动把助手的回复拆成多条气泡。"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(L10n.lookup("分段正则表达式"))
-                    TextField(L10n.lookup("留空则使用内置的按句拆分"), text: regexBinding, axis: .vertical)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.system(.body, design: .monospaced))
-                        .lineLimit(2...5)
-                    Text(regexFooter)
-                        .font(.caption)
-                        .foregroundStyle(isRegexValid ? Color.secondary : Color.red)
-                }
-            }
-
-            Section {
                 ForEach(model.assistants) { assistant in
                     Button {
                         model.performListItemHaptic()
@@ -2267,24 +2249,6 @@ private struct GroupChatSettingsPage: View {
                 model.updatePreferences { $0[keyPath: keyPath] = value }
             }
         )
-    }
-
-    private var regexBinding: Binding<String> {
-        Binding(
-            get: { model.preferences.groupChatSegmentRegex },
-            set: { value in model.updatePreferences { $0.groupChatSegmentRegex = value } }
-        )
-    }
-
-    private var isRegexValid: Bool {
-        let pattern = model.preferences.groupChatSegmentRegex.trimmingCharacters(in: .whitespacesAndNewlines)
-        return pattern.isEmpty || (try? NSRegularExpression(pattern: pattern)) != nil
-    }
-
-    private var regexFooter: String {
-        isRegexValid
-            ? L10n.lookup("每个匹配项作为一条气泡；留空使用内置句子拆分。")
-            : L10n.lookup("正则表达式无效，聊天中会安全回退到内置句子拆分。")
     }
 
     private func assistantBubbleColor(for assistant: AssistantProfile) -> Color? {
@@ -3813,6 +3777,16 @@ struct PreferencesPage: View {
 
             Section(L10n.lookup("聊天内容")) {
                 NavigationLink {
+                    ChatSegmentationPreferencesPage()
+                } label: {
+                    PreferenceNavigationRowLabel(
+                        title: L10n.lookup("聊天分段"),
+                        subtitle: L10n.lookup("回复分段、气泡间距与连续发送"),
+                        systemImage: "text.bubble"
+                    )
+                }
+
+                NavigationLink {
                     ChatItemDisplayPreferencesPage()
                 } label: {
                     PreferenceNavigationRowLabel(
@@ -3851,6 +3825,23 @@ struct PreferencesPage: View {
                 ) {
                     activeSheet = .inputPlaceholder
                 }
+
+                Toggle(
+                    isOn: Binding(
+                        get: { model.preferences.composerHeightAnimationEnabled },
+                        set: { value in
+                            model.performSwitchHaptic()
+                            model.updatePreferences { $0.composerHeightAnimationEnabled = value }
+                        }
+                    )
+                ) {
+                    SettingsRowLabel(title: L10n.lookup("输入框伸缩动画"), systemImage: "arrow.up.and.down")
+                }
+                .accessibilityIdentifier("composerHeightAnimationEnabled")
+
+                Text(L10n.lookup("开启时，输入区域随换行平滑伸缩；关闭后直接到位。手动滚动和光标闪烁不受影响。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Toggle(
                     isOn: Binding(
@@ -5337,6 +5328,199 @@ private struct ThemePaletteSwatch: View {
         }
         return AnyShapeStyle(Color(argb: palette.lightAccentARGB) ?? .accentColor)
     }
+}
+
+private struct ChatSegmentationPreferencesPage: View {
+    @Environment(AppModel.self) private var model
+    @State private var bubbleSpacing = UserPreferences.defaultChatBubbleSpacing
+    @State private var isAdjustingBubbleSpacing = false
+    @State private var batchSendDelay = Double(UserPreferences.defaultBatchUserMessageDelaySeconds)
+    @State private var isAdjustingBatchSendDelay = false
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: Binding(
+                    get: { model.preferences.chatSegmentedReply },
+                    set: { value in
+                        model.performSwitchHaptic()
+                        model.updatePreferences { $0.chatSegmentedReply = value }
+                    }
+                )) {
+                    Text(L10n.lookup("聊天分段"))
+                }
+                .accessibilityIdentifier("replySegmentationEnabled")
+
+                if model.preferences.chatSegmentedReply {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(L10n.lookup("最多分段数"))
+                            Spacer()
+                            Text(model.preferences.replySegmentLimit == 0
+                                 ? L10n.lookup("不限") : "\(model.preferences.replySegmentLimit)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { model.preferences.replySegmentLimit == 0
+                                ? 21 : Double(min(model.preferences.replySegmentLimit, 20)) },
+                            set: { value in
+                                let step = Int(value.rounded())
+                                model.updatePreferences { $0.replySegmentLimit = step == 21 ? 0 : step }
+                            }
+                        ), in: 1...21, step: 1)
+                        .tint(Color(uiColor: model.themeSliderUIColor))
+                        .accessibilityLabel(L10n.lookup("最多分段数"))
+                        .accessibilityValue(model.preferences.replySegmentLimit == 0
+                                            ? L10n.lookup("不限") : "\(model.preferences.replySegmentLimit)")
+                        .accessibilityIdentifier("replySegmentationLimit")
+                        HStack {
+                            Text("1")
+                            Spacer()
+                            Text(L10n.lookup("不限"))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        Text(L10n.lookup("达到段数上限后，后续内容并入最后一段。"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } footer: {
+                Text(L10n.lookup("按自然段逐步展示助手回复，支持普通聊天和群聊。无气泡时显示为文字块，已保存的分段不受设置变更影响。"))
+            }
+
+            Section {
+                Toggle(isOn: Binding(
+                    get: { model.preferences.customChatBubbleSpacingEnabled },
+                    set: { value in
+                        model.performSwitchHaptic()
+                        model.updatePreferences { $0.customChatBubbleSpacingEnabled = value }
+                    }
+                )) {
+                    Text(L10n.lookup("自定义气泡间距"))
+                }
+                .accessibilityIdentifier("customChatBubbleSpacingEnabled")
+
+                if model.preferences.customChatBubbleSpacingEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(L10n.lookup("气泡间距"))
+                            Spacer()
+                            Text(L10n.format("%@ 点", [String(Int(bubbleSpacing))]))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { bubbleSpacing },
+                            set: { value in
+                                bubbleSpacing = value.rounded()
+                                // Accessibility adjustments need not begin a drag.
+                                if !isAdjustingBubbleSpacing { saveBubbleSpacing() }
+                            }
+                        ), in: 0...32, step: 1, onEditingChanged: { editing in
+                            isAdjustingBubbleSpacing = editing
+                            if !editing { saveBubbleSpacing() }
+                        })
+                        .tint(Color(uiColor: model.themeSliderUIColor))
+                        .accessibilityLabel(L10n.lookup("气泡间距"))
+                        .accessibilityValue(L10n.format("%@ 点", [String(Int(bubbleSpacing))]))
+                        .accessibilityIdentifier("chatBubbleSpacing")
+                        HStack {
+                            Text(L10n.lookup("紧凑"))
+                            Spacer()
+                            Button(L10n.lookup("恢复默认间距")) {
+                                bubbleSpacing = UserPreferences.defaultChatBubbleSpacing
+                                saveBubbleSpacing()
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color(uiColor: model.themeSliderUIColor))
+                            .accessibilityIdentifier("chatBubbleSpacing.reset")
+                            Spacer()
+                            Text(L10n.lookup("宽松"))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            } footer: {
+                Text(L10n.lookup("开启后，可调整消息与分段内容之间的垂直间距。关闭后使用默认间距，并保留自定义数值。"))
+            }
+
+            Section {
+                Toggle(isOn: Binding(
+                    get: { model.preferences.batchUserMessages },
+                    set: { value in
+                        model.performSwitchHaptic()
+                        model.updatePreferences { $0.batchUserMessages = value }
+                    }
+                )) {
+                    Text(L10n.lookup("连续发送"))
+                }
+                .accessibilityIdentifier("batchUserMessagesEnabled")
+
+                if model.preferences.batchUserMessages {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(L10n.lookup("等待时间"))
+                            Spacer()
+                            Text(L10n.format("%@ 秒", [String(Int(batchSendDelay))]))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { batchSendDelay },
+                            set: { value in
+                                batchSendDelay = value.rounded()
+                                if !isAdjustingBatchSendDelay { saveBatchSendDelay() }
+                            }
+                        ), in: 3...15, step: 1, onEditingChanged: { editing in
+                            isAdjustingBatchSendDelay = editing
+                            if !editing { saveBatchSendDelay() }
+                        })
+                        .tint(Color(uiColor: model.themeSliderUIColor))
+                        .accessibilityLabel(L10n.lookup("等待时间"))
+                        .accessibilityValue(L10n.format("%@ 秒", [String(Int(batchSendDelay))]))
+                        .accessibilityIdentifier("batchUserMessageDelay")
+                        HStack {
+                            Text(L10n.format("%@ 秒", ["3"]))
+                            Spacer()
+                            Text(L10n.format("%@ 秒", ["15"]))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            } footer: {
+                Text(L10n.format("普通聊天中，连续消息在最后一次发送 %@ 秒后统一提交。回复期间新增的消息归入下一批；切换聊天、进入后台或停止生成时暂停提交，并保留待发送消息。", [String(Int(batchSendDelay))]))
+            }
+        }
+        .settingsGroupedPageStyle()
+        .navigationTitle(L10n.lookup("聊天分段"))
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            bubbleSpacing = model.preferences.chatBubbleSpacing
+            batchSendDelay = Double(model.preferences.batchUserMessageDelaySeconds)
+        }
+        .onDisappear {
+            saveBubbleSpacing()
+            saveBatchSendDelay()
+        }
+    }
+
+    private func saveBubbleSpacing() {
+        guard model.preferences.chatBubbleSpacing != bubbleSpacing else { return }
+        // Updating the shared preference invalidates transcript layout. Keep
+        // thumb tracking local and publish the finished adjustment once.
+        model.updatePreferences { $0.chatBubbleSpacing = bubbleSpacing }
+    }
+
+    private func saveBatchSendDelay() {
+        let seconds = min(15, max(3, Int(batchSendDelay)))
+        guard model.preferences.batchUserMessageDelaySeconds != seconds else { return }
+        model.updatePreferences { $0.batchUserMessageDelaySeconds = seconds }
+    }
+
 }
 
 private struct ChatBubblePreferencesPage: View {

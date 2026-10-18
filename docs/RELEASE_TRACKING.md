@@ -1,18 +1,11 @@
-# 版本与发布记录 / Version and release tracking
+# 发布状态 / Release tracking
 
-更新时间 / Updated: 2026-10-15
-
-| Channel | Version | Distribution |
+| 渠道 / Channel | 版本 / Version | 说明 / Notes |
 | --- | --- | --- |
-| GitHub main 源码 / source | **1.0.4 (5219)** | 赞助恢复入口清理与 MCP 管理改进 / sponsorship cleanup and MCP management improvements |
-| Xcode 工程默认值 / project defaults | **1.0.4 (5219)** | 可配置签名 / configurable signing |
-| GitHub 下载包 / preview | [**1.0.4 (5219)**](https://github.com/UUZsama450/mocca/releases/tag/v1.0.4) | 沿用原发布页，需要自行签名 / same release page, own signing required |
-| App Store | **1.0.4 (5219)** | 单独送审，通过后手动发布 / separate review, manual release after approval |
+| GitHub source / project defaults | **1.0.5 (5228)** | Configurable signing; optional features default off |
+| GitHub IPA preview | [**1.0.5 (5228)**](https://github.com/UUZsama450/mocca/releases/tag/v1.0.5) | Requires your own signing |
+| App Store | Separate distribution | This GitHub release does not submit or publish an App Store update |
 
-两种发行包使用同一份已采用的功能源码。公开工程保留可配置签名、默认关闭赞助和整理过的素材，因此 GitHub IPA 与 App Store 签名包不相同。
+The `v1.0.5` tag identifies the 5228 source. The release includes the unsigned IPA, matching source archive, installation instructions, build manifest and SHA-256 checksums. Previous releases and assets are retained.
 
-原 `v1.0.4` 标签仍指向历史 5206 源码。5219 的确切源码提交、源码归档及校验值在发布说明和 `BUILD-INFO-5219.json` 中明确标注；请使用 5219 对应源码链接，不要把页面底部自动生成的旧标签源码归档误认为 5219。旧附件已本地备份并校验，以版本号保留历史下载。5210 未作为单独 Release 发布。
-
-The existing release page carries the refreshed 5219 download. The historical `v1.0.4` Git tag is preserved; the release notes and build manifest identify the exact 5219 source commit and source archive. GitHub's automatic tag archives retain the original tag snapshot. The App Store update is reviewed independently; GitHub availability does not mean the store update is live.
-
-See [release verification](RELEASE_1.0.4_5219.md).
+See [release verification](RELEASE_1.0.5_5228.md) and [installation](INSTALLATION.md).

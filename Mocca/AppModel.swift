@@ -655,6 +655,7 @@ struct UserBubbleSendAnimationRequest: Identifiable, Equatable, Sendable {
     let style: UserBubbleSendAnimationStyle
     let beginsEmptyTranscript: Bool
     let expiresAt: Date
+    var origin: ComposerSendOrigin? = nil
 }
 
 struct UserMessageSendPositionRequest: Identifiable, Equatable, Sendable {
@@ -719,9 +720,12 @@ final class AppModel {
     private(set) var pendingUserBubbleSendAnimation: UserBubbleSendAnimationRequest?
     private(set) var pendingUserMessageSendPositionRequest: UserMessageSendPositionRequest?
     private(set) var sendPresentationGate: SendPresentationGate?
+    private(set) var userBatchSendTokens: [UUID: UUID] = [:]
+    @ObservationIgnored private var userBatchSendTasks: [UUID: Task<Void, Never>] = [:]
     private(set) var pendingMessageTargetNavigationRequest: MessageTargetNavigationRequest?
     var selectedConversationID: UUID {
         didSet {
+            if oldValue != selectedConversationID { pauseUserBatch(for: oldValue) }
             unreadReplyConversationIDs.remove(selectedConversationID)
             if pendingUserBubbleSendAnimation?.conversationID != selectedConversationID {
                 pendingUserBubbleSendAnimation = nil
@@ -758,7 +762,11 @@ final class AppModel {
     var selectedModel: ModelSelection?
     var favoriteModelKeys: Set<String>
     var favoriteProviderIDs: Set<UUID>
-    var assistants: [AssistantProfile]
+    var assistants: [AssistantProfile] {
+        didSet {
+            assistantLookupIndices = nil
+        }
+    }
     var currentAssistantID: UUID
     var instructionInjections: [InstructionInjection]
     var activeInstructionIDsByAssistant: [String: Set<UUID>]
@@ -827,11 +835,16 @@ final class AppModel {
     // only its position; canonical mutations invalidate it, and reads below
     // still observe the array and validate the current identity at that slot.
     @ObservationIgnored private var conversationLookupCache: (id: UUID, index: Int)?
+    // Cache positions only; every read still observes the canonical profiles.
+    // Array mutations (including field edits/import/rollback) invalidate them.
+    @ObservationIgnored private var assistantLookupIndices: [String: Int]?
+    @ObservationIgnored private var replyDisplayProgress: [UUID: ReplySegmentProgress] = [:]
+    @ObservationIgnored private var replyPersistenceProgress: [UUID: ReplySegmentProgress] = [:]
     @ObservationIgnored private var rawStreamingTextByMessageID: [UUID: String] = [:]
     @ObservationIgnored private var streamingRevisions: [UUID: UInt64] = [:]
     @ObservationIgnored private var checkpointedStreamingRevisions: [UUID: UInt64] = [:]
     @ObservationIgnored private var preparedStreamingPayloads:
-        [UUID: (revision: UInt64, text: String, parts: [MessagePart])] = [:]
+        [UUID: (revision: UInt64, text: String, parts: [MessagePart], segmentation: ReplySegmentation?)] = [:]
     // With stream output disabled, reasoning/tools/usage remain unpublished
     // until completion, but still participate in recovery checkpoints.
     @ObservationIgnored private var bufferedStreamingMetadataByMessageID: [UUID: ChatMessage] = [:]
@@ -2000,6 +2013,7 @@ final class AppModel {
         conversationID: UUID,
         fallbackToFullProjectionWhenTruncated: Bool = false
     ) -> [ChatMessage] {
+        let projection = projection.filter { $0.message.isPendingUserSend != true }
         guard let truncateIndex = conversations.first(where: { $0.id == conversationID })?.truncateIndex,
               truncateIndex >= 0 else {
             return projection.map(\.message)
@@ -2617,7 +2631,19 @@ final class AppModel {
 
     func assistantProfile(id: String?) -> AssistantProfile? {
         guard let id else { return nil }
-        return assistants.first { $0.id.uuidString == id }
+        let profiles = assistants
+        if assistantLookupIndices == nil {
+            var indices: [String: Int] = [:]
+            indices.reserveCapacity(profiles.count)
+            for (index, profile) in profiles.enumerated() {
+                let key = profile.id.uuidString
+                // Preserve first-match behavior even for duplicate imports.
+                if indices[key] == nil { indices[key] = index }
+            }
+            assistantLookupIndices = indices
+        }
+        guard let index = assistantLookupIndices?[id] else { return nil }
+        return profiles[index]
     }
 
     func displayAssistant(for message: ChatMessage) -> AssistantProfile {
@@ -4199,7 +4225,7 @@ final class AppModel {
             conversationID: conversationID
         ).count
         let transcript = visible
-            .filter { !$0.text.isEmpty }
+            .filter { !$0.text.isEmpty && $0.isPendingUserSend != true }
             .map { "\($0.role == .assistant ? "助手" : "用户")：\($0.text)" }
             .joined(separator: "\n")
         guard !transcript.isEmpty else { return }
@@ -4345,7 +4371,7 @@ final class AppModel {
         for conversation in selectedConversations {
             let lines = selectedMessages(for: conversation.id).compactMap { message -> String? in
                 guard message.role == .user || message.role == .assistant,
-                      message.status == .complete else { return nil }
+                      message.status == .complete, message.isPendingUserSend != true else { return nil }
                 let text = RecentMemoryNoiseFilter.compactWhitespace(message.text)
                 guard !RecentMemoryNoiseFilter.isNoise(text) else { return nil }
                 return "\(message.role == .user ? "用户" : "助手")：\(text)"
@@ -5254,7 +5280,9 @@ final class AppModel {
     }
 
     func updatePreferences(_ transform: (inout UserPreferences) -> Void) {
+        let wasBatchEnabled = preferences.batchUserMessages
         transform(&preferences)
+        if wasBatchEnabled && !preferences.batchUserMessages { pauseAllUserBatches() }
         if !preferences.userBubbleSendAnimationEnabled {
             pendingUserBubbleSendAnimation = nil
         }
@@ -5666,6 +5694,9 @@ final class AppModel {
                     sentTimeZoneOffsetSeconds: source.sentTimeZoneOffsetSeconds,
                     updatedAt: source.updatedAt,
                     status: source.status == .streaming ? .interrupted : source.status,
+                    replySegmentation: source.replySegmentation,
+                    userSendBatchID: source.userSendBatchID,
+                    isPendingUserSend: source.isPendingUserSend,
                     interruptionReason: source.interruptionReason,
                     parts: source.parts,
                     reasoningSegments: source.reasoningSegments,
@@ -5808,6 +5839,7 @@ final class AppModel {
         discardComposerPackets(for: existingIDs)
 
         for id in existingIDs {
+            pauseUserBatch(for: id)
             stopStreaming(ifConversationID: id)
             let summaryRun = conversationSummaryRuns.removeValue(forKey: id)
             summaryRun?.task.cancel()
@@ -7385,7 +7417,8 @@ final class AppModel {
         for message: ChatMessage,
         conversationID: UUID,
         beginsEmptyTranscript: Bool,
-        now: Date
+        now: Date,
+        origin: ComposerSendOrigin?
     ) {
         guard preferences.userBubbleSendAnimationEnabled else {
             pendingUserBubbleSendAnimation = nil
@@ -7398,7 +7431,8 @@ final class AppModel {
             messageID: message.id,
             style: preferences.userBubbleSendAnimationStyle,
             beginsEmptyTranscript: beginsEmptyTranscript,
-            expiresAt: now.addingTimeInterval(1.0)
+            expiresAt: now.addingTimeInterval(1.0),
+            origin: beginsEmptyTranscript ? nil : origin
         )
         pendingUserBubbleSendAnimation = request
 
@@ -7409,13 +7443,130 @@ final class AppModel {
         }
     }
 
-    func sendDraft(for conversationID: UUID) -> Bool {
+    /// Pending rows form the tail of a single chat. Reading only that tail keeps
+    /// composer updates independent of the length of the conversation history.
+    func pendingUserBatch(for conversationID: UUID) -> [ChatMessage] {
+        Array((conversationMessageStore[conversationID] ?? []).reversed()
+            .prefix { $0.role == .user && $0.isPendingUserSend == true }.reversed())
+    }
+
+    func canQueueUserMessages(for conversationID: UUID) -> Bool {
+        guard let conversation = conversation(for: conversationID),
+              conversation.groupAssistantIDs.count < 2 else { return false }
+        return preferences.batchUserMessages || !pendingUserBatch(for: conversationID).isEmpty
+    }
+
+    func pauseUserBatch(for conversationID: UUID) {
+        userBatchSendTasks.removeValue(forKey: conversationID)?.cancel()
+        userBatchSendTokens.removeValue(forKey: conversationID)
+    }
+
+    func pauseAllUserBatches() {
+        for id in Array(userBatchSendTokens.keys) { pauseUserBatch(for: id) }
+    }
+
+    private func scheduleUserBatch(for conversationID: UUID) {
+        pauseUserBatch(for: conversationID)
+        let token = UUID()
+        let delay = min(15, max(3, preferences.batchUserMessageDelaySeconds))
+        userBatchSendTokens[conversationID] = token
+        userBatchSendTasks[conversationID] = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, self.userBatchSendTokens[conversationID] == token else { return }
+            self.userBatchSendTasks[conversationID] = nil
+            self.submitUserBatch(for: conversationID, token: token)
+        }
+    }
+
+    func sendUserBatchNow(for conversationID: UUID) {
+        guard selectedConversationID == conversationID else { return }
+        pauseUserBatch(for: conversationID)
+        let token = UUID()
+        userBatchSendTokens[conversationID] = token
+        submitUserBatch(for: conversationID, token: token)
+    }
+
+    /// No suspension from token validation through durable commit and activation:
+    /// a new send either joins this snapshot or belongs to the next batch.
+    private func submitUserBatch(for conversationID: UUID, token: UUID) {
+        guard userBatchSendTokens[conversationID] == token else { return }
+        guard selectedConversationID == conversationID,
+              let conversation = conversation(for: conversationID),
+              conversation.groupAssistantIDs.count < 2 else {
+            pauseUserBatch(for: conversationID)
+            return
+        }
+        guard !isConversationStreaming(conversationID) else { return }
+        let pending = pendingUserBatch(for: conversationID)
+        guard let last = pending.last else {
+            pauseUserBatch(for: conversationID)
+            return
+        }
+        // Claim the token once. Failed persistence leaves the rows visibly queued
+        // for an explicit retry rather than starting an automatic retry loop.
+        pauseUserBatch(for: conversationID)
+        guard requireConversationPersistence(),
+              let assistant = replyAssistantsForCurrentSend().first,
+              hasReadyChatModel(for: assistant, conversationID: conversationID),
+              let context = activeProviderContext(for: assistant, conversationID: conversationID) else {
+            return
+        }
+        let conversationsBefore = conversations
+        let rowsBefore = conversationMessageStore[conversationID]
+        let windowBefore = messageWindowsByConversation[conversationID]
+        let ids = Set(pending.map(\.id))
+        var rows = rowsBefore ?? []
+        for index in rows.indices where ids.contains(rows[index].id) {
+            rows[index].isPendingUserSend = nil
+        }
+        conversationMessageStore[conversationID] = rows
+        if let index = conversations.firstIndex(where: { $0.id == conversationID }),
+           conversations[index].title == Conversation.defaultTitle, !preferences.autoGenerateTitle {
+            let firstText = pending.first?.text ?? ""
+            conversations[index].title = firstText.isEmpty ? "[附件]" : String(firstText.prefix(22))
+        }
+        // Clearing old context while a batch waits must not omit any of the new
+        // messages being explicitly submitted in this transaction.
+        let requestMessages = selectedContextMessages(for: conversationID).filter { !ids.contains($0.id) }
+            + rows.suffix(pending.count)
+        let placeholder = stageAssistantStreamMessage(
+            conversationID: conversationID, provider: context.provider,
+            selection: context.selection, assistant: assistant
+        )
+        guard saveImmediately() else {
+            conversations = conversationsBefore
+            conversationMessageStore[conversationID] = rowsBefore
+            messageWindowsByConversation[conversationID] = windowBefore
+            return
+        }
+        if let position = pendingUserMessageSendPositionRequest,
+           position.conversationID == conversationID, position.messageID == last.id {
+            sendPresentationGate = SendPresentationGate(
+                requestID: position.id, conversationID: conversationID,
+                userMessageID: last.id, assistantMessageID: placeholder.id
+            )
+        }
+        startAssistantStream(
+            conversationID: conversationID, requestMessages: requestMessages,
+            provider: context.provider, selection: context.selection, assistant: assistant,
+            reactionTargetMessageID: preferences.aiMessageReactionsEnabled ? last.id : nil,
+            preparedInitialAssistantMessage: placeholder
+        )
+    }
+
+    func sendDraft(for conversationID: UUID, origin: ComposerSendOrigin? = nil) -> Bool {
         guard selectedConversationID == conversationID else { return false }
         guard !hasUnreadyImages(for: conversationID) else { return false }
         guard requireConversationPersistence(),
               selectedConversationID == conversationID,
               selectedConversation?.id == conversationID else { return false }
-        guard !selectedConversationIsStreaming else { return false }
+        let batchesUserMessages = canQueueUserMessages(for: conversationID)
+        guard batchesUserMessages || !selectedConversationIsStreaming else { return false }
+        // Regeneration can register a run before its asynchronous placeholder is
+        // staged. Keep the draft until that row exists, so queued user rows never
+        // end up before a newly appended assistant placeholder.
+        if batchesUserMessages, selectedConversationIsStreaming,
+           activeStreamingMessageIDsByConversation[conversationID] == nil { return false }
         // The provider may finish before the visual handoff has landed. Keep
         // that request single-flight as well: replacing it here would orphan
         // the exact row/revision token while a second send mutates the same
@@ -7455,6 +7606,8 @@ final class AppModel {
             createdAt: now,
             sentTimeZoneOffsetSeconds: TimeZone.current.secondsFromGMT(for: now),
             updatedAt: now,
+            userSendBatchID: batchesUserMessages ? (pendingUserBatch(for: conversationID).last?.userSendBatchID ?? UUID()) : nil,
+            isPendingUserSend: batchesUserMessages ? true : nil,
             attachments: attachments,
             modelID: context.selection.modelID,
             providerID: providerID
@@ -7463,11 +7616,11 @@ final class AppModel {
         // Capture provider context before the persisted assistant placeholder
         // is appended. A placeholder is local UI state and must never be sent
         // back to the provider as part of the request.
-        let requestMessages = selectedContextMessages(for: conversationID)
+        let requestMessages = batchesUserMessages ? [] : selectedContextMessages(for: conversationID)
 
         if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
             // 开启自动生成标题时，先保持默认标题，等回复结束后由模型生成。
-            if conversations[index].groupAssistantIDs.count < 2,
+            if !batchesUserMessages, conversations[index].groupAssistantIDs.count < 2,
                conversations[index].title == Conversation.defaultTitle,
                !preferences.autoGenerateTitle {
                 conversations[index].title = text.isEmpty ? "[附件]" : String(text.prefix(22))
@@ -7485,7 +7638,7 @@ final class AppModel {
         // On a crash after this commit but before activation, cold-start
         // normalization retains the placeholder as interrupted alongside the
         // user message. This also eliminates one full-store save from every send.
-        let preparedInitialAssistantMessage = stageAssistantStreamMessage(
+        let preparedInitialAssistantMessage = batchesUserMessages ? nil : stageAssistantStreamMessage(
             conversationID: conversationID,
             provider: context.provider,
             selection: context.selection,
@@ -7509,7 +7662,8 @@ final class AppModel {
             for: userMessage,
             conversationID: conversationID,
             beginsEmptyTranscript: wasTranscriptEmptyBeforeSend,
-            now: Date()
+            now: Date(),
+            origin: origin
         )
         // A send is not a conversation selection. Give the transcript the
         // concrete user row to reveal before it hands ownership to streaming;
@@ -7523,7 +7677,8 @@ final class AppModel {
         // Existing one-to-one chats use one ordered presentation lifecycle:
         // user row layout, initial send positioning, assistant publication,
         // then streaming follow. Storage and network still own both rows now.
-        if !wasTranscriptEmptyBeforeSend, replyAssistants.count == 1 {
+        if !wasTranscriptEmptyBeforeSend, replyAssistants.count == 1,
+           let preparedInitialAssistantMessage {
             sendPresentationGate = SendPresentationGate(
                 requestID: sendPositionRequest.id,
                 conversationID: conversationID,
@@ -7532,6 +7687,15 @@ final class AppModel {
             )
         }
         pendingUserMessageSendPositionRequest = sendPositionRequest
+
+        if batchesUserMessages {
+            if preferences.batchUserMessages {
+                scheduleUserBatch(for: conversationID)
+            } else {
+                sendUserBatchNow(for: conversationID)
+            }
+            return true
+        }
 
         if replyAssistants.count > 1 {
             startGroupAssistantStreams(
@@ -7564,6 +7728,8 @@ final class AppModel {
               let location = messageLocation(for: id),
               !isMessageStreaming(id) else { return }
 
+        pauseUserBatch(for: location.conversationID)
+
         var messages = conversationMessageStore[location.conversationID, default: []]
         guard messages.indices.contains(location.index) else { return }
         let previousSummaryInput = conversationSummaryInputSnapshot(
@@ -7572,6 +7738,11 @@ final class AppModel {
         )
         let role = messages[location.index].role
         messages[location.index].text = cleaned
+        if let segmentation = messages[location.index].replySegmentation, segmentation.isEnabled {
+            var scanner = ReplySegmentScanner(maximumSegments: segmentation.maximumSegments)
+            scanner.advance(through: cleaned)
+            messages[location.index].replySegmentation = scanner.segmentation
+        }
         messages[location.index].updatedAt = .now
         messages[location.index].parts = [MessagePart(kind: .text, text: cleaned)]
         conversationMessageStore[location.conversationID] = messages
@@ -7587,6 +7758,10 @@ final class AppModel {
         }
 
         guard didPersist, sendAfterSave else { return }
+        if messages[location.index].isPendingUserSend == true {
+            sendUserBatchNow(for: location.conversationID)
+            return
+        }
         if role == .assistant {
             continueResponse(after: id)
         } else {
@@ -7596,6 +7771,7 @@ final class AppModel {
 
     func deleteMessage(_ id: UUID) {
         guard let location = messageLocation(for: id) else { return }
+        pauseUserBatch(for: location.conversationID)
         if activeStreamingMessageIDsByConversation[location.conversationID] == id {
             stopStreaming(ifConversationID: location.conversationID)
         }
@@ -7846,6 +8022,10 @@ final class AppModel {
         guard let location = messageLocation(for: id),
               let rawMessages = conversationMessageStore[location.conversationID],
               rawMessages.indices.contains(location.index) else { return }
+        guard pendingUserBatch(for: location.conversationID).isEmpty else {
+            presentError(L10n.lookup("请先发送或删除待发送消息，再重新生成回复。"))
+            return
+        }
         guard !isConversationStreaming(location.conversationID) else { return }
         let targetMessage = rawMessages[location.index]
         let projection = selectedMessageProjection(for: location.conversationID, rawMessages: rawMessages)
@@ -7959,6 +8139,10 @@ final class AppModel {
         guard let location = messageLocation(for: id),
               let rawMessages = conversationMessageStore[location.conversationID],
               rawMessages.indices.contains(location.index) else { return }
+        guard pendingUserBatch(for: location.conversationID).isEmpty else {
+            presentError(L10n.lookup("请先发送或删除待发送消息，再重新生成回复。"))
+            return
+        }
         guard !isConversationStreaming(location.conversationID) else { return }
         let targetMessage = rawMessages[location.index]
         let projection = selectedMessageProjection(
@@ -8037,6 +8221,17 @@ final class AppModel {
     ) -> ChatMessage {
         let now = Date()
         let providerID = provider.id.uuidString
+        let isGroup = (conversations.first { $0.id == conversationID }?.groupAssistantIDs.count ?? 0) >= 2
+        let segmentation: ReplySegmentation?
+        if isGroup {
+            segmentation = ReplySegmentation(
+                maximumSegments: preferences.chatSegmentedReply ? preferences.replySegmentLimit : 1,
+                isEnabled: preferences.chatSegmentedReply
+            )
+        } else {
+            segmentation = preferences.chatSegmentedReply
+                ? ReplySegmentation(maximumSegments: preferences.replySegmentLimit) : nil
+        }
         let assistantMessage = ChatMessage(
             conversationID: conversationID,
             role: .assistant,
@@ -8044,6 +8239,7 @@ final class AppModel {
             createdAt: now,
             updatedAt: now,
             status: .streaming,
+            replySegmentation: segmentation,
             modelID: selection.modelID,
             providerID: providerID,
             groupID: assistant.id.uuidString,
@@ -8158,8 +8354,9 @@ final class AppModel {
         }
         let task = Task { [weak self] in
             guard let self else { return }
+            var completedNormally = false
             defer {
-                self.clearStreamingRun(for: conversationID, runID: runID)
+                self.clearStreamingRun(for: conversationID, runID: runID, completedNormally: completedNormally)
             }
             do {
                 guard self.isCurrentStreamingRun(conversationID, runID: runID) else { return }
@@ -8176,6 +8373,7 @@ final class AppModel {
                     version: version,
                     preparedAssistantMessage: preparedInitialAssistantMessage
                 )
+                completedNormally = true
                 self.markReplyUnreadIfNeeded(for: conversationID)
             } catch {
                 self.finishUnsuccessfulStreamingRun(
@@ -8473,6 +8671,11 @@ final class AppModel {
             finalSystemPrompt = finalSystemPrompt.map { $0 + "\n\n" + reactionPrompt } ?? reactionPrompt
         }
 
+        if assistantMessage.replySegmentation?.isEnabled == true {
+            finalSystemPrompt = finalSystemPrompt.map { $0 + "\n\n" + ReplySegmentation.prompt }
+                ?? ReplySegmentation.prompt
+        }
+
         let requestOptions = ChatRequestOptions(
             systemPrompt: finalSystemPrompt,
             temperature: assistant.temperature,
@@ -8663,6 +8866,7 @@ final class AppModel {
     }
 
     func stopStreaming() {
+        pauseUserBatch(for: selectedConversationID)
         stopStreaming(
             ifConversationID: selectedConversationID,
             mode: .userInitiated
@@ -8706,12 +8910,13 @@ final class AppModel {
     }
 
     private func stopAllStreaming() {
+        pauseAllUserBatches()
         for conversationID in Array(streamingConversationIDs) {
             stopStreaming(ifConversationID: conversationID)
         }
     }
 
-    private func clearStreamingRun(for conversationID: UUID, runID: UUID? = nil) {
+    private func clearStreamingRun(for conversationID: UUID, runID: UUID? = nil, completedNormally: Bool = false) {
         if let runID, streamingRunIDsByConversation[conversationID] != runID {
             return
         }
@@ -8727,6 +8932,7 @@ final class AppModel {
             streamingRevisions.removeValue(forKey: messageID)
             checkpointedStreamingRevisions.removeValue(forKey: messageID)
             preparedStreamingPayloads.removeValue(forKey: messageID)
+            replyPersistenceProgress.removeValue(forKey: messageID)
             bufferedStreamingMetadataByMessageID.removeValue(forKey: messageID)
             clearStreamingDisplayState(for: messageID)
             rawStreamingTextByMessageID.removeValue(forKey: messageID)
@@ -8734,10 +8940,17 @@ final class AppModel {
             searchImageCandidatesByMessageID.removeValue(forKey: messageID)
             pendingSearchImageRequestsByMessageID.removeValue(forKey: messageID)
         }
+        if !completedNormally { pauseUserBatch(for: conversationID) }
         streamingConversationIDs.remove(conversationID)
         streamingTasksByConversation[conversationID] = nil
         streamingRunIDsByConversation[conversationID] = nil
         activeStreamingMessageIDsByConversation[conversationID] = nil
+        if completedNormally, let token = userBatchSendTokens[conversationID],
+           userBatchSendTasks[conversationID] == nil {
+            Task { @MainActor [weak self] in
+                self?.submitUserBatch(for: conversationID, token: token)
+            }
+        }
     }
 
     private func markReplyUnreadIfNeeded(for conversationID: UUID) {
@@ -8851,7 +9064,7 @@ final class AppModel {
             if candidates.first?.rank == 0 && rankedCandidate.rank != 0 { break }
             let candidate = rankedCandidate.conversation
             let titleMatches = rankedCandidate.rank < 2
-            let messages = searchableMessages(for: candidate.id)
+            let messages = searchableMessages(for: candidate.id).filter { $0.isPendingUserSend != true }
             let context: [ChatMessage]
             if titleMatches {
                 // Include recent visible context, not merely the first greeting.
@@ -9049,7 +9262,8 @@ final class AppModel {
                 conversationID: conversationID,
                 messageID: messageID,
                 displayText: immediateDisplayText,
-                publishedAt: .now
+                publishedAt: .now,
+                appendOnly: true
             )
             guard immediateDisplayText != targetDisplayText else { return }
         }
@@ -9149,7 +9363,8 @@ final class AppModel {
             conversationID: conversationID,
             messageID: messageID,
             displayText: nextDisplayText,
-            publishedAt: .now
+            publishedAt: .now,
+            appendOnly: true
         )
         return nextDisplayText == targetDisplayText
     }
@@ -9158,7 +9373,8 @@ final class AppModel {
         conversationID: UUID,
         messageID: UUID,
         displayText: String,
-        publishedAt: Date
+        publishedAt: Date,
+        appendOnly: Bool = false
     ) {
         guard activeStreamingMessageIDsByConversation[conversationID] == messageID,
               var conversationMessages = conversationMessageStore[conversationID],
@@ -9169,6 +9385,7 @@ final class AppModel {
 
         var changed = conversationMessages[index].text != displayText
         conversationMessages[index].text = displayText
+        if changed { updateReplySegmentation(in: &conversationMessages[index], appendOnly: appendOnly) }
         // 第一段真正可见的正文到达时结束思考计时。
         if Self.hasVisibleStreamingText(displayText),
            let lastSegment = conversationMessages[index].reasoningSegments.indices.last,
@@ -9183,7 +9400,22 @@ final class AppModel {
         conversationMessageStore[conversationID] = conversationMessages
     }
 
+    private func updateReplySegmentation(
+        in message: inout ChatMessage, appendOnly: Bool = false, forPersistence: Bool = false
+    ) {
+        guard let configuration = message.replySegmentation, configuration.isEnabled else { return }
+        let initial = ReplySegmentProgress(maximumSegments: configuration.maximumSegments)
+        if forPersistence {
+            message.replySegmentation = replyPersistenceProgress[message.id, default: initial]
+                .update(message.text)
+        } else {
+            message.replySegmentation = replyDisplayProgress[message.id, default: initial]
+                .update(message.text, appendOnly: appendOnly)
+        }
+    }
+
     private func clearStreamingDisplayState(for messageID: UUID) {
+        replyDisplayProgress.removeValue(forKey: messageID)
         streamDisplayTasksByMessageID[messageID]?.cancel()
         streamDisplayTasksByMessageID.removeValue(forKey: messageID)
         streamDisplayBatchCharactersByMessageID.removeValue(forKey: messageID)
@@ -10389,7 +10621,7 @@ final class AppModel {
             conversationID: conversationID
         ).filter { $0.role == .user }
         let meaningful = countedMessages.compactMap { message -> String? in
-            guard message.status == .complete else { return nil }
+            guard message.status == .complete, message.isPendingUserSend != true else { return nil }
             let text = RecentMemoryNoiseFilter.compactWhitespace(message.text)
             guard !RecentMemoryNoiseFilter.isNoise(text) else { return nil }
             return "用户：\(text)"
@@ -10965,6 +11197,7 @@ final class AppModel {
         ).filter {
             ($0.role == .user || $0.role == .assistant)
                 && $0.status != .streaming
+                && $0.isPendingUserSend != true
                 && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -11503,6 +11736,7 @@ final class AppModel {
                 streamingRevisions.removeValue(forKey: messageID)
                 checkpointedStreamingRevisions.removeValue(forKey: messageID)
                 preparedStreamingPayloads.removeValue(forKey: messageID)
+                replyPersistenceProgress.removeValue(forKey: messageID)
                 bufferedStreamingMetadataByMessageID.removeValue(forKey: messageID)
             }
             if !defersPersistence,
@@ -11532,6 +11766,7 @@ final class AppModel {
             ? searchImageCandidates.prefix(4).map { SearchImageRequest(candidate: $0) }
             : searchImageResult.requests
         conversationMessages[index].text = searchImageResult.displayText
+        updateReplySegmentation(in: &conversationMessages[index], forPersistence: true)
         if !cancelled, !imageResult.requests.isEmpty {
             pendingImageRequestsByMessageID[messageID] = imageResult.requests
         } else {
@@ -11689,7 +11924,7 @@ final class AppModel {
         guard let context = titleModelContext(for: conversation) else { return }
 
         let transcript = selectedMessages(for: conversationID)
-            .filter { !$0.text.isEmpty }
+            .filter { !$0.text.isEmpty && $0.isPendingUserSend != true }
             .map { "\($0.role == .assistant ? "Assistant" : "User"): \($0.text)" }
             .joined(separator: "\n\n")
         guard !transcript.isEmpty else { return }
@@ -11833,6 +12068,7 @@ final class AppModel {
         if let prepared = preparedStreamingPayloads[messageID], prepared.revision == revision {
             message.text = prepared.text
             message.parts = prepared.parts
+            message.replySegmentation = prepared.segmentation
         } else {
             let rawText = rawStreamingTextByMessageID[messageID] ?? message.text
             // Every supported control marker requires a literal '<'. Plain
@@ -11851,7 +12087,8 @@ final class AppModel {
             // Reuse the unchanged payload, including part identities, across
             // journal and user-action saves. Otherwise another chat's long
             // reply would be re-parsed and rewritten despite no new content.
-            preparedStreamingPayloads[messageID] = (revision, message.text, message.parts)
+            updateReplySegmentation(in: &message, forPersistence: true)
+            preparedStreamingPayloads[messageID] = (revision, message.text, message.parts, message.replySegmentation)
         }
         message.streamingRevision = revision
         return message

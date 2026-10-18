@@ -101,6 +101,11 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var sentTimeZoneOffsetSeconds: Int?
     var updatedAt: Date
     var status: Status
+    var replySegmentation: ReplySegmentation?
+    /// One durable user turn can contain several independently editable bubbles.
+    var userSendBatchID: UUID?
+    /// Kept in the transcript across restarts, but excluded from provider history.
+    var isPendingUserSend: Bool?
     /// The error shown when this reply failed, retained for later inspection.
     /// Older messages and interruptions without a reported error have no reason.
     var interruptionReason: String?
@@ -125,6 +130,11 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var reactions: MessageReactions
     var schemaVersion: Int
     var migrationMetadata: MigrationMetadata?
+
+    func continuesUserBatch(after previous: ChatMessage?) -> Bool {
+        role == .user && userSendBatchID != nil
+            && previous?.role == .user && previous?.userSendBatchID == userSendBatchID
+    }
 
     var isStreaming: Bool {
         get { status == .streaming }
@@ -158,6 +168,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         sentTimeZoneOffsetSeconds: Int? = nil,
         updatedAt: Date = .now,
         status: Status = .complete,
+        replySegmentation: ReplySegmentation? = nil,
+        userSendBatchID: UUID? = nil,
+        isPendingUserSend: Bool? = nil,
         interruptionReason: String? = nil,
         parts: [MessagePart]? = nil,
         reasoningSegments: [ReasoningSegment] = [],
@@ -183,6 +196,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.sentTimeZoneOffsetSeconds = sentTimeZoneOffsetSeconds
         self.updatedAt = updatedAt
         self.status = status
+        self.replySegmentation = replySegmentation
+        self.userSendBatchID = userSendBatchID
+        self.isPendingUserSend = isPendingUserSend
         self.interruptionReason = interruptionReason
         self.parts = parts ?? [MessagePart(kind: .text, text: text)]
         self.reasoningSegments = reasoningSegments
