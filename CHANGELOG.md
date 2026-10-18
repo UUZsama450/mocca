@@ -1,5 +1,19 @@
 # 更新记录 / Changelog
 
+## 1.0.5（5228）
+
+- 修复离底部发送消息时，聊天列表可能出现的反向往返滚动。
+- 新增聊天分段设置，支持普通聊天和群聊按自然段展示回复，以及可选的自定义气泡间距。
+- 普通聊天支持连续发送，等待时间可在 3–15 秒之间调整，默认 7 秒；回复期间新增的消息归入下一批。
+- 改进输入框字号、光标与伸缩显示，调整行内代码外观。
+- 统一普通设置行字重，以及侧边栏群聊和助手箭头的方向与动画。
+
+- Fix back-and-forth transcript motion when sending away from the bottom.
+- Add paragraph-based reply presentation for single and group chats, with optional custom bubble spacing.
+- Add consecutive sending in single chats with a configurable 3–15 second wait, defaulting to 7 seconds. Messages added during a reply form the next batch.
+- Refine composer font sizing, caret and resizing behavior, and inline-code appearance.
+- Align standard settings typography and the direction and animation of group and assistant drawer arrows.
+
 ## 1.0.4（5219）
 
 - 移除消耗型赞助的“恢复购买”入口与系统同步调用，保留已有纪念装扮记录。

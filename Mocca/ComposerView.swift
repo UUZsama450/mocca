@@ -78,11 +78,18 @@ private extension UIResponder {
 }
 
 struct ComposerView: View {
+    @Binding var inputHeight: (identity: ComposerInputIdentity, height: CGFloat)?
+    var allowsHeightAnimation = true
+    var onInputHeightChange: (ComposerInputHeightChange) -> Void = { _ in }
+    var onMeasuredHeight: (CGFloat) -> Void = { _ in }
+    @Environment(\.composerHeightPresentation) private var heightPresentation
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
     @State private var isFocused = false
     @State private var isGroupReplyControlExpanded = false
     @State private var inputResetID = 0
+    @State private var sendSource = ComposerSendSource()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var longPasteRequest: ComposerLongPasteRequest?
     @State private var isLongPastePresented = false
     @State private var longPasteError: String?
@@ -110,7 +117,16 @@ struct ComposerView: View {
     }
 
     private var canSend: Bool {
-        if model.selectedConversationIsStreaming { return true }
+        if showsStopAction { return true }
+        return hasSendableDraft
+    }
+
+    private var showsStopAction: Bool {
+        model.selectedConversationIsStreaming
+            && !(model.canQueueUserMessages(for: model.selectedConversationID) && hasSendableDraft)
+    }
+
+    private var hasSendableDraft: Bool {
         return convertingPasteID == nil
             && !model.hasUnreadyImages(for: model.selectedConversationID) && (
             !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -121,6 +137,14 @@ struct ComposerView: View {
     var body: some View {
         let conversationID = model.selectedConversationID
         let inputRevision = inputResetID
+        let inputIdentity = ComposerInputIdentity(conversationID: conversationID, resetRevision: inputRevision)
+        let editorFont = AppFontStore.uiFont(
+            postScriptName: model.preferences.appFontPostScriptName,
+            size: 18 * CGFloat(model.preferences.chatFontScale)
+        )
+        let targetHeight = inputHeight?.identity == inputIdentity ? inputHeight?.height : nil
+        let displayedHeight = heightPresentation?.identity == inputIdentity
+            ? heightPresentation?.inputHeight : targetHeight
         let draftBinding = Binding(
             get: {
                 model.composerDraftText(for: conversationID)
@@ -137,6 +161,26 @@ struct ComposerView: View {
 
         VStack(spacing: 8) {
             PendingAttachmentsStrip()
+
+            let pendingCount = model.pendingUserBatch(for: conversationID).count
+            if pendingCount > 0 {
+                HStack(spacing: 10) {
+                    Text(L10n.format("%@ 条待发送", [String(pendingCount)]))
+                    Text(L10n.lookup(model.userBatchSendTokens[conversationID] == nil
+                        ? "已暂停" : (model.selectedConversationIsStreaming ? "等待本轮回复结束" : "等待合并发送")))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    if model.userBatchSendTokens[conversationID] != nil {
+                        Button(L10n.lookup("暂停")) { model.pauseUserBatch(for: conversationID) }
+                            .accessibilityIdentifier("batchSend.pause")
+                    }
+                    Button(L10n.lookup("立即发送")) { model.sendUserBatchNow(for: conversationID) }
+                        .disabled(model.selectedConversationIsStreaming)
+                        .accessibilityIdentifier("batchSend.now")
+                }
+                .font(.caption)
+                .buttonStyle(.plain)
+            }
 
             if model.selectedConversationIsGroupChat,
                let conversationID = model.selectedConversation?.id {
@@ -159,17 +203,20 @@ struct ComposerView: View {
                 placeholder: promptPlaceholder,
                 selectionColor: model.themeTextSelectionUIColor,
                 enterToSend: model.preferences.enterToSendOnMobile,
-                identity: ComposerInputIdentity(
-                    conversationID: conversationID,
-                    resetRevision: inputRevision
-                ),
+                identity: inputIdentity,
                 onSubmit: { submitDraft(for: conversationID) },
-                onLongPaste: receiveLongPaste
+                onLongPaste: receiveLongPaste,
+                editorFont: editorFont,
+                animatesHeightChanges: model.preferences.composerHeightAnimationEnabled && !reduceMotion,
+                onMeasuredHeight: { height, fromEdit in
+                    updateInputHeight(height, fromEdit: fromEdit, identity: inputIdentity)
+                },
+                currentText: { model.composerDraftText(for: conversationID) },
+                sendSource: sendSource
             )
-                .id(ComposerInputIdentity(
-                    conversationID: conversationID,
-                    resetRevision: inputRevision
-                ))
+                .id(inputIdentity)
+                .frame(height: displayedHeight, alignment: .top)
+                .clipped()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Use the shell's existing inset without changing text wrapping.
                 .offset(x: 4)
@@ -285,14 +332,23 @@ struct ComposerView: View {
                 .accessibilityIdentifier("composer.modelSelector")
                 .layoutPriority(1)
 
+                if model.selectedConversationIsStreaming && !showsStopAction {
+                    Button { model.stopStreaming() } label: {
+                        Image(systemName: "stop.fill")
+                            .frame(width: controlVisualHeight, height: controlVisualHeight)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.lookup("停止生成"))
+                }
+
                 Button {
-                    if model.selectedConversationIsStreaming {
+                    if showsStopAction {
                         model.stopStreaming()
                     } else {
                         submitDraft(for: conversationID)
                     }
                 } label: {
-                    Image(systemName: model.selectedConversationIsStreaming ? "stop.fill" : "arrow.up")
+                    Image(systemName: showsStopAction ? "stop.fill" : "arrow.up")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(canSend && colorScheme == .dark ? Color.black : Color.white)
                         .contentTransition(.identity)
@@ -331,6 +387,11 @@ struct ComposerView: View {
         .geometryGroup()
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            // Report the final shell measurement. Its interpolated input height
+            // must not feed back into the parent's target on every frame.
+            proxy.size.height + (targetHeight ?? 0) - (displayedHeight ?? 0)
+        } action: { onMeasuredHeight($0) }
         .onAppear {
             model.isComposerFocused = isFocused
         }
@@ -374,9 +435,27 @@ struct ComposerView: View {
         #endif
     }
 
+    private func updateInputHeight(_ height: CGFloat, fromEdit: Bool, identity: ComposerInputIdentity) {
+        guard identity.conversationID == model.selectedConversationID,
+              identity.resetRevision == inputResetID else { return }
+        let previous = inputHeight.flatMap { $0.identity == identity ? $0.height : nil }
+        guard previous == nil || abs(previous! - height) > 0.5 else { return }
+        let change = previous.flatMap { old in
+            fromEdit && isFocused && allowsHeightAnimation
+                && model.preferences.composerHeightAnimationEnabled && !reduceMotion
+                ? ComposerInputHeightChange(identity: identity, previous: old, target: height) : nil
+        }
+        var transaction = Transaction(animation: change == nil ? nil : ComposerInputHeightChange.animation)
+        transaction.composerInputHeightChange = change
+        withTransaction(transaction) {
+            inputHeight = (identity, height)
+            if let change { onInputHeightChange(change) }
+        }
+    }
+
     private func submitDraft(for conversationID: UUID) {
         guard model.selectedConversationID == conversationID else { return }
-        guard !model.selectedConversationIsStreaming else { return }
+        guard !model.selectedConversationIsStreaming || model.canQueueUserMessages(for: conversationID) else { return }
         guard convertingPasteID == nil else { return }
 
         // End the Chinese IME marked-text session before the model captures and
@@ -399,7 +478,12 @@ struct ComposerView: View {
         // the same main-thread turn that publishes the user row and its send
         // animation request, so their visible transitions begin together. A
         // failed precommit also leaves the draft and keyboard ready for retry.
-        guard model.sendDraft(for: conversationID) else { return }
+        let origin = model.preferences.userBubbleSendAnimationEnabled
+            && model.preferences.userBubbleSendAnimationStyle == .floatUp
+            && !reduceMotion && model.composerPendingAttachments(for: conversationID).isEmpty
+            ? sendSource.snapshot(for: ComposerInputIdentity(
+                conversationID: conversationID, resetRevision: inputResetID)) : nil
+        guard model.sendDraft(for: conversationID, origin: origin) else { return }
         cancelLongPaste()
         // Clear declarative focus before UIKit starts dismissing. A pending
         // update of the retiring input must not reacquire first responder

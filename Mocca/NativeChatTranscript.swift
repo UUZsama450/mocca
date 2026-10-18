@@ -73,6 +73,18 @@ struct NativeChatRow {
     let revision: AnyHashable
     let content: AnyView
     var isMessage = true
+    var sendOrigin: ComposerSendOrigin? = nil
+}
+
+private struct NativeChatSendOffsetKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    var nativeChatSendOffset: CGFloat? {
+        get { self[NativeChatSendOffsetKey.self] }
+        set { self[NativeChatSendOffsetKey.self] = newValue }
+    }
 }
 
 struct NativeChatLayoutConfiguration: Equatable {
@@ -108,12 +120,12 @@ enum NativeChatScrollTarget {
 }
 
 enum NativeChatScrollTiming: String {
-    case easeOut, easeInOut, smooth, system
+    case easeOut, easeInOut, smooth, system, send
 
     @MainActor
     fileprivate func animator(duration: TimeInterval) -> UIViewPropertyAnimator? {
         switch self {
-        case .system:
+        case .system, .send:
             return nil
         case .easeOut:
             return UIViewPropertyAnimator(duration: duration, curve: .easeOut)
@@ -474,6 +486,7 @@ struct NativeChatTranscript: UIViewControllerRepresentable {
     var holdsAutomaticBottomFollow = false
     var streamingTailID: UUID? = nil
     var mutationLanding: NativeChatMutationLanding?
+    var composerHeightPresentation: ComposerHeightPresentation?
     var disclosureOperation: UUID?
     var debugWindow: NativeChatDebugWindow? = nil
     var onGeometry: (NativeChatScrollGeometry) -> Void = { _ in }
@@ -495,6 +508,12 @@ struct NativeChatTranscript: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: NativeChatTranscriptController, context: Context) {
         var next = self
         next.disclosureOperation = context.transaction.nativeChatDisclosureOperation
+        if let height = context.environment.composerHeightPresentation,
+           AnyHashable(height.identity.conversationID) == sessionID {
+            next.composerHeightPresentation = height
+            next.configuration.bottom = height.bottomClearance
+            next.configuration.bottomFollowClearance = max(0, height.bottomClearance - height.shellHeight)
+        }
         controller.update(next)
     }
 
@@ -941,6 +960,8 @@ private final class NativeChatCell: UICollectionViewCell {
         return super.action(for: layer, forKey: event)
     }
 
+    var sendOffset: CGFloat?
+    var didResolveSendOffset = false
     var prefersStableStreamingBottom = false
     var configuredKey: NativeChatRowKey?
     var configuredPublication: AnyHashable?
@@ -958,6 +979,8 @@ private final class NativeChatCell: UICollectionViewCell {
         guard let previous = configuredKey, previous.id != key.id else { return }
         onRetireMeasurementHost?(measurementHostID, previous)
         disclosureMotionID = nil
+        sendOffset = nil
+        didResolveSendOffset = false
         measurementHostID = UUID()
         prefersStableStreamingBottom = false
         textFramePublication = nil
@@ -965,6 +988,8 @@ private final class NativeChatCell: UICollectionViewCell {
     }
     override func prepareForReuse() {
         disclosureMotionID = nil
+        sendOffset = nil
+        didResolveSendOffset = false
         if let key = configuredKey { onRetireMeasurementHost?(measurementHostID, key) }
         measurementHostID = UUID()
         prefersStableStreamingBottom = false
@@ -1383,6 +1408,18 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         })
         let contextChanged = next.publicationID != input.publicationID
         let metricsChanged = next.configuration != input.configuration
+        var unchangedConfiguration = next.configuration
+        unchangedConfiguration.bottom = input.configuration.bottom
+        unchangedConfiguration.bottomFollowClearance = input.configuration.bottomFollowClearance
+        let followsComposerHeight = next.composerHeightPresentation != nil && metricsChanged
+            && unchangedConfiguration == input.configuration
+            && !structural && changed.isEmpty && !contextChanged
+            && next.streamingTailID == nil && !next.holdsAutomaticBottomFollow
+            && command == nil && input.driver.positionCommandID == nil
+            && input.driver.positionIsBottomPinned && !input.driver.positionIsUserOwned
+            && !input.driver.initialBottomPositionPending && !input.driver.hasActiveScrollCommand
+            && !touching && !userGesture && !collection.isTracking
+            && !collection.isDragging && !collection.isDecelerating && collection.window != nil
         StreamLayoutWorkProbe.hit(structural || !changed.isEmpty || contextChanged || metricsChanged ? "controller.changedInput" : "controller.unchangedInput")
         let anchor = layout.viewportAnchor(surviving: newSet)
         let mutationLanding = next.mutationLanding.flatMap { landing -> NativeChatMutationLanding? in
@@ -1524,6 +1561,17 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         if collection.contentInset != input.configuration.viewportInsets {
             collection.contentInset = input.configuration.viewportInsets
         }
+        if followsComposerHeight {
+            // This is already the shared animation's current frame. Apply it
+            // atomically with the footer; a second UIKit animation drifts from
+            // the SwiftUI shell when the full page takes longer to render.
+            UIView.performWithoutAnimation {
+                collection.layoutIfNeeded()
+                if let destination = layout.offset(for: .bottom) {
+                    collection.setContentOffset(CGPoint(x: collection.contentOffset.x, y: destination), animated: false)
+                }
+            }
+        }
         scheduleEmission()
     }
 
@@ -1543,6 +1591,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         cell.isViewportMotionActive = { [weak self] in
             guard let self, !self.detached, self.input.driver.controller === self else { return false }
             return self.input.driver.externalViewportMotion
+                || self.input.composerHeightPresentation?.isAnimating == true
                 || self.collection.hasPendingAnimatedViewportResize
         }
         let key = NativeChatRowKey(id: row.id, revision: row.revision)
@@ -1561,6 +1610,18 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         cell.onRetireMeasurementHost = { [weak self] id, oldKey in
             self?.layout.retireMeasurementHost(id, key: oldKey)
         }
+        if !cell.didResolveSendOffset, let origin = row.sendOrigin,
+           let window = collection.window, origin.windowID == ObjectIdentifier(window),
+           let frame = layout.frame(for: row.id) {
+            cell.didResolveSendOffset = true
+            let shown = collection.layer.presentation()?.bounds.origin.y ?? collection.contentOffset.y
+            let top = collection.convert(CGPoint(x: 0, y: frame.minY), to: window).y
+                + collection.contentOffset.y - shown
+            let offset = origin.bubbleTop - top
+            // Detached reading and short transcripts keep their established
+            // entrance. Only connect a row already arriving near the composer.
+            if offset.isFinite, abs(offset) <= 160 { cell.sendOffset = offset }
+        }
         let measurementHostID = cell.measurementHostID
         cell.isDisclosureHostCurrent = { [weak self, weak cell] in
             guard let self, let cell, let currentRow = self.rowByID[row.id] else { return false }
@@ -1574,8 +1635,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         if cell.configuredKey != key { cell.messageLocalFrame = nil }
         cell.configuredKey = key; cell.configuredPublication = publication
         layout.bindMeasurementHost(cell, key: key)
+        let sendOffset = cell.sendOffset
         cell.contentConfiguration = UIHostingConfiguration {
             NativeChatHostedContent(lifetime: hostedContentLifetime, content: row.content)
+                .environment(\.nativeChatSendOffset, sendOffset)
                 .environment(\.nativeChatRowDisclosureMotion, NativeChatRowDisclosureMotion(
                     begin: { [weak self, weak cell] in
                         guard let self, let cell, !self.detached,
@@ -1679,7 +1742,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         if (touching || collection.isTracking) && collection.isDragging { return .interacting }
         if touching || collection.isTracking { return .tracking }
         if collection.isDecelerating { return .decelerating }
-        if animator != nil || nativeAnimatedCommandID != nil || input.driver.externalViewportMotion { return .animating }
+        if sendScrollLink != nil || animator != nil || nativeAnimatedCommandID != nil || input.driver.externalViewportMotion { return .animating }
         return .idle
     }
     fileprivate func refreshPhase() { scheduleEmission() }
@@ -1911,7 +1974,53 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         return admitsNativeStreamMotion(tail: tail)
     }
 
+    private var sendScrollLink: CADisplayLink?
+    private var sendScrollStart: CFTimeInterval = 0
+    private var sendScrollProgress: CGFloat = 0
+    private var sendScrollDuration: TimeInterval = 0
+
+    private func stopSendScroll() {
+        sendScrollLink?.invalidate()
+        sendScrollLink = nil
+    }
+
+    @objc private func advanceSendScroll(_ link: CADisplayLink) {
+        guard let command, input.driver.controller === self,
+              input.driver.positionCommandID == command.id,
+              !detached, attachmentReady, collection.window != nil,
+              !input.driver.externalViewportMotion,
+              let destination = layout.offset(for: command.target) else {
+            stopSendScroll()
+            cancelCommand(reason: "sendOwnerChanged")
+            return
+        }
+        let t = CGFloat(min(1, max(0, (CACurrentMediaTime() - sendScrollStart) / sendScrollDuration)))
+        let progress = t * t * (3 - 2 * t)
+        // Advance only the remaining fraction of the same timeline. A newly
+        // measured destination changes the remaining travel, not the position
+        // already presented; no native animation is rebased by that change.
+        let fraction = sendScrollProgress < 1 ? (progress - sendScrollProgress) / (1 - sendScrollProgress) : 1
+        sendScrollProgress = progress
+        let current = collection.contentOffset.y
+        collection.setContentOffset(CGPoint(x: collection.contentOffset.x,
+            y: current + (destination - current) * fraction), animated: false)
+        guard self.command?.id == command.id, sendScrollLink === link else { return }
+        if t == 1 {
+            collection.layoutIfNeeded()
+            guard self.command?.id == command.id, sendScrollLink === link,
+                  let bottom = layout.offset(for: command.target),
+                  abs(bottom - collection.contentOffset.y) <= 1 else { return }
+            stopSendScroll()
+            self.command?.animationFinished = true
+            scheduleEmission()
+            refreshPhase()
+        }
+    }
+
     private func prepareStreamMeasurement(tail: UUID, destination: CGFloat, stableBottom: Bool) -> CGFloat? {
+        // The send timeline reads the new bottom on its next frame. Applying
+        // another bottom adjustment here would move the viewport twice.
+        if sendScrollLink != nil { return 0 }
         #if DEBUG
         if input.driver.bottomLandingValidationID != nil, command == nil,
            input.streamingTailID == tail, input.driver.positionIsBottomPinned {
@@ -1994,6 +2103,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             stopStreamMotion(reason: reason, preserveVisible: !input.driver.externalViewportMotion)
         }
         guard let active = command, requestID == nil || requestID == active.id else { return }
+        stopSendScroll()
         input.mutationLanding = nil
         // Remove the completion before stopping UIKit: stopping can synchronously
         // invoke its completion. Only the saved command is resumed, once.
@@ -2052,7 +2162,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         guard input.driver.controller === self, isViewLoaded, !detached else { completion(false); return }
         if case .bottom = target, input.holdsAutomaticBottomFollow,
            !input.driver.externalViewportMotion,
-           timing != .system, let duration, duration > 0,
+           timing != .system, timing != .send, let duration, duration > 0,
            let last = rows.last,
            !layout.isMeasured(.init(id: last.id, revision: last.revision)),
            let estimatedY = layout.offset(for: target), estimatedY.isFinite {
@@ -2075,7 +2185,22 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         #endif
         input.driver.beginCommand(target, id: requestID)
         command = (requestID, target, completion, false)
-        if timing == .system, abs(collection.contentOffset.y - y) > 0.5 {
+        if timing == .send, case .bottom = target,
+           let duration, duration.isFinite, duration > 0,
+           abs(collection.contentOffset.y - y) > 0.5 {
+            sendScrollStart = CACurrentMediaTime()
+            sendScrollDuration = duration
+            sendScrollProgress = 0
+            let link = CADisplayLink(target: self, selector: #selector(advanceSendScroll(_:)))
+            if (collection.window?.screen.maximumFramesPerSecond ?? 60) >= 120 {
+                link.preferredFrameRateRange = CAFrameRateRange(
+                    minimum: 80, maximum: 120, preferred: 120
+                )
+            }
+            sendScrollLink = link
+            link.add(to: .main, forMode: .common)
+            refreshPhase()
+        } else if timing == .system || timing == .send, abs(collection.contentOffset.y - y) > 0.5 {
             // UIScrollView updates the logical viewport while moving, allowing
             // UICollectionView to prepare only the cells currently on screen.
             nativeAnimatedCommandID = requestID
@@ -2106,6 +2231,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
 
     private func finishCommand(_ requestID: UUID, success: Bool, reason: String) {
         guard let active = command, active.id == requestID else { return }
+        stopSendScroll()
         command = nil
         if nativeAnimatedCommandID == requestID { nativeAnimatedCommandID = nil }
         if input.driver.controller === self, input.driver.positionCommandID == requestID {

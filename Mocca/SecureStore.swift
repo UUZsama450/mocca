@@ -608,6 +608,8 @@ enum ComposerModelEntryStyle: String, Codable, CaseIterable, Identifiable, Senda
 }
 
 struct UserPreferences: Codable, Hashable, Sendable {
+    static let defaultChatBubbleSpacing: Double = 12
+    static let defaultBatchUserMessageDelaySeconds = 7
     static let defaultOCRPrompt = """
     Read the supplied image and produce a faithful reference for the conversation.
 
@@ -636,6 +638,11 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var autoScrollEnabled: Bool
     var autoScrollIdleSeconds: Int
     var chatFontScale: Double
+    var customChatBubbleSpacingEnabled: Bool
+    var chatBubbleSpacing: Double
+    var effectiveChatBubbleSpacing: Double {
+        customChatBubbleSpacingEnabled ? chatBubbleSpacing : Self.defaultChatBubbleSpacing
+    }
     var assistantMessageLineSpacing: Double
     var assistantMarkdownListItemSpacing: Double
     var assistantMarkdownBlockSpacingScale: Double
@@ -646,6 +653,7 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var chatInputBackgroundOpacityLight: Double
     var chatInputBackgroundOpacityDark: Double
     var useLiquidGlassComposer: Bool
+    var composerHeightAnimationEnabled: Bool
     var chatInputPlaceholder: String
     var composerModelEntryStyle: ComposerModelEntryStyle
     var collapsedModelProviderIDs: Set<UUID>
@@ -731,8 +739,16 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var ttsVoiceIdentifier: String?
     var ttsLanguage: String?
     var groupChatAutoGenerateTitle: Bool
-    var groupChatSegmentedReply: Bool
-    var groupChatSegmentRegex: String
+    var batchUserMessages: Bool
+    var batchUserMessageDelaySeconds: Int
+    // Keep the original serialized key so existing backups retain the switch.
+    private var singleChatSegmentedReply: Bool
+    var chatSegmentedReply: Bool {
+        get { singleChatSegmentedReply }
+        set { singleChatSegmentedReply = newValue }
+    }
+    private enum LegacySegmentationKeys: String, CodingKey { case groupChatSegmentedReply }
+    var replySegmentLimit: Int
     var groupChatForceAssistantBubble: Bool
     var groupChatBubbleOpacity: Double
     var groupChatBubbleStyle: ChatBubbleStyle
@@ -759,6 +775,8 @@ struct UserPreferences: Codable, Hashable, Sendable {
         autoScrollEnabled: Bool = true,
         autoScrollIdleSeconds: Int = 8,
         chatFontScale: Double = 1.0,
+        customChatBubbleSpacingEnabled: Bool = false,
+        chatBubbleSpacing: Double = UserPreferences.defaultChatBubbleSpacing,
         assistantMessageLineSpacing: Double = 5.0,
         assistantMarkdownListItemSpacing: Double = 4.0,
         assistantMarkdownBlockSpacingScale: Double = 1.0,
@@ -769,6 +787,7 @@ struct UserPreferences: Codable, Hashable, Sendable {
         chatInputBackgroundOpacityLight: Double = 0.8236,
         chatInputBackgroundOpacityDark: Double = 0.7396,
         useLiquidGlassComposer: Bool = false,
+        composerHeightAnimationEnabled: Bool = true,
         chatInputPlaceholder: String = "",
         composerModelEntryStyle: ComposerModelEntryStyle = .name,
         collapsedModelProviderIDs: Set<UUID> = [],
@@ -853,8 +872,10 @@ struct UserPreferences: Codable, Hashable, Sendable {
         ttsVoiceIdentifier: String? = nil,
         ttsLanguage: String? = nil,
         groupChatAutoGenerateTitle: Bool = true,
-        groupChatSegmentedReply: Bool = false,
-        groupChatSegmentRegex: String = "",
+        batchUserMessages: Bool = false,
+        batchUserMessageDelaySeconds: Int = UserPreferences.defaultBatchUserMessageDelaySeconds,
+        chatSegmentedReply: Bool = false,
+        replySegmentLimit: Int = 5,
         groupChatForceAssistantBubble: Bool = true,
         groupChatBubbleOpacity: Double = 0.10,
         groupChatBubbleStyle: ChatBubbleStyle = .defaultStyle,
@@ -884,6 +905,8 @@ struct UserPreferences: Codable, Hashable, Sendable {
         self.autoScrollEnabled = autoScrollEnabled
         self.autoScrollIdleSeconds = min(max(autoScrollIdleSeconds, 2), 64)
         self.chatFontScale = Self.clamp(chatFontScale, min: 0.5, max: 1.5)
+        self.customChatBubbleSpacingEnabled = customChatBubbleSpacingEnabled
+        self.chatBubbleSpacing = Self.clamp(chatBubbleSpacing, min: 0, max: 32)
         self.assistantMessageLineSpacing = Self.clamp(assistantMessageLineSpacing, min: 2.0, max: 10.0)
         self.assistantMarkdownListItemSpacing = Self.clamp(
             assistantMarkdownListItemSpacing,
@@ -902,6 +925,7 @@ struct UserPreferences: Codable, Hashable, Sendable {
         self.chatInputBackgroundOpacityLight = Self.clamp(chatInputBackgroundOpacityLight, min: 0.0, max: 1.0)
         self.chatInputBackgroundOpacityDark = Self.clamp(chatInputBackgroundOpacityDark, min: 0.0, max: 1.0)
         self.useLiquidGlassComposer = useLiquidGlassComposer
+        self.composerHeightAnimationEnabled = composerHeightAnimationEnabled
         self.chatInputPlaceholder = Self.cleanedPlaceholder(chatInputPlaceholder)
         self.composerModelEntryStyle = composerModelEntryStyle
         self.collapsedModelProviderIDs = collapsedModelProviderIDs
@@ -999,8 +1023,10 @@ struct UserPreferences: Codable, Hashable, Sendable {
         self.ttsVoiceIdentifier = ttsVoiceIdentifier
         self.ttsLanguage = ttsLanguage
         self.groupChatAutoGenerateTitle = groupChatAutoGenerateTitle
-        self.groupChatSegmentedReply = groupChatSegmentedReply
-        self.groupChatSegmentRegex = groupChatSegmentRegex.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.batchUserMessages = batchUserMessages
+        self.batchUserMessageDelaySeconds = min(15, max(3, batchUserMessageDelaySeconds))
+        self.singleChatSegmentedReply = chatSegmentedReply
+        self.replySegmentLimit = max(0, replySegmentLimit)
         self.groupChatForceAssistantBubble = groupChatForceAssistantBubble
         self.groupChatBubbleOpacity = Self.clamp(groupChatBubbleOpacity, min: 0.0, max: 1.0)
         self.groupChatBubbleStyle = groupChatBubbleStyle
@@ -1039,6 +1065,14 @@ struct UserPreferences: Codable, Hashable, Sendable {
             min: 0.5,
             max: 1.5
         )
+        customChatBubbleSpacingEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .customChatBubbleSpacingEnabled
+        ) ?? false
+        chatBubbleSpacing = Self.clamp(
+            try container.decodeIfPresent(Double.self, forKey: .chatBubbleSpacing)
+                ?? Self.defaultChatBubbleSpacing,
+            min: 0, max: 32
+        )
         assistantMessageLineSpacing = Self.clamp(
             try container.decodeIfPresent(Double.self, forKey: .assistantMessageLineSpacing) ?? 5.0,
             min: 2.0,
@@ -1073,6 +1107,9 @@ struct UserPreferences: Codable, Hashable, Sendable {
             max: 1.0
         )
         useLiquidGlassComposer = try container.decodeIfPresent(Bool.self, forKey: .useLiquidGlassComposer) ?? false
+        composerHeightAnimationEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .composerHeightAnimationEnabled
+        ) ?? true
         chatInputPlaceholder = Self.cleanedPlaceholder(
             try container.decodeIfPresent(String.self, forKey: .chatInputPlaceholder) ?? ""
         )
@@ -1266,9 +1303,15 @@ struct UserPreferences: Codable, Hashable, Sendable {
             Bool.self,
             forKey: .groupChatAutoGenerateTitle
         ) ?? true
-        groupChatSegmentedReply = try container.decodeIfPresent(Bool.self, forKey: .groupChatSegmentedReply) ?? false
-        groupChatSegmentRegex = (try container.decodeIfPresent(String.self, forKey: .groupChatSegmentRegex) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacySegmentation = try decoder.container(keyedBy: LegacySegmentationKeys.self)
+        batchUserMessages = try container.decodeIfPresent(Bool.self, forKey: .batchUserMessages) ?? false
+        batchUserMessageDelaySeconds = min(15, max(3,
+            try container.decodeIfPresent(Int.self, forKey: .batchUserMessageDelaySeconds)
+                ?? Self.defaultBatchUserMessageDelaySeconds
+        ))
+        singleChatSegmentedReply = try container.decodeIfPresent(Bool.self, forKey: .singleChatSegmentedReply)
+            ?? legacySegmentation.decodeIfPresent(Bool.self, forKey: .groupChatSegmentedReply) ?? false
+        replySegmentLimit = max(0, try container.decodeIfPresent(Int.self, forKey: .replySegmentLimit) ?? 5)
         groupChatForceAssistantBubble = try container.decodeIfPresent(Bool.self, forKey: .groupChatForceAssistantBubble) ?? true
         groupChatBubbleOpacity = Self.clamp(
             try container.decodeIfPresent(Double.self, forKey: .groupChatBubbleOpacity) ?? 0.10,

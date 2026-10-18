@@ -803,6 +803,8 @@ private struct ConversationMessageHost: Identifiable {
     let message: ChatMessage
     let citationSources: [MessageCitationSource]
     let isSendPresentationReservation: Bool
+    let continuesUserBatch: Bool
+    let hasFollowingUserBatch: Bool
 }
 
 private let chatSendPlacementDuration: TimeInterval = 0.32
@@ -837,7 +839,7 @@ private struct ChatTranscriptProxy {
         return await native.scrollAndWait(to: target, duration: duration, timing: timing)
     }
 
-    /// Navigation and off-bottom sends use UIScrollView's own motion so
+    /// Navigation uses UIScrollView's own motion so
     /// collection cells follow the actual viewport throughout the move.
     func navigate<ID: Hashable>(_ id: ID, anchor: UnitPoint) async -> Bool {
         guard let target = nativeTarget(id, anchor: anchor) else { return false }
@@ -862,6 +864,7 @@ private struct NativeChatPresentationRevision: Hashable {
     let chatBackgroundMaskStrength: Double
     let showTokenUsage: Bool
     let chatFontScale: Double
+    let chatBubbleSpacing: Double
     let assistantMessageLineSpacing: Double
     let assistantMarkdownListItemSpacing: Double
     let assistantMarkdownBlockSpacingScale: Double
@@ -904,8 +907,8 @@ private struct NativeChatPresentationRevision: Hashable {
     let liquidGlassBubbleOpacity: Double
     let appleGlassBubbleOpacity: Double
     let thinkingBubbleTitle: String
-    let groupChatSegmentedReply: Bool
-    let groupChatSegmentRegex: String
+    let chatSegmentedReply: Bool
+    let replySegmentLimit: Int
     let groupChatForceAssistantBubble: Bool
     let groupChatBubbleOpacity: Double
     let groupChatBubbleStyle: ChatBubbleStyle
@@ -922,6 +925,7 @@ private struct NativeChatPresentationRevision: Hashable {
         chatBackgroundMaskStrength = preferences.chatBackgroundMaskStrength
         showTokenUsage = preferences.showTokenUsage
         chatFontScale = preferences.chatFontScale
+        chatBubbleSpacing = preferences.effectiveChatBubbleSpacing
         assistantMessageLineSpacing = preferences.assistantMessageLineSpacing
         assistantMarkdownListItemSpacing = preferences.assistantMarkdownListItemSpacing
         assistantMarkdownBlockSpacingScale = preferences.assistantMarkdownBlockSpacingScale
@@ -964,8 +968,8 @@ private struct NativeChatPresentationRevision: Hashable {
         liquidGlassBubbleOpacity = preferences.liquidGlassBubbleOpacity
         appleGlassBubbleOpacity = preferences.appleGlassBubbleOpacity
         thinkingBubbleTitle = preferences.thinkingBubbleTitle
-        groupChatSegmentedReply = preferences.groupChatSegmentedReply
-        groupChatSegmentRegex = preferences.groupChatSegmentRegex
+        chatSegmentedReply = preferences.chatSegmentedReply
+        replySegmentLimit = preferences.replySegmentLimit
         groupChatForceAssistantBubble = preferences.groupChatForceAssistantBubble
         groupChatBubbleOpacity = preferences.groupChatBubbleOpacity
         groupChatBubbleStyle = preferences.groupChatBubbleStyle
@@ -999,6 +1003,8 @@ private struct NativeChatRowRevision: Hashable {
     let message: ChatMessage
     let citations: [MessageCitationSource]
     let isReservation: Bool
+    let continuesUserBatch: Bool
+    let hasFollowingUserBatch: Bool
     let isConversationTail: Bool
     let hasDivider: Bool
     let layoutRequestID: UUID?
@@ -3718,6 +3724,7 @@ private struct ChatView: View {
     @State private var offscreenStreamingDisplayState =
         OffscreenStreamingDisplayState()
     @State private var composerHeight: CGFloat = 110
+    @State private var composerInputHeight: (identity: ComposerInputIdentity, height: CGFloat)?
     @State private var isQuickReturnToBottomVisible = false
     @State private var nativeBottomEdgeRearmRequest = 0
     @State private var nativeSendExactBottomHandoffRequest = 0
@@ -3891,6 +3898,8 @@ private struct ChatView: View {
     private func conversationMessageRow(
         _ message: ChatMessage,
         citationSources: [MessageCitationSource],
+        continuesUserBatch: Bool,
+        hasFollowingUserBatch: Bool,
         isGroupConversation: Bool,
         bottomAnchorID: ConversationBottomAnchorID,
         isConversationTail: Bool
@@ -3912,6 +3921,8 @@ private struct ChatView: View {
         return MessageRow(
             message: message,
             isConversationTail: isConversationTail,
+            continuesUserBatch: continuesUserBatch,
+            hasFollowingUserBatch: hasFollowingUserBatch,
             citationSources: citationSources,
             isGroupMessage: isGroupConversation,
             versionFlashContext: versionFlashContext,
@@ -3942,6 +3953,7 @@ private struct ChatView: View {
                 )
             },
             onEdit: { message in
+                if message.isPendingUserSend == true { model.pauseUserBatch(for: message.conversationID) }
                 dismissKeyboard()
                 directEditText = message.text
                 messageSheetPresentation = MessageSheetPresentation(
@@ -3997,6 +4009,8 @@ private struct ChatView: View {
             conversationMessageRow(
                 host.message,
                 citationSources: host.citationSources,
+                continuesUserBatch: host.continuesUserBatch,
+                hasFollowingUserBatch: host.hasFollowingUserBatch && host.index + 1 != visibleTruncateIndex,
                 isGroupConversation: isGroupConversation,
                 bottomAnchorID: bottomAnchorID,
                 isConversationTail: isConversationTail
@@ -4062,6 +4076,8 @@ private struct ChatView: View {
                     message: host.message,
                     citations: host.citationSources,
                     isReservation: host.isSendPresentationReservation,
+                    continuesUserBatch: host.continuesUserBatch,
+                    hasFollowingUserBatch: host.hasFollowingUserBatch && host.index + 1 != dividerIndex,
                     isConversationTail: isConversationTail,
                     hasDivider: host.index == dividerIndex,
                     layoutRequestID: activeCodeLayoutRequestID,
@@ -4088,7 +4104,9 @@ private struct ChatView: View {
                     .tint(Color(uiColor: model.themeActionUIColor))
                     .accentColor(Color(uiColor: model.themeActionUIColor))
                     .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
-                )
+                ),
+                sendOrigin: host.index == dividerIndex ? nil
+                    : userBubbleSendAnimationRequest(for: host.message)?.origin
             )
         }
         if (visibleMessageCount > 0 && dividerIndex == visibleMessageCount)
@@ -5110,7 +5128,10 @@ private struct ChatView: View {
                 index: index,
                 message: message,
                 citationSources: citationSourcesByMessageID[message.id] ?? [],
-                isSendPresentationReservation: false
+                isSendPresentationReservation: false,
+                continuesUserBatch: message.continuesUserBatch(after: index > 0 ? visibleMessages[index - 1] : nil),
+                hasFollowingUserBatch: index + 1 < visibleMessages.count
+                    && visibleMessages[index + 1].continuesUserBatch(after: message)
             )
         }
         let renderedMessageHosts: [ConversationMessageHost] = {
@@ -5126,7 +5147,9 @@ private struct ChatView: View {
                     index: visibleMessages.count,
                     message: reservation,
                     citationSources: [],
-                    isSendPresentationReservation: true
+                    isSendPresentationReservation: true,
+                    continuesUserBatch: false,
+                    hasFollowingUserBatch: false
                 )
             ]
         }()
@@ -5265,6 +5288,12 @@ private struct ChatView: View {
         .overlay(alignment: .bottom) {
             measuredComposer
         }
+        .modifier(ComposerHeightAnimation(
+            identity: composerInputHeight?.identity,
+            inputHeight: composerInputHeight?.height ?? 0,
+            targetInputHeight: composerInputHeight?.height ?? 0,
+            targetShellHeight: composerHeight
+        ))
         .overlay(alignment: .bottom) {
             DrawerAwareQuickReturnToBottom(
                 baseVisible: shouldShowQuickReturnToBottomIgnoringDrawer,
@@ -6511,12 +6540,17 @@ private struct ChatView: View {
     }
 
     private var measuredComposer: some View {
-        ComposerView()
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.height
-            } action: { height in
-                updateComposerHeight(height)
-            }
+        ComposerView(
+            inputHeight: $composerInputHeight,
+            allowsHeightAnimation: !model.selectedConversationIsStreaming && !isUserMessageSendPositioning,
+            onInputHeightChange: { change in
+                guard change.identity.conversationID == model.selectedConversationID else { return }
+                // The shared height animation derives both consumers' geometry
+                // from this one input measurement, including interrupted edits.
+                composerHeight += change.delta
+            },
+            onMeasuredHeight: updateComposerHeight
+        )
             #if DEBUG
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .global)
@@ -6555,7 +6589,7 @@ private struct ChatView: View {
     }
 
     private var composerBottomClearance: CGFloat {
-        max(110, composerHeight + 12)
+        ComposerHeightPresentation.bottomClearance(for: composerHeight)
     }
 
     private var floatingHeaderClearance: CGFloat {
@@ -6575,7 +6609,7 @@ private struct ChatView: View {
     }
 
     private var conversationMessageSpacing: CGFloat {
-        ConversationMessageLayout.stackSpacing
+        CGFloat(model.preferences.effectiveChatBubbleSpacing)
     }
 
     private func requestRegeneration(for message: ChatMessage) {
@@ -10565,7 +10599,8 @@ private struct ChatView: View {
         using scrollProxy: ChatTranscriptProxy,
         anchor: UnitPoint = UnitPoint(x: 0.5, y: 0.68)
     ) async -> Bool {
-        await scrollProxy.navigate(targetID, anchor: anchor)
+        await scrollProxy.animate(targetID, anchor: anchor,
+                                  duration: chatSendPlacementDuration, timing: .send)
     }
 
     private func awaitConcreteOffBottomUserLanding(
@@ -11138,9 +11173,9 @@ private struct ChatView: View {
                         + chatBottomTraceState
                 )
             } else {
-                // Already materialized sends keep one destination through
-                // their existing ease-out. Detached sends retain the system
-                // scroll that materializes their target.
+                // Materialized sends retain their existing ease-out. Detached
+                // sends update the logical viewport as rows are measured, so
+                // cell preparation and the changing bottom share one motion.
                 traceScrollCommand(
                     source: visibleStagedAnchorID != nil
                         ? "sendPosition.visibleStagedBottom"
@@ -11153,7 +11188,7 @@ private struct ChatView: View {
                         ? "stagedBottomSentinel"
                         : "messageHost:\(ChatBottomTrace.shortID(request.messageID))",
                     animation: usesOffBottomPhysicalCompletion && visibleStagedAnchorID == nil
-                        ? "system"
+                        ? "send"
                         : "easeOut"
                 )
                 let placementCompleted: Bool
@@ -14916,6 +14951,7 @@ private struct UserBubbleFloatUpSendAnimationModifier: ViewModifier {
         let reduceMotion: Bool
     }
 
+    @Environment(\.nativeChatSendOffset) private var sendOffset
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPresented: Bool
     @State private var latchedRequestID: UUID?
@@ -15018,7 +15054,7 @@ private struct UserBubbleFloatUpSendAnimationModifier: ViewModifier {
                 \.userBubbleFloatUpFadeAnimationEnabled,
                 isEnabled && !reduceMotion
             )
-            .offset(y: effectivePresented ? 0 : 18)
+            .offset(y: effectivePresented ? 0 : (sendOffset ?? 18))
             .task(id: taskKey) {
                 await startIfNeeded()
             }
@@ -15230,13 +15266,12 @@ private struct UserBubbleLivelySendAnimationModifier: ViewModifier {
     }
 }
 
-// Users always reserve reaction space, including a user-only conversation tail.
-// Other rows reserve it only between messages; the final assistant already has
-// composer clearance. Reaction changes never alter a user row's measured size.
+// Standalone user rows and batch tails reserve reaction space. Interior batch
+// bubbles reserve it only for visible reactions so empty footers do not split
+// one user turn apart. The final assistant already has composer clearance.
 enum ConversationMessageLayout {
     static let reactionFooterHeight: CGFloat = 32
     static let reactionTopInset: CGFloat = 6
-    static let stackSpacing: CGFloat = 12
 }
 
 private struct StableMessageReactionFooter<Reactions: View>: ViewModifier {
@@ -15261,6 +15296,8 @@ private struct MessageRow: View {
     @State private var assistantAttachmentsExpanded = false
     let message: ChatMessage
     let isConversationTail: Bool
+    let continuesUserBatch: Bool
+    let hasFollowingUserBatch: Bool
     let citationSources: [MessageCitationSource]
     let isGroupMessage: Bool
     let versionFlashContext: VersionFlashTextContext?
@@ -15334,7 +15371,7 @@ private struct MessageRow: View {
                 Spacer(minLength: model.preferences.showUserAvatar ? 24 : 54)
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .trailing, spacing: 6) {
-                        if hasUserMetadata {
+                        if hasUserMetadata && !continuesUserBatch {
                             HStack(spacing: 6) {
                                 if model.preferences.showUserName {
                                     Text(model.userProfile.nickname)
@@ -15371,6 +15408,11 @@ private struct MessageRow: View {
                                 isStreaming: message.isStreaming
                             )
                         }
+                        if message.isPendingUserSend == true && !hasFollowingUserBatch {
+                            Text(L10n.lookup("待发送"))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .modifier(UserBubbleFloatUpBubbleFadeModifier())
                     .modifier(UserBubbleLivelyBubbleFadeModifier())
@@ -15390,7 +15432,12 @@ private struct MessageRow: View {
                         )
                     )
                     if model.preferences.showUserAvatar {
-                        UserProfileAvatarView(profile: model.userProfile, size: 30)
+                        if continuesUserBatch {
+                            Color.clear.frame(width: 30, height: 30)
+                                .accessibilityHidden(true)
+                        } else {
+                            UserProfileAvatarView(profile: model.userProfile, size: 30)
+                        }
                     }
                 }
                 .modifier(
@@ -15403,6 +15450,7 @@ private struct MessageRow: View {
             } else {
                 let assistant = model.displayAssistant(for: message)
                 let attachments = assistantAttachments
+                let segments = assistantTextSegments
                 if assistantUsesWideTextLayout {
                     VStack(alignment: .leading, spacing: 8) {
                         if model.preferences.showModelIcon || hasAssistantMetadata {
@@ -15457,15 +15505,18 @@ private struct MessageRow: View {
                         if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
                             assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
-                            ForEach(Array(assistantTextSegments.enumerated()), id: \.offset) { segmentIndex, text in
-                                assistantMessageMarkdown(
-                                    text: text,
-                                    messageFontSize: messageFontSize,
-                                    segmentIndex: segmentIndex
-                                )
-                                .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
-                                .padding(.vertical, 2)
+                            VStack(alignment: .leading, spacing: CGFloat(model.preferences.effectiveChatBubbleSpacing)) {
+                                ForEach(Array(segments.enumerated()), id: \.offset) { segmentIndex, text in
+                                    assistantMessageMarkdown(
+                                        text: text,
+                                        messageFontSize: messageFontSize,
+                                        segmentIndex: segmentIndex,
+                                        segmentCount: segments.count
+                                    )
+                                    .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
+                                }
                             }
+                            .padding(.vertical, 2)
                         }
                         if !attachments.searchImages.isEmpty {
                             MessageAttachmentsView(
@@ -15532,26 +15583,29 @@ private struct MessageRow: View {
                         if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
                             assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
-                            ForEach(Array(assistantTextSegments.enumerated()), id: \.offset) { segmentIndex, text in
-                                assistantMessageMarkdown(
-                                    text: text,
-                                    messageFontSize: messageFontSize,
-                                    segmentIndex: segmentIndex
-                                )
-                                .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(
-                                    ChatBubbleSurface(
-                                        style: assistantBubbleStyle,
-                                        baseColor: assistantBubbleColor,
-                                        opacity: assistantBubbleOpacity,
-                                        liquidGlassOpacity: model.preferences.liquidGlassBubbleOpacity,
-                                        appleGlassOpacity: model.preferences.appleGlassBubbleOpacity,
-                                        cornerRadius: 17
+                            VStack(alignment: .leading, spacing: CGFloat(model.preferences.effectiveChatBubbleSpacing)) {
+                                ForEach(Array(segments.enumerated()), id: \.offset) { segmentIndex, text in
+                                    assistantMessageMarkdown(
+                                        text: text,
+                                        messageFontSize: messageFontSize,
+                                        segmentIndex: segmentIndex,
+                                        segmentCount: segments.count
                                     )
-                                    .allowsHitTesting(false)
-                                )
+                                    .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        ChatBubbleSurface(
+                                            style: assistantBubbleStyle,
+                                            baseColor: assistantBubbleColor,
+                                            opacity: assistantBubbleOpacity,
+                                            liquidGlassOpacity: model.preferences.liquidGlassBubbleOpacity,
+                                            appleGlassOpacity: model.preferences.appleGlassBubbleOpacity,
+                                            cornerRadius: 17
+                                        )
+                                        .allowsHitTesting(false)
+                                    )
+                                }
                             }
                         }
                         if !attachments.searchImages.isEmpty {
@@ -15621,7 +15675,8 @@ private struct MessageRow: View {
         .frame(maxWidth: .infinity)
         .modifier(StableMessageReactionFooter(
             reactions: userReactionFooter,
-            reservesSpace: message.role == .user || !isConversationTail
+            reservesSpace: message.role == .user
+                ? (!hasFollowingUserBatch || hasVisibleReaction) : !isConversationTail
         ))
         .background {
             if message.role == .assistant,
@@ -15643,7 +15698,8 @@ private struct MessageRow: View {
     private func assistantMessageMarkdown(
         text: String,
         messageFontSize: CGFloat,
-        segmentIndex: Int
+        segmentIndex: Int,
+        segmentCount: Int
     ) -> MessageMarkdownView {
         MessageMarkdownView(
             text: text,
@@ -15651,7 +15707,7 @@ private struct MessageRow: View {
             lineSpacing: CGFloat(model.preferences.assistantMessageLineSpacing),
             listItemSpacing: CGFloat(model.preferences.assistantMarkdownListItemSpacing),
             blockSpacingScale: CGFloat(model.preferences.assistantMarkdownBlockSpacingScale),
-            isStreaming: message.isStreaming,
+            isStreaming: message.isStreaming && segmentIndex == segmentCount - 1,
             rendersMarkdown: model.preferences.enableAssistantMarkdown,
             htmlRunnerEnabled: model.preferences.htmlRunnerEnabled,
             htmlRunnerAllowCurrentChat: model.preferences.htmlRunnerAllowCurrentChat,
@@ -15862,14 +15918,18 @@ private struct MessageRow: View {
     }
 
     private var assistantTextSegments: [String] {
+        if let segmentation = message.replySegmentation {
+            return segmentation.segments(in: message.text)
+        }
         guard isGroupMessage,
-              model.preferences.groupChatSegmentedReply,
+              model.preferences.chatSegmentedReply,
               !message.isStreaming else {
             return [message.text]
         }
-        return GroupReplySegmenter.segments(
+        return HistoricalGroupReplySegmenter.segments(
+            messageID: message.id,
             in: message.text,
-            pattern: model.preferences.groupChatSegmentRegex
+            maximumSegments: model.preferences.replySegmentLimit
         )
     }
 
@@ -16891,68 +16951,46 @@ private struct MessageActionsSheet: View {
     }
 }
 
-private enum GroupReplySegmenter {
-    private static let punctuationOnlyPattern = #"^[\s。！？，、；：…·．｡､﹗﹖!?,.;:~～—–\-]+$"#
-
-    static func segments(in text: String, pattern: String) -> [String] {
-        let customPattern = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !customPattern.isEmpty else { return automaticSegments(in: text) }
-        guard let expression = try? NSRegularExpression(pattern: customPattern) else {
-            return automaticSegments(in: text)
+@MainActor
+private enum HistoricalGroupReplySegmenter {
+    private final class Entry: NSObject {
+        let text: String
+        let maximumSegments: Int
+        let segments: [String]
+        init(text: String, maximumSegments: Int, segments: [String]) {
+            self.text = text
+            self.maximumSegments = maximumSegments
+            self.segments = segments
         }
-
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = expression.matches(in: text, range: range).compactMap { match -> String? in
-            guard let stringRange = Range(match.range, in: text) else { return nil }
-            let value = text[stringRange].trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : value
-        }
-        guard matches.count > 1 else { return [text.trimmingCharacters(in: .whitespacesAndNewlines)] }
-
-        let compactOriginal = text.filter { !$0.isWhitespace }
-        let compactMatches = matches.joined().filter { !$0.isWhitespace }
-        if !compactOriginal.isEmpty,
-           Double(compactMatches.count) < Double(compactOriginal.count) * 0.6 {
-            return automaticSegments(in: text)
-        }
-        let kept = dropPunctuationOnly(matches)
-        return kept.isEmpty ? [text.trimmingCharacters(in: .whitespacesAndNewlines)] : kept
     }
 
-    private static func automaticSegments(in text: String) -> [String] {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [text] }
-        if trimmed.contains("```") || trimmed.contains("\n|") || trimmed.contains("\n#") {
-            return [trimmed]
-        }
+    // Old group messages have no persisted boundaries. Reuse their natural-
+    // paragraph presentation without rewriting history or evaluating old regexes.
+    private static let results: NSCache<NSUUID, Entry> = {
+        let cache = NSCache<NSUUID, Entry>()
+        cache.countLimit = 128
+        cache.totalCostLimit = 2 * 1024 * 1024
+        return cache
+    }()
 
-        let enders = CharacterSet(charactersIn: "。！？!?\n")
-        var chunks: [String] = []
-        var current = ""
-        for character in trimmed {
-            current.append(character)
-            let scalars = character.unicodeScalars
-            if scalars.contains(where: { enders.contains($0) }) {
-                let chunk = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !chunk.isEmpty { chunks.append(chunk) }
-                current = ""
-            }
+    static func segments(messageID: UUID, in text: String, maximumSegments: Int) -> [String] {
+        let key = messageID as NSUUID
+        if let entry = results.object(forKey: key),
+           entry.text.utf8.elementsEqual(text.utf8),
+           entry.maximumSegments == maximumSegments {
+            return entry.segments
         }
-        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !tail.isEmpty { chunks.append(tail) }
-        let kept = dropPunctuationOnly(chunks)
-        return kept.isEmpty ? [trimmed] : kept
-    }
-
-    private static func dropPunctuationOnly(_ values: [String]) -> [String] {
-        let expression = try? NSRegularExpression(pattern: punctuationOnlyPattern)
-        return values.compactMap { value in
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            guard let expression else { return trimmed }
-            let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
-            return expression.firstMatch(in: trimmed, range: range) == nil ? trimmed : nil
+        var scanner = ReplySegmentScanner(maximumSegments: maximumSegments)
+        scanner.advance(through: text)
+        let segments = scanner.segmentation.segments(in: text)
+        let cost = text.utf8.count + segments.reduce(0) { $0 + $1.utf8.count }
+        if cost <= 512 * 1024 {
+            results.setObject(Entry(text: text, maximumSegments: maximumSegments, segments: segments),
+                              forKey: key, cost: cost)
+        } else {
+            results.removeObject(forKey: key)
         }
+        return segments
     }
 }
 
@@ -18981,7 +19019,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             Button {
                 guard !isDrawerTapSuppressed else { return }
                 model.performListItemHaptic()
-                withAnimation(.easeOut(duration: 0.24)) {
+                withAnimation(.easeOut(duration: 0.26)) {
                     assistantsExpanded = false
                     groupChatMode.toggle()
                 }
@@ -18998,8 +19036,8 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 24, height: 24)
-                        .rotationEffect(.degrees(groupChatMode ? 0 : -90))
-                        .animation(.easeOut(duration: 0.24), value: groupChatMode)
+                        .rotationEffect(.degrees(groupChatMode ? 180 : 0))
+                        .animation(.easeOut(duration: 0.26), value: groupChatMode)
                 }
                 .padding(.leading, 8)
                 .padding(.trailing, 12)
@@ -19015,6 +19053,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.bottom, 5)
+            .accessibilityIdentifier("drawer.group.toggle")
 
             ZStack(alignment: .bottom) {
                 DrawerConversationListPositionOwner(

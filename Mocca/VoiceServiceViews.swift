@@ -110,7 +110,7 @@ struct VoiceServicesPage: View {
                         .frame(width: 34)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.lookup("系统语音"))
-                            .font(.body.weight(.medium))
+                            .font(.body.weight(.regular))
                         Text(selectedSystemVoiceTitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -154,7 +154,7 @@ struct VoiceServicesPage: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(service.resolvedName)
-                            .font(.body.weight(.medium))
+                            .font(.body.weight(.regular))
                             .foregroundStyle(.primary)
                         if !service.enabled {
                             Text(L10n.lookup("已停用"))
