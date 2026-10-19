@@ -181,6 +181,23 @@ struct SearchServiceConfiguration: Identifiable, Codable, Equatable, Hashable, S
         )
     }
 
+    static var defaultDuckDuckGo: SearchServiceConfiguration {
+        SearchServiceConfiguration(
+            id: UUID(uuidString: "00000000-0000-4000-9000-000000000002")!,
+            kind: .duckDuckGo,
+            endpoint: SearchServiceKind.duckDuckGo.defaultEndpoint
+        )
+    }
+
+    static func initialService(legacyTavilyAPIKey: String) -> SearchServiceConfiguration {
+        guard !legacyTavilyAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return defaultDuckDuckGo
+        }
+        var configuration = defaultTavily
+        configuration.apiKey = legacyTavilyAPIKey
+        return configuration
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, kind, name, endpoint, apiKey, username, password, options
     }

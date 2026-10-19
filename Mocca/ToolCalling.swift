@@ -804,16 +804,6 @@ enum ToolCallExecutor {
     }
 }
 
-// MARK: - Model Capability: Tool Support Check
-
-extension ModelCapabilityRegistry {
-    static func supportsTools(modelID: String) -> Bool {
-        let caps = infer(id: modelID)
-        return caps.abilities.contains(.tool)
-    }
-}
-
-
 // MARK: - Weather Service (Open-Meteo + CoreLocation)
 
 enum DeviceWeatherService {

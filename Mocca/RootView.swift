@@ -839,11 +839,12 @@ private struct ChatTranscriptProxy {
         return await native.scrollAndWait(to: target, duration: duration, timing: timing)
     }
 
-    /// Navigation uses UIScrollView's own motion so
-    /// collection cells follow the actual viewport throughout the move.
-    func navigate<ID: Hashable>(_ id: ID, anchor: UnitPoint) async -> Bool {
+    /// Navigation updates the real UIScrollView viewport, so cells follow it
+    /// throughout the move. Edge buttons may opt into distance-aware timing.
+    func navigate<ID: Hashable>(_ id: ID, anchor: UnitPoint,
+                               timing: NativeChatScrollTiming = .system) async -> Bool {
         guard let target = nativeTarget(id, anchor: anchor) else { return false }
-        return await native.scrollAndWait(to: target, timing: .system)
+        return await native.scrollAndWait(to: target, timing: timing)
     }
 }
 
@@ -8797,10 +8798,10 @@ private struct ChatView: View {
             traceScrollCommand(
                 source: "navigation.top",
                 target: "messageHost:\(ChatBottomTrace.shortID(firstID))",
-                animation: "system"
+                animation: "edge"
             )
             let completed = await scrollProxy.navigate(
-                conversationMessageHostID(for: firstID), anchor: .top
+                conversationMessageHostID(for: firstID), anchor: .top, timing: .edge
             )
             guard completed, !Task.isCancelled,
                   !model.hasEarlierMessages,
@@ -8872,9 +8873,9 @@ private struct ChatView: View {
                   !hasConcreteNativeUserScrollOwnership else { return }
             if !isNativeEdgeBottomLanding(request, anchorID: anchorID, tailMessageID: tailMessageID) {
                 traceScrollCommand(
-                    source: "navigation.bottom", target: "bottomSentinel", animation: "system"
+                    source: "navigation.bottom", target: "bottomSentinel", animation: "edge"
                 )
-                let completed = await scrollProxy.navigate(anchorID, anchor: .bottom)
+                let completed = await scrollProxy.navigate(anchorID, anchor: .bottom, timing: .edge)
                 #if DEBUG
                 if completed, let mode = FullMotionLandingProbe.boundaryMode() {
                     FullMotionLandingProbe.record(["stage": "boundaryInjection", "mode": mode,

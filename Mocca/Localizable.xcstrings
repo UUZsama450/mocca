@@ -22696,6 +22696,61 @@
           }
         }
       }
+    },
+    "无需 API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No API Key needed"
+          }
+        }
+      }
+    },
+    "需要 API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API Key required"
+          }
+        }
+      }
+    },
+    "自建服务": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Self-hosted"
+          }
+        }
+      }
+    },
+    "选择搜索服务": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Search Service"
+          }
+        }
+      }
+    },
+    "搜索名称或用途": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search by name or purpose"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

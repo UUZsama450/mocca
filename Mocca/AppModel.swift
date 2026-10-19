@@ -8640,7 +8640,8 @@ final class AppModel {
         let hasBuiltInSearch = assistant.searchEnabled && assistant.searchMode.usesBuiltInSearch(providerType: provider.type)
         let needsClientSearch = assistant.searchEnabled && !hasBuiltInSearch
 
-        let supportsTools = ModelCapabilityRegistry.supportsTools(modelID: selection.modelID)
+        let supportsTools = (provider.models.first(where: { $0.id == selection.modelID })
+            ?? ModelConfiguration(id: selection.modelID)).supportsTools
         let selectedSearchService = preferences.searchServices.first(where: {
             $0.id == preferences.selectedSearchServiceID
         }) ?? preferences.searchServices.first
@@ -12154,9 +12155,10 @@ final class AppModel {
             } catch {
                 return
             }
-            _ = await MainActor.run {
-                self?.saveImmediately()
-            }
+            // Disclosure state is already debounced. Submit it to the same
+            // ordered save lane without blocking an in-flight reveal or drag.
+            // Snapshot capture and failure handling remain on MainActor.
+            _ = await self?.saveWithoutBlockingMain()
         }
     }
 

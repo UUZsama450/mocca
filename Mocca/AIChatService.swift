@@ -32,6 +32,9 @@ struct ChatRequestMessage: @unchecked Sendable {
     let contentBlocks: [[String: Any]]?
     let functionCalls: [(String, [String: Any])]?
     let functionResponses: [(String, String)]?
+    /// Provider output retained only for the active tool loop, including opaque signatures.
+    let responseItems: [[String: Any]]?
+    let geminiParts: [[String: Any]]?
 
     init(
         role: String,
@@ -43,7 +46,9 @@ struct ChatRequestMessage: @unchecked Sendable {
         reasoningDetailsJSON: [[String: Any]]? = nil,
         contentBlocks: [[String: Any]]? = nil,
         functionCalls: [(String, [String: Any])]? = nil,
-        functionResponses: [(String, String)]? = nil
+        functionResponses: [(String, String)]? = nil,
+        responseItems: [[String: Any]]? = nil,
+        geminiParts: [[String: Any]]? = nil
     ) {
         self.role = role
         self.content = content
@@ -55,6 +60,8 @@ struct ChatRequestMessage: @unchecked Sendable {
         self.contentBlocks = contentBlocks
         self.functionCalls = functionCalls
         self.functionResponses = functionResponses
+        self.responseItems = responseItems
+        self.geminiParts = geminiParts
     }
 }
 
@@ -513,7 +520,10 @@ enum AIChatService {
             content: assistantText,
             toolCallsJSON: toolCallsJSON,
             reasoning: assistantReasoning.isEmpty ? nil : assistantReasoning,
-            reasoningDetailsJSON: assistantReasoningDetails
+            reasoningDetailsJSON: assistantReasoningDetails,
+            responseItems: toolCalls.lazy.compactMap {
+                $0.metadata?["responses_output"] as? [[String: Any]]
+            }.first
         )
         result.append(assistantMsg)
         for tr in toolResults {
@@ -535,9 +545,6 @@ enum AIChatService {
     ) -> [ChatRequestMessage] {
         var result = messages
         var blocks: [[String: Any]] = []
-        if !assistantReasoning.isEmpty {
-            blocks.append(["type": "thinking", "thinking": assistantReasoning])
-        }
         if !assistantText.isEmpty {
             blocks.append(["type": "text", "text": assistantText])
         }
@@ -549,7 +556,10 @@ enum AIChatService {
                 "input": call.arguments
             ] as [String: Any])
         }
-        result.append(ChatRequestMessage(role: "assistant", content: "", contentBlocks: blocks))
+        let originalBlocks = toolCalls.lazy.compactMap {
+            $0.metadata?["claude_content_blocks"] as? [[String: Any]]
+        }.first
+        result.append(ChatRequestMessage(role: "assistant", content: "", contentBlocks: originalBlocks ?? blocks))
         var toolResultBlocks: [[String: Any]] = []
         for tr in toolResults {
             toolResultBlocks.append([
@@ -572,12 +582,27 @@ enum AIChatService {
         result.append(ChatRequestMessage(
             role: "assistant",
             content: assistantText,
-            functionCalls: toolCalls.map { ($0.name, $0.arguments) }
+            functionCalls: toolCalls.map { ($0.name, $0.arguments) },
+            geminiParts: toolCalls.lazy.compactMap {
+                $0.metadata?["gemini_parts"] as? [[String: Any]]
+            }.first
         ))
         result.append(ChatRequestMessage(
             role: "tool",
             content: "",
-            functionResponses: toolResults.map { ($0.name, $0.content) }
+            functionResponses: toolResults.map { ($0.name, $0.content) },
+            geminiParts: toolResults.map { result in
+                var response: [String: Any] = ["name": result.name]
+                if let call = toolCalls.first(where: { $0.id == result.id }),
+                   let providerID = call.metadata?["gemini_call_id"] as? String {
+                    response["id"] = providerID
+                }
+                let parsed = result.content.data(using: .utf8).flatMap {
+                    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+                }
+                response["response"] = parsed ?? ["result": result.content]
+                return ["functionResponse": response]
+            }
         ))
         return result
     }
@@ -637,8 +662,8 @@ enum AIChatService {
             let entries = object["data"] as? [[String: Any]] ?? []
             models = entries.compactMap { entry in
                 guard let id = entry["id"] as? String, !id.isEmpty else { return nil }
-                if provider.isOpenRouter {
-                    return openRouterModelConfiguration(entry: entry, id: id)
+                if provider.isOpenRouter || entry["supported_parameters"] is [String] {
+                    return catalogModelConfiguration(entry: entry, id: id)
                 }
                 return ModelConfiguration(id: id, displayName: entry["display_name"] as? String)
             }
@@ -723,7 +748,7 @@ enum AIChatService {
         throw AIChatServiceError.invalidResponse
     }
 
-    private static func openRouterModelConfiguration(
+    private static func catalogModelConfiguration(
         entry: [String: Any],
         id: String
     ) -> ModelConfiguration {
@@ -758,7 +783,13 @@ enum AIChatService {
         return ModelConfiguration(
             id: id,
             displayName: (entry["name"] as? String) ?? (entry["display_name"] as? String),
-            capabilityOverride: ModelCapabilityRegistry.infer(id: id, base: metadata)
+            capabilityOverride: {
+                var inferred = ModelCapabilityRegistry.infer(id: id, base: metadata)
+                if entry["supported_parameters"] is [String] {
+                    inferred.abilities = kind == .embedding ? [] : abilities
+                }
+                return inferred
+            }()
         )
     }
 
@@ -844,6 +875,8 @@ enum AIChatService {
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var functionCalls: [String: (id: String, name: String, arguments: String)] = [:]
+                    var completedOutput: [[String: Any]] = []
+                    var outputByIndex: [Int: [String: Any]] = [:]
                     var emittedImageKeys = Set<String>()
 
                     func imageEvent(
@@ -925,6 +958,7 @@ enum AIChatService {
                             )
                         case "response.output_item.done":
                             guard let item = object["item"] as? [String: Any] else { break }
+                            outputByIndex[object["output_index"] as? Int ?? outputByIndex.count] = item
                             let key = (item["id"] as? String)
                                 ?? String(object["output_index"] as? Int ?? 0)
                             if item["type"] as? String == "function_call" {
@@ -952,6 +986,7 @@ enum AIChatService {
                                     continuation.yield(event)
                                 }
                                 let output = responseObject["output"] as? [[String: Any]] ?? []
+                                completedOutput = output
                                 for (index, item) in output.enumerated() {
                                     if item["type"] as? String == "function_call" {
                                         let key = (item["id"] as? String) ?? String(index)
@@ -974,7 +1009,21 @@ enum AIChatService {
                         }
                     }
 
-                    let calls: [ToolCallInfo] = functionCalls.values.compactMap { call in
+                    let replayOutput = completedOutput.isEmpty
+                        ? outputByIndex.sorted { $0.key < $1.key }.map(\.value)
+                        : completedOutput
+                    // Calls may depend on earlier calls in the same response.
+                    // Dictionary/ID order is not the model's output order.
+                    let outputCalls: [(id: String, name: String, arguments: String)] = replayOutput.compactMap { item in
+                        guard item["type"] as? String == "function_call",
+                              let id = item["call_id"] as? String,
+                              let name = item["name"] as? String else { return nil }
+                        return (id, name, item["arguments"] as? String ?? "{}")
+                    }
+                    let orderedCalls = outputCalls.isEmpty
+                        ? functionCalls.sorted { $0.key < $1.key }.map(\.value)
+                        : outputCalls
+                    let calls: [ToolCallInfo] = orderedCalls.compactMap { call in
                         guard !call.name.isEmpty else { return nil }
                         let arguments: [String: Any]
                         if let data = call.arguments.data(using: .utf8),
@@ -983,7 +1032,8 @@ enum AIChatService {
                         } else {
                             arguments = [:]
                         }
-                        return ToolCallInfo(id: call.id, name: call.name, arguments: arguments)
+                        return ToolCallInfo(id: call.id, name: call.name, arguments: arguments,
+                                            metadata: replayOutput.isEmpty ? nil : ["responses_output": replayOutput])
                     }
                     if !calls.isEmpty {
                         let event = ChatStreamEvent.toolCalls(calls)
@@ -1003,6 +1053,10 @@ enum AIChatService {
     private static func openAIResponsesInput(_ messages: [ChatRequestMessage]) -> [[String: Any]] {
         var input: [[String: Any]] = []
         for message in messages {
+            if let items = message.responseItems, !items.isEmpty {
+                input.append(contentsOf: items)
+                continue
+            }
             if message.role == "tool", let callID = message.toolCallID {
                 input.append([
                     "type": "function_call_output",
@@ -1427,6 +1481,43 @@ enum AIChatService {
         )
     }
 
+    private static func openAIChatMessages(
+        _ messages: [ChatRequestMessage], provider: ProviderConfiguration, modelID: String
+    ) -> [[String: Any]] {
+        let usesDeepSeekReasoning = !provider.isOpenRouter && (
+            URL(string: provider.baseURL)?.host?.lowercased() == "api.deepseek.com"
+            || modelID.lowercased().contains("deepseek")
+        )
+        return messages.map { message in
+            if message.role == "tool", let callID = message.toolCallID {
+                return ["role": "tool", "tool_call_id": callID, "content": message.content]
+            }
+            var result: [String: Any] = ["role": message.role, "content": message.content]
+            if !message.images.isEmpty {
+                var parts: [[String: Any]] = []
+                if !message.content.isEmpty { parts.append(["type": "text", "text": message.content]) }
+                parts.append(contentsOf: message.images.map {
+                    ["type": "image_url", "image_url": ["url": "data:\($0.mimeType);base64,\($0.base64Data)"]]
+                })
+                result["content"] = parts
+            }
+            if message.role == "assistant" {
+                if let calls = message.toolCallsJSON, !calls.isEmpty { result["tool_calls"] = calls }
+                if provider.isOpenRouter, message.toolCallsJSON?.isEmpty == false {
+                    if let details = message.reasoningDetailsJSON, !details.isEmpty {
+                        result["reasoning_details"] = details
+                    } else if let reasoning = message.reasoning, !reasoning.isEmpty {
+                        result["reasoning"] = reasoning
+                    }
+                } else if usesDeepSeekReasoning {
+                    // Include even empty reasoning for old/non-thinking history; never invent it.
+                    result["reasoning_content"] = message.reasoning ?? ""
+                }
+            }
+            return result
+        }
+    }
+
     // MARK: - Provider Streams With Tools
 
     private static func openAIStreamWithTools(
@@ -1451,37 +1542,7 @@ enum AIChatService {
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-                    var wireMessages: [[String: Any]] = messages.map { message in
-                        if message.role == "tool", let callID = message.toolCallID {
-                            return ["role": "tool", "tool_call_id": callID, "content": message.content]
-                        }
-                        if message.role == "assistant", let calls = message.toolCallsJSON, !calls.isEmpty {
-                            var msg: [String: Any] = ["role": "assistant", "tool_calls": calls]
-                            if !message.content.isEmpty { msg["content"] = message.content }
-                            if provider.isOpenRouter {
-                                if let details = message.reasoningDetailsJSON, !details.isEmpty {
-                                    msg["reasoning_details"] = details
-                                } else if let reasoning = message.reasoning, !reasoning.isEmpty {
-                                    msg["reasoning"] = reasoning
-                                }
-                            }
-                            return msg
-                        }
-                        guard !message.images.isEmpty else {
-                            return ["role": message.role, "content": message.content]
-                        }
-                        var parts: [[String: Any]] = []
-                        if !message.content.isEmpty {
-                            parts.append(["type": "text", "text": message.content])
-                        }
-                        for image in message.images {
-                            parts.append([
-                                "type": "image_url",
-                                "image_url": ["url": "data:\(image.mimeType);base64,\(image.base64Data)"]
-                            ])
-                        }
-                        return ["role": message.role, "content": parts]
-                    }
+                    var wireMessages = openAIChatMessages(messages, provider: provider, modelID: modelID)
                     if let systemPrompt = options.systemPrompt {
                         wireMessages.insert(["role": "system", "content": systemPrompt], at: 0)
                     }
@@ -1523,7 +1584,7 @@ enum AIChatService {
                     let (bytes, response) = try await makeSession(for: provider).bytes(for: request)
                     try await validateStreamingResponse(response, bytes: bytes)
 
-                    var toolCallAccumulator: [String: (name: String, args: String)] = [:]
+                    var toolCallAccumulator: [Int: (id: String?, name: String, args: String)] = [:]
                     var openRouterReasoningDetails: [[String: Any]] = []
 
                     var searchCitations = NativeSearchCitations()
@@ -1573,24 +1634,16 @@ enum AIChatService {
 
                         if let toolCalls = delta["tool_calls"] as? [[String: Any]] {
                             for tc in toolCalls {
-                                let idx = "\(tc["index"] ?? 0)"
+                                let idx = tc["index"] as? Int ?? 0
                                 let fn = tc["function"] as? [String: Any] ?? [:]
-                                let id = tc["id"] as? String
-                                let name = fn["name"] as? String
-                                let argsDelta = fn["arguments"] as? String ?? ""
-
-                                if let id, !id.isEmpty {
-                                    toolCallAccumulator[idx] = (name: name ?? toolCallAccumulator[idx]?.name ?? "", args: argsDelta)
-                                } else {
-                                    let existing = toolCallAccumulator[idx]
-                                    toolCallAccumulator[idx] = (
-                                        name: name ?? existing?.name ?? "",
-                                        args: (existing?.args ?? "") + argsDelta
-                                    )
-                                }
-                                if let id, !id.isEmpty {
-                                    toolCallAccumulator[idx] = (name: name ?? "", args: argsDelta)
-                                }
+                                let existing = toolCallAccumulator[idx]
+                                let id = (tc["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                                let name = (fn["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                                toolCallAccumulator[idx] = (
+                                    id: id ?? existing?.id,
+                                    name: name ?? existing?.name ?? "",
+                                    args: (existing?.args ?? "") + (fn["arguments"] as? String ?? "")
+                                )
                             }
                         }
 
@@ -1615,7 +1668,7 @@ enum AIChatService {
                             } else {
                                 args = [:]
                             }
-                            let id = "call_\(UUID().uuidString.prefix(8))"
+                            let id = value.id ?? "call_\(UUID().uuidString.prefix(8))"
                             var metadata: [String: Any]?
                             if index == 0, !openRouterReasoningDetails.isEmpty {
                                 metadata = [
@@ -1726,6 +1779,8 @@ enum AIChatService {
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var currentBlockType: String?
+                    var currentBlock: [String: Any]?
+                    var replayBlocks: [[String: Any]] = []
                     var currentToolID = ""
                     var currentToolName = ""
                     var currentToolArgsBuffer = ""
@@ -1774,6 +1829,8 @@ enum AIChatService {
                             if let block = object["content_block"] as? [String: Any] {
                                 let blockType = block["type"] as? String ?? ""
                                 currentBlockType = blockType
+                                currentBlock = block
+                                currentToolArgsBuffer = ""
                                 if blockType == "tool_use" {
                                     currentToolID = block["id"] as? String ?? ""
                                     currentToolName = block["name"] as? String ?? ""
@@ -1784,12 +1841,19 @@ enum AIChatService {
                             if let delta = object["delta"] as? [String: Any] {
                                 let deltaType = delta["type"] as? String ?? ""
                                 switch deltaType {
+                                case "signature_delta":
+                                    let previous = currentBlock?["signature"] as? String ?? ""
+                                    currentBlock?["signature"] = previous + (delta["signature"] as? String ?? "")
                                 case "text_delta":
+                                    let previous = currentBlock?["text"] as? String ?? ""
+                                    currentBlock?["text"] = previous + (delta["text"] as? String ?? "")
                                     if let text = delta["text"] as? String, !text.isEmpty {
                                         let event = ChatStreamEvent.text(text)
                                         continuation.yield(event)
                                     }
                                 case "thinking_delta":
+                                    let previous = currentBlock?["thinking"] as? String ?? ""
+                                    currentBlock?["thinking"] = previous + (delta["thinking"] as? String ?? "")
                                     if let thinking = delta["thinking"] as? String, !thinking.isEmpty {
                                         let event = ChatStreamEvent.reasoning(thinking)
                                         continuation.yield(event)
@@ -1803,16 +1867,24 @@ enum AIChatService {
                                 }
                             }
                         case "content_block_stop":
+                            if !currentToolArgsBuffer.isEmpty,
+                               let data = currentToolArgsBuffer.data(using: .utf8),
+                               let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                currentBlock?["input"] = input
+                            }
                             if currentBlockType == "tool_use" && !currentToolID.isEmpty {
                                 let args: [String: Any]
                                 if let data = currentToolArgsBuffer.data(using: .utf8),
                                    let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                                     args = parsed
                                 } else {
-                                    args = [:]
+                                    args = currentBlock?["input"] as? [String: Any] ?? [:]
                                 }
+                                currentBlock?["input"] = args
                                 pendingToolCalls.append(ToolCallInfo(id: currentToolID, name: currentToolName, arguments: args))
                             }
+                            if let block = currentBlock { replayBlocks.append(block) }
+                            currentBlock = nil
                             currentBlockType = nil
                         default:
                             break
@@ -1820,6 +1892,7 @@ enum AIChatService {
                     }
 
                     if !pendingToolCalls.isEmpty {
+                        pendingToolCalls[0].metadata = ["claude_content_blocks": replayBlocks]
                         let event = ChatStreamEvent.toolCalls(pendingToolCalls)
                         continuation.yield(event)
                     }
@@ -1864,6 +1937,9 @@ enum AIChatService {
                     var body: [String: Any] = [
                         "contents": messages.map { message -> [String: Any] in
                             let role = message.role == "assistant" ? "model" : "user"
+                            if let parts = message.geminiParts, !parts.isEmpty {
+                                return ["role": role, "parts": parts]
+                            }
                             if let fcs = message.functionCalls, !fcs.isEmpty {
                                 let parts: [[String: Any]] = fcs.map { name, args in
                                     ["functionCall": ["name": name, "args": args] as [String: Any]]
@@ -1933,6 +2009,7 @@ enum AIChatService {
                     try await validateStreamingResponse(response, bytes: bytes)
 
                     var pendingToolCalls: [ToolCallInfo] = []
+                    var replayParts: [[String: Any]] = []
 
                     var searchCitations = NativeSearchCitations()
 
@@ -1947,6 +2024,7 @@ enum AIChatService {
                         let candidates = object["candidates"] as? [[String: Any]]
                         let content = candidates?.first?["content"] as? [String: Any]
                         if let parts = content?["parts"] as? [[String: Any]] {
+                            replayParts.append(contentsOf: parts)
                             for part in parts {
                                 if let text = part["text"] as? String, !text.isEmpty {
                                     let event: ChatStreamEvent = part["thought"] as? Bool == true
@@ -1957,8 +2035,10 @@ enum AIChatService {
                                 if let fc = part["functionCall"] as? [String: Any],
                                    let name = fc["name"] as? String {
                                     let args = fc["args"] as? [String: Any] ?? [:]
-                                    let id = "gemini_\(UUID().uuidString.prefix(8))"
-                                    pendingToolCalls.append(ToolCallInfo(id: id, name: name, arguments: args))
+                                    let providerID = fc["id"] as? String
+                                    let id = providerID ?? "gemini_\(UUID().uuidString.prefix(8))"
+                                    pendingToolCalls.append(ToolCallInfo(id: id, name: name, arguments: args,
+                                        metadata: providerID.map { ["gemini_call_id": $0] }))
                                 }
                             }
                         }
@@ -1977,6 +2057,9 @@ enum AIChatService {
                     }
 
                     if !pendingToolCalls.isEmpty {
+                        var metadata = pendingToolCalls[0].metadata ?? [:]
+                        metadata["gemini_parts"] = replayParts
+                        pendingToolCalls[0].metadata = metadata
                         let event = ChatStreamEvent.toolCalls(pendingToolCalls)
                         continuation.yield(event)
                     }

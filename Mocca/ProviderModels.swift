@@ -551,6 +551,7 @@ enum ModelCapabilityRegistry {
     )
     private static let embedding = regex(#"(^|[-_/])embed(?:dings?)?([-.]|$)"#)
     private static let gemini35Flash = regex(#"(^|[/:_-])gemini-3\.5-flash([._:@/-]|$)"#)
+    private static let deepSeekFlash = regex(#"(^|[/_:])deepseek-flash(?:$|[-_:@/])"#)
 
     static func isLikelyEmbeddingID(_ rawID: String) -> Bool {
         let id = rawID.lowercased()
@@ -587,10 +588,10 @@ enum ModelCapabilityRegistry {
         if matches(vision, id) && !result.input.contains(.image) {
             result.input.append(.image)
         }
-        if matches(tool, id) && !result.abilities.contains(.tool) {
+        if (matches(tool, id) || matches(deepSeekFlash, id)) && !result.abilities.contains(.tool) {
             result.abilities.append(.tool)
         }
-        if matches(reasoning, id) && !result.abilities.contains(.reasoning) {
+        if (matches(reasoning, id) || matches(deepSeekFlash, id)) && !result.abilities.contains(.reasoning) {
             result.abilities.append(.reasoning)
         }
         return normalized(result)
@@ -662,6 +663,22 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         // Catalog metadata is already inferred on import. An explicit override
         // must also be able to remove an inferred ability in the model editor.
         capabilityOverride ?? ModelCapabilityRegistry.infer(id: id)
+    }
+
+    var supportsTools: Bool {
+        capabilities.kind == .chat && capabilities.abilities.contains(.tool)
+    }
+
+    func mergingCatalogMetadata(from fetched: ModelConfiguration) -> ModelConfiguration {
+        guard fetched.id == id else { return self }
+        var result = self
+        if displayName == id, fetched.displayName != fetched.id {
+            result.displayName = fetched.displayName
+        }
+        // An automatic/manual entry can acquire newly advertised capabilities;
+        // never overwrite an existing explicit on/off configuration.
+        if capabilityOverride == nil { result.capabilityOverride = fetched.capabilityOverride }
+        return result
     }
 
     var composerDisplayName: String {

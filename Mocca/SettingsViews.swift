@@ -2390,7 +2390,9 @@ private struct OCRSettingsPage: View {
                     get: { model.preferences.ocrEnabled && canEnableOCR },
                     set: { value in
                         model.performSwitchHaptic()
-                        model.updatePreferences { $0.ocrEnabled = value && canEnableOCR }
+                        // canEnableOCR reads preferences; resolve it before the inout mutation.
+                        let shouldEnableOCR = value && canEnableOCR
+                        model.updatePreferences { $0.ocrEnabled = shouldEnableOCR }
                     }
                 )) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -7043,12 +7045,11 @@ struct SearchServiceSettingsView: View {
     }
 
     private func presentNewServiceEditor() {
-        guard let kind = SearchServiceKind.allCases.first else { return }
         let configuration = SearchServiceConfiguration(
             id: UUID(),
-            kind: kind,
+            kind: .duckDuckGo,
             name: "",
-            endpoint: kind.defaultEndpoint,
+            endpoint: SearchServiceKind.duckDuckGo.defaultEndpoint,
             apiKey: "",
             username: "",
             password: "",
@@ -7171,6 +7172,7 @@ private struct SearchServiceEditorView: View {
     @State private var draft: SearchServiceConfiguration
     @State private var testState: SearchServiceConnectionState = .idle
     @State private var testMessage: String?
+    @State private var isProviderPickerPresented = false
 
     let isNew: Bool
     let onSave: (SearchServiceConfiguration) -> Bool
@@ -7189,13 +7191,28 @@ private struct SearchServiceEditorView: View {
         NavigationStack {
             Form {
                 Section(L10n.lookup("服务类型")) {
-                    Picker(L10n.lookup("提供商"), selection: $draft.kind) {
-                        ForEach(SearchServiceKind.allCases, id: \.self) { kind in
-                            Text(L10n.lookup(kind.title)).tag(kind)
+                    Button {
+                        isProviderPickerPresented = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text(L10n.lookup("提供商"))
+                                .foregroundStyle(.primary)
+                            Spacer(minLength: 8)
+                            SearchServiceKindMark(kind: draft.kind)
+                                .frame(width: 22, height: 22)
+                            Text(L10n.lookup(draft.kind.title))
+                                .foregroundStyle(.secondary)
+                            if isNew {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
+                        .contentShape(Rectangle())
                     }
-                    .pickerStyle(.menu)
+                    .buttonStyle(.plain)
                     .disabled(!isNew)
+                    .accessibilityIdentifier("searchService.chooseProvider")
 
                     Text(L10n.lookup(draft.kind.description))
                         .font(.caption)
@@ -7263,7 +7280,16 @@ private struct SearchServiceEditorView: View {
             .settingsGroupedPageStyle()
             .navigationTitle(isNew ? L10n.lookup("添加搜索服务") : L10n.lookup("编辑搜索服务"))
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(isPresented: $isProviderPickerPresented) {
+                SearchServiceKindPicker(selection: $draft.kind)
+            }
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(isNew ? L10n.lookup("添加搜索服务") : L10n.lookup("编辑搜索服务"))
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button(L10n.lookup("取消")) { dismiss() }
                         .foregroundStyle(.primary)
@@ -7448,6 +7474,108 @@ private struct SearchServiceEditorView: View {
                     testState = .connected
                     testMessage = L10n.lookup("连接正常。")
                 }
+            }
+        }
+    }
+}
+
+private struct SearchServiceKindMark: View {
+    let kind: SearchServiceKind
+
+    var body: some View {
+        Group {
+            if let asset = kind.brandAssetName {
+                Image(asset)
+                    .resizable()
+                    .renderingMode([SearchServiceKind.linkup, .ollama, .grok].contains(kind) ? .template : .original)
+                    .scaledToFit()
+                    .padding(2)
+                    .foregroundStyle(.primary)
+            } else {
+                Image(systemName: searchServiceIcon(for: kind))
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SearchServiceKindPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selection: SearchServiceKind
+    @State private var query = ""
+
+    private var groups: [(title: String, kinds: [SearchServiceKind])] {
+        [
+            ("无需 API Key", [.duckDuckGo, .bingLocal]),
+            ("需要 API Key", SearchServiceKind.allCases.filter(\.requiresAPIKey)),
+            ("自建服务", [.searxng])
+        ]
+    }
+
+    private func matches(_ kind: SearchServiceKind) -> Bool {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty || [kind.title, L10n.lookup(kind.title), kind.rawValue,
+                               kind.description, L10n.lookup(kind.description)]
+            .contains { $0.localizedStandardContains(text) }
+    }
+
+    var body: some View {
+        List {
+            ForEach(groups, id: \.title) { group in
+                let kinds = group.kinds.filter(matches)
+                if !kinds.isEmpty {
+                    Section {
+                        ForEach(kinds) { kind in
+                            Button {
+                                selection = kind
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    SearchServiceKindMark(kind: kind)
+                                        .frame(width: 30, height: 30)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(L10n.lookup(kind.title))
+                                            .font(.body)
+                                            .foregroundStyle(.primary)
+                                        Text(L10n.lookup(kind.description))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Spacer(minLength: 8)
+                                    if selection == kind {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.tint)
+                                            .accessibilityLabel(L10n.lookup("当前服务"))
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("searchService.provider.\(kind.rawValue)")
+                            .accessibilityAddTraits(selection == kind ? .isSelected : [])
+                        }
+                    } header: {
+                        HStack {
+                            Text(L10n.lookup(group.title))
+                            Spacer()
+                            Text(String(kinds.count))
+                        }
+                    }
+                }
+            }
+        }
+        .settingsGroupedPageStyle()
+        .navigationTitle(L10n.lookup("选择搜索服务"))
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: L10n.lookup("搜索名称或用途"))
+        .overlay {
+            if !SearchServiceKind.allCases.contains(where: matches) {
+                ContentUnavailableView.search(text: query)
             }
         }
     }

@@ -136,7 +136,8 @@ enum ChatRequestPreparation {
             wireMessages.append(ChatRequestMessage(
                 role: wireRole,
                 content: content,
-                images: images
+                images: images,
+                reasoning: wireRole == "assistant" ? message.reasoningSegments.map(\.text).joined() : nil
             ))
             if message.role == .user {
                 lastOriginalUserWireIndex = messageWireIndex

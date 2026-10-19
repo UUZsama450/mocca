@@ -120,12 +120,12 @@ enum NativeChatScrollTarget {
 }
 
 enum NativeChatScrollTiming: String {
-    case easeOut, easeInOut, smooth, system, send
+    case easeOut, easeInOut, smooth, system, send, edge
 
     @MainActor
     fileprivate func animator(duration: TimeInterval) -> UIViewPropertyAnimator? {
         switch self {
-        case .system, .send:
+        case .system, .send, .edge:
             return nil
         case .easeOut:
             return UIViewPropertyAnimator(duration: duration, curve: .easeOut)
@@ -138,6 +138,67 @@ enum NativeChatScrollTiming: String {
                 damping: CGFloat(spring.damping), initialVelocity: .zero)
             return UIViewPropertyAnimator(duration: duration, timingParameters: timing)
         }
+    }
+}
+
+/// A send trajectory also used by long edge-button navigation. A measured
+/// destination can move while cells appear;
+/// join the remaining segment at the last presented position AND velocity.
+private struct NativeChatSendTrajectory {
+    private var origin: CGFloat
+    private var destination: CGFloat
+    private var initialVelocity: CGFloat = 0
+    private var start: TimeInterval
+    private var duration: TimeInterval
+    private let nominalDuration: TimeInterval
+    private var lastTime: TimeInterval
+    private var lastPosition: CGFloat
+    private var lastVelocity: CGFloat = 0
+
+    init(origin: CGFloat, destination: CGFloat, start: TimeInterval, duration: TimeInterval) {
+        self.origin = origin
+        self.destination = destination
+        self.start = start
+        self.duration = duration
+        self.nominalDuration = duration
+        self.lastTime = start
+        self.lastPosition = origin
+    }
+
+    mutating func advance(to target: CGFloat, from current: CGFloat, at time: TimeInterval)
+        -> (position: CGFloat, velocity: CGFloat, finished: Bool) {
+        if target != destination || abs(current - lastPosition) > 0.5 {
+            let distance = target - current
+            // Preserve velocity when it still points toward the measured end.
+            // If layout has moved the end behind us, braking to zero avoids
+            // carrying momentum farther away from the now-correct endpoint.
+            initialVelocity = lastVelocity * distance > 0 ? lastVelocity : 0
+            let remaining = max(0, start + duration - lastTime)
+            // A last-frame measurement still gets a short settling segment
+            // (80 ms for the ordinary send), using this same display link.
+            duration = max(remaining, nominalDuration / 4)
+            if initialVelocity != 0 {
+                // A cubic with zero ending velocity is monotone for v*T <= 3*d.
+                // Shorten its duration rather than clamping the joining speed.
+                duration = min(duration, Double(3 * abs(distance / initialVelocity)))
+            }
+            origin = current
+            destination = target
+            start = lastTime
+        }
+        let elapsed = max(0, time - start)
+        let t = CGFloat(duration > 0 ? min(1, elapsed / duration) : 1)
+        let distance = destination - origin
+        let position = origin + distance * t * t * (3 - 2 * t)
+            + initialVelocity * CGFloat(duration) * t * (1 - t) * (1 - t)
+        let velocity = t < 1 && duration > 0
+            ? distance * 6 * t * (1 - t) / CGFloat(duration)
+                + initialVelocity * (1 - t) * (1 - 3 * t)
+            : 0
+        lastTime = time
+        lastPosition = position
+        lastVelocity = velocity
+        return (position, velocity, t == 1)
     }
 }
 
@@ -1620,7 +1681,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             let offset = origin.bubbleTop - top
             // Detached reading and short transcripts keep their established
             // entrance. Only connect a row already arriving near the composer.
-            if offset.isFinite, abs(offset) <= 160 { cell.sendOffset = offset }
+            if offset.isFinite, offset >= 0, offset <= 160 { cell.sendOffset = offset }
         }
         let measurementHostID = cell.measurementHostID
         cell.isDisclosureHostCurrent = { [weak self, weak cell] in
@@ -1975,13 +2036,12 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     }
 
     private var sendScrollLink: CADisplayLink?
-    private var sendScrollStart: CFTimeInterval = 0
-    private var sendScrollProgress: CGFloat = 0
-    private var sendScrollDuration: TimeInterval = 0
+    private var sendScrollTrajectory: NativeChatSendTrajectory?
 
     private func stopSendScroll() {
         sendScrollLink?.invalidate()
         sendScrollLink = nil
+        sendScrollTrajectory = nil
     }
 
     @objc private func advanceSendScroll(_ link: CADisplayLink) {
@@ -1989,23 +2049,19 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
               input.driver.positionCommandID == command.id,
               !detached, attachmentReady, collection.window != nil,
               !input.driver.externalViewportMotion,
-              let destination = layout.offset(for: command.target) else {
+              let destination = layout.offset(for: command.target),
+              var trajectory = sendScrollTrajectory else {
             stopSendScroll()
             cancelCommand(reason: "sendOwnerChanged")
             return
         }
-        let t = CGFloat(min(1, max(0, (CACurrentMediaTime() - sendScrollStart) / sendScrollDuration)))
-        let progress = t * t * (3 - 2 * t)
-        // Advance only the remaining fraction of the same timeline. A newly
-        // measured destination changes the remaining travel, not the position
-        // already presented; no native animation is rebased by that change.
-        let fraction = sendScrollProgress < 1 ? (progress - sendScrollProgress) / (1 - sendScrollProgress) : 1
-        sendScrollProgress = progress
-        let current = collection.contentOffset.y
+        let sample = trajectory.advance(to: destination, from: collection.contentOffset.y,
+                                        at: CACurrentMediaTime())
+        sendScrollTrajectory = trajectory
         collection.setContentOffset(CGPoint(x: collection.contentOffset.x,
-            y: current + (destination - current) * fraction), animated: false)
+            y: sample.position), animated: false)
         guard self.command?.id == command.id, sendScrollLink === link else { return }
-        if t == 1 {
+        if sample.finished {
             collection.layoutIfNeeded()
             guard self.command?.id == command.id, sendScrollLink === link,
                   let bottom = layout.offset(for: command.target),
@@ -2018,7 +2074,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     }
 
     private func prepareStreamMeasurement(tail: UUID, destination: CGFloat, stableBottom: Bool) -> CGFloat? {
-        // The send timeline reads the new bottom on its next frame. Applying
+        // The active timeline reads the new bottom on its next frame. Applying
         // another bottom adjustment here would move the viewport twice.
         if sendScrollLink != nil { return 0 }
         #if DEBUG
@@ -2185,12 +2241,29 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         #endif
         input.driver.beginCommand(target, id: requestID)
         command = (requestID, target, completion, false)
-        if timing == .send, case .bottom = target,
-           let duration, duration.isFinite, duration > 0,
-           abs(collection.contentOffset.y - y) > 0.5 {
-            sendScrollStart = CACurrentMediaTime()
-            sendScrollDuration = duration
-            sendScrollProgress = 0
+        let drivenDuration: TimeInterval? = {
+            if timing == .edge, input.streamingTailID == nil,
+               !UIAccessibility.isReduceMotionEnabled {
+                let viewport = max(1, collection.bounds.height
+                    - collection.adjustedContentInset.top - collection.adjustedContentInset.bottom)
+                let screens = abs(collection.contentOffset.y - y) / viewport
+                // Keep nearby navigation on its existing UIKit trajectory.
+                // Add a modest distance allowance without making long edge
+                // trips feel like a wait. Keep the same continuous trajectory;
+                // newly measured destinations can still need a short settling
+                // segment. Streaming keeps its system-scroll/follow handoff.
+                if screens > 1.5 {
+                    return min(0.6, 0.32 + 0.06 * sqrt(Double(screens - 1.5)))
+                }
+            }
+            if timing == .send, case .bottom = target,
+               let duration, duration.isFinite, duration > 0 { return duration }
+            return nil
+        }()
+        if let duration = drivenDuration, abs(collection.contentOffset.y - y) > 0.5 {
+            sendScrollTrajectory = NativeChatSendTrajectory(
+                origin: collection.contentOffset.y, destination: y,
+                start: CACurrentMediaTime(), duration: duration)
             let link = CADisplayLink(target: self, selector: #selector(advanceSendScroll(_:)))
             if (collection.window?.screen.maximumFramesPerSecond ?? 60) >= 120 {
                 link.preferredFrameRateRange = CAFrameRateRange(
@@ -2200,7 +2273,8 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             sendScrollLink = link
             link.add(to: .main, forMode: .common)
             refreshPhase()
-        } else if timing == .system || timing == .send, abs(collection.contentOffset.y - y) > 0.5 {
+        } else if timing == .system || timing == .send || timing == .edge,
+                  abs(collection.contentOffset.y - y) > 0.5 {
             // UIScrollView updates the logical viewport while moving, allowing
             // UICollectionView to prepare only the cells currently on screen.
             nativeAnimatedCommandID = requestID
