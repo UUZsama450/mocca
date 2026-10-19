@@ -1001,9 +1001,9 @@ struct UserPreferences: Codable, Hashable, Sendable {
         self.tavilyAPIKey = tavilyAPIKey
         var resolvedSearchServices = searchServices
         if resolvedSearchServices.isEmpty {
-            var defaultTavily = SearchServiceConfiguration.defaultTavily
-            defaultTavily.apiKey = tavilyAPIKey
-            resolvedSearchServices = [defaultTavily]
+            resolvedSearchServices = [
+                SearchServiceConfiguration.initialService(legacyTavilyAPIKey: tavilyAPIKey)
+            ]
         }
         self.searchServices = resolvedSearchServices
         self.selectedSearchServiceID = resolvedSearchServices.contains(where: { $0.id == selectedSearchServiceID })
@@ -1241,9 +1241,9 @@ struct UserPreferences: Codable, Hashable, Sendable {
         tavilyAPIKey = try container.decodeIfPresent(String.self, forKey: .tavilyAPIKey) ?? ""
         searchServices = try container.decodeIfPresent([SearchServiceConfiguration].self, forKey: .searchServices) ?? []
         if searchServices.isEmpty {
-            var defaultTavily = SearchServiceConfiguration.defaultTavily
-            defaultTavily.apiKey = tavilyAPIKey
-            searchServices = [defaultTavily]
+            searchServices = [
+                SearchServiceConfiguration.initialService(legacyTavilyAPIKey: tavilyAPIKey)
+            ]
         } else if !tavilyAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if let tavilyIndex = searchServices.firstIndex(where: { $0.kind == .tavily }) {
                 if searchServices[tavilyIndex].apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

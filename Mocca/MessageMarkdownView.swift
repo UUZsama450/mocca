@@ -952,6 +952,30 @@ struct MessageMarkdownView: View {
     private func unifiedAttributedText(
         blocks: [MarkdownRenderBlock]
     ) -> NSAttributedString {
+        let sourceWeight = text.utf16.count
+        let attributedText: NSAttributedString
+        if sourceWeight >= 2_048, sourceWeight <= 32_768, citationSources.isEmpty {
+            attributedText = CompletionProsePreparationCache.shared.text(
+                for: .init(blocks: blocks, plainText: rendersMarkdown ? nil : text,
+                           fontSize: fontSize, lineSpacing: lineSpacing,
+                           listItemSpacing: resolvedListItemSpacing,
+                           blockSpacingScale: resolvedBlockSpacingScale,
+                           textColor: UIColor(foregroundColor),
+                           largeHeadingColor: largeHeadingColor.map { UIColor($0) },
+                           smallHeadingColor: smallHeadingColor.map { UIColor($0) },
+                           fontName: fontName),
+                sourceWeight: sourceWeight,
+                make: { makeUnifiedAttributedText(blocks: blocks) }
+            )
+        } else {
+            attributedText = makeUnifiedAttributedText(blocks: blocks)
+        }
+        return applyingStreamingTailFade(to: attributedText)
+    }
+
+    private func makeUnifiedAttributedText(
+        blocks: [MarkdownRenderBlock]
+    ) -> NSAttributedString {
         let attributedText: NSAttributedString
         if rendersMarkdown {
             attributedText = UnifiedSelectableProseBuilder.makeAttributedText(
@@ -976,7 +1000,7 @@ struct MessageMarkdownView: View {
                 fontName: fontName
             )
         }
-        return applyingStreamingTailFade(to: attributedText)
+        return attributedText
     }
 
     private func applyingStreamingTailFade(
@@ -1003,9 +1027,8 @@ struct MessageMarkdownView: View {
         let boundedCharacterCount = renderedString.prefix(16).count
         let fadeCharacterCount = min(8, max(1, boundedCharacterCount / 2))
         let minimumOpacity = 0.44
-        // Both unified builders already produce a fresh mutable string for
-        // this render. Reuse it so the reveal does not add another full-text
-        // copy to the existing streaming Markdown/TextKit work.
+        // Fresh builders may relinquish mutable strings. Cached preparation is
+        // immutable, so its tail fade is applied to a private copy instead.
         let mutable = (attributedText as? NSMutableAttributedString)
             ?? NSMutableAttributedString(attributedString: attributedText)
         var tailRanges: [NSRange] = []
@@ -5034,6 +5057,55 @@ private struct HTMLPreviewWebView: UIViewRepresentable {
     }
 }
 
+// Only immutable preparation crosses the streaming/settled boundary. The native
+// text view still gets replaced at completion to discard stale TextKit geometry.
+@MainActor
+private final class CompletionProsePreparationCache: NSObject {
+    static let shared = CompletionProsePreparationCache()
+
+    struct Key: Equatable {
+        let blocks: [MarkdownRenderBlock]
+        let plainText: String?
+        let fontSize: CGFloat
+        let lineSpacing: CGFloat
+        let listItemSpacing: CGFloat
+        let blockSpacingScale: CGFloat
+        let textColor: UIColor
+        let largeHeadingColor: UIColor?
+        let smallHeadingColor: UIColor?
+        let fontName: String?
+    }
+
+    private var entries: [(key: Key, text: NSAttributedString, weight: Int)] = []
+    private let maximumTextWeight = 65_536
+
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(removeAll),
+            name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+    }
+
+    @objc func removeAll() { entries.removeAll() }
+
+    func text(for key: Key, sourceWeight: Int, make: () -> NSAttributedString) -> NSAttributedString {
+        if let entry = entries.first(where: { $0.key == key }) { return entry.text }
+        let text = make()
+        let weight = sourceWeight + text.length
+        guard weight <= maximumTextWeight else { return text }
+        var containsAttachment = false
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, stop in
+            if value != nil { containsAttachment = true; stop.pointee = true }
+        }
+        guard !containsAttachment else { return text }
+        let prepared = NSAttributedString(attributedString: text)
+        while entries.count >= 2 || entries.reduce(weight, { $0 + $1.weight }) > maximumTextWeight {
+            entries.removeFirst()
+        }
+        entries.append((key, prepared, weight))
+        return prepared
+    }
+}
+
 private struct MarkdownRenderBlock: Identifiable, Hashable {
     enum Kind: Hashable {
         case text(String)
@@ -5130,8 +5202,9 @@ private enum MarkdownRenderCache {
     private static func sourceWithInlineCompatibilityRepairs(
         _ source: String
     ) -> (markdown: String, insertedMarker: Character?) {
-        // Unmatched backticks are already literal in CommonMark. Only asterisks
-        // need compatibility repairs; leave other sources on the native path.
+        // Face accents can accidentally pair across an entire reply. Repair
+        // only recognizable kaomoji, preserving deliberate surrounding code.
+        let source = escapingKaomojiBackticks(in: source)
         guard source.utf8.contains(0x2A) else { return (source, nil) }
         let characters = Array(source)
         let code = inlineCodeMask(in: source, characters: characters)
@@ -5153,6 +5226,51 @@ private enum MarkdownRenderCache {
             result.append(character)
         }
         return (result, markerOffsets.isEmpty ? nil : marker)
+    }
+
+    private static func escapingKaomojiBackticks(in source: String) -> String {
+        guard source.utf8.contains(0x60) else { return source }
+        let characters = Array(source)
+        let mouths = Set("ω▽∀Дд益ㅅᴥᗜヮ")
+        let faceCharacters = Set("ω▽∀Дд益ㅅᴥᗜヮ´｀`'‘’^＾・･·•｡。；;:°ﾟ˘￣¬≧≦><＞＜つっ╥ＴTＱQoＯＯ-＿_~～ ́̀\\")
+        var candidates = Set<Int>()
+        for open in characters.indices where characters[open] == "(" || characters[open] == "（" {
+            let closer: Character = characters[open] == "(" ? ")" : "）"
+            var ticks: [Int] = []
+            var hasMouth = false
+            var close = open + 1
+            while close < min(characters.count, open + 25) {
+                let character = characters[close]
+                if character == closer {
+                    if hasMouth { candidates.formUnion(ticks) }
+                    break
+                }
+                guard faceCharacters.contains(character) else { break }
+                if character == "`" {
+                    // Repeated ticks are intentional Markdown delimiters.
+                    guard characters[close - 1] != "`",
+                          close + 1 == characters.count || characters[close + 1] != "`" else { break }
+                    if !isEscaped(characters, at: close) { ticks.append(close) }
+                }
+                hasMouth = hasMouth || mouths.contains(character)
+                close += 1
+            }
+        }
+        guard !candidates.isEmpty else { return source }
+        // Hide face ticks only for this probe. Real code delimiters outside the
+        // face still protect their complete contents, including any face accents.
+        var probe = characters
+        for offset in candidates { probe[offset] = " " }
+        let code = inlineCodeMask(in: String(probe), characters: probe)
+        let literalTicks = candidates.filter { !code[$0] }
+        guard !literalTicks.isEmpty else { return source }
+        var result = ""
+        result.reserveCapacity(source.utf8.count + literalTicks.count)
+        for (offset, character) in characters.enumerated() {
+            if literalTicks.contains(offset) { result.append("\\") }
+            result.append(character)
+        }
+        return result
     }
 
     private static func inlineCodeMask(in source: String, characters: [Character]) -> [Bool] {

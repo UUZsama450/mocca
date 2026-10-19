@@ -1993,11 +1993,7 @@ private struct ProviderModelManagerView: View {
         existing: ModelConfiguration,
         fetched: ModelConfiguration
     ) -> ModelConfiguration {
-        var result = existing
-        if existing.displayName == existing.id, fetched.displayName != fetched.id {
-            result.displayName = fetched.displayName
-        }
-        return result
+        existing.mergingCatalogMetadata(from: fetched)
     }
 
     private static func modelSort(
