@@ -25,7 +25,7 @@ enum AttachmentStore {
     static let pastedTextMetadataKey = "mocca_pasted_text"
     private static let pastedTextMetadataVersion = "utf8_v1"
     private static let maxImageDimension: CGFloat = 2048
-    private static let textPreviewCharacterLimit = 60_000
+    static let largeContentApprovedMetadataKey = "mocca_large_content_approved"
     private static let hashReadChunkSize = 1_048_576
     private static let imagePreparationQueue = DispatchQueue(
         label: "com.mocca.image-preparation", qos: .userInitiated
@@ -264,7 +264,9 @@ enum AttachmentStore {
             fileName: inspection.fileName,
             mimeType: inspection.mimeType ?? existing.mimeType,
             byteCount: inspection.byteCount,
-            metadata: [contentSHA256MetadataKey: inspection.contentSHA256]
+            metadata: [contentSHA256MetadataKey: inspection.contentSHA256].merging(
+                existing.metadata.filter { $0.key == largeContentApprovedMetadataKey }
+            ) { _, approved in approved }
         )
     }
 
@@ -403,21 +405,13 @@ enum AttachmentStore {
                 UTType(filenameExtension: ($0 as NSString).pathExtension)
             }
             ?? UTType(filenameExtension: url.pathExtension)
-        guard let type,
-              type.conforms(to: .text) || type.conforms(to: .json) || type.conforms(to: .xml)
-                || type.conforms(to: .propertyList) || type.conforms(to: .sourceCode) else {
-            return nil
-        }
+        let fileExtension = ((attachment.fileName ?? url.lastPathComponent) as NSString).pathExtension.lowercased()
+        let knownTextExtension = ["txt", "md", "markdown"].contains(fileExtension)
+        guard knownTextExtension || type.map({
+            $0.conforms(to: .text) || $0.conforms(to: .json) || $0.conforms(to: .xml)
+                || $0.conforms(to: .propertyList) || $0.conforms(to: .sourceCode)
+        }) == true else { return nil }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-        // Find the prefix boundary without counting every character in a large
-        // file. The full UTF-8 read still validates the original file, including
-        // its suffix, before the existing character-based truncation is applied.
-        if let end = content.index(
-            content.startIndex, offsetBy: textPreviewCharacterLimit,
-            limitedBy: content.endIndex
-        ), end < content.endIndex {
-            return String(content[..<end]) + "\n…（内容过长已截断）"
-        }
         return content
     }
 

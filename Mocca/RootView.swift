@@ -2757,6 +2757,7 @@ struct RootView: View {
             }
         }
         .modifier(ToolApprovalAlertModifier(model: model, request: model.pendingToolApproval))
+        .modifier(LargeFileConfirmationModifier(confirmation: model.largeFileConfirmation))
         .onDisappear {
             model.setDrawerStreamingTextDisplaySuspended(false)
             cancelDrawerSettleWork()
@@ -19616,6 +19617,12 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         guard !isDrawerTapSuppressed else { return }
         model.performListItemHaptic()
         let shouldClose = !model.preferences.keepSidebarOpenOnTopicTap
+        // Reopening the mounted conversation preserves its history window and
+        // reading position. Other navigation entry points still select normally.
+        if model.selectedConversationID == conversation.id {
+            if shouldClose { onRequestClose() }
+            return
+        }
         let previousConversationID = model.selectedConversationID
         let isSwitchingConversation = previousConversationID != conversation.id
         if shouldClose, isSwitchingConversation {

@@ -1,5 +1,17 @@
 # 更新记录 / Changelog
 
+## 1.0.5（5237）
+
+- 修复重复选择当前对话时阅读位置跳动的问题。
+- 取消文本附件与 Markdown 正文的应用侧截断/大小限制，保留完整内容。
+- 新增大文件确认提醒，支持“不再提醒”及在偏好设置中重新开启。
+- 统一提醒弹窗为系统蓝色，改进按钮对齐与长文件名显示。
+
+- Preserve reading position when reselecting the current conversation.
+- Preserve complete text attachments and Markdown bodies without the previous app-side truncation or body-size caps.
+- Add large-file confirmation with opt-out and a preference to enable reminders again.
+- Refine the reminder sheet with system blue, aligned actions and complete filename wrapping.
+
 ## 1.0.5（5228）
 
 - 修复离底部发送消息时，聊天列表可能出现的反向往返滚动。

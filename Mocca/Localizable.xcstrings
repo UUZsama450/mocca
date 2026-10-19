@@ -22751,6 +22751,171 @@
           }
         }
       }
+    },
+    "这份内容有点长": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This content is quite long"
+          }
+        }
+      }
+    },
+    "超过 60,000 字符 · 保留完整内容": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Over 60,000 characters · Full content preserved"
+          }
+        }
+      }
+    },
+    "保留全文并继续": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep Full Text and Continue"
+          }
+        }
+      }
+    },
+    "启用后，全文会随这个助手的每次聊天发送。可能增加用量与等待时间，超出模型容量时请求可能失败。同一份文件确认后不再提醒。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When enabled, the full text is sent with every chat using this assistant. This may increase usage and waiting time, and requests may fail if the model’s context limit is exceeded. You will not be asked again for this file."
+          }
+        }
+      }
+    },
+    "全文会发送给你选择的模型，可能增加用量与等待时间，超出模型容量时请求可能失败。确认后，发送时不再提醒。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The full text will be sent to your selected model. This may increase usage and waiting time, and requests may fail if the model’s context limit is exceeded. You will not be asked again when sending."
+          }
+        }
+      }
+    },
+    "支持 Markdown 文件（.md、.markdown），每个助手最多 32 份。超过 60,000 字符时提醒一次，确认后保留全文。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supports Markdown (.md, .markdown), up to 32 files per assistant. Files over 60,000 characters require one confirmation and are kept in full."
+          }
+        }
+      }
+    },
+    "不再提醒": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don’t remind me again"
+          }
+        }
+      }
+    },
+    "适用于文本附件、粘贴文本和助手 Markdown 文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies to text attachments, pasted text, and assistant Markdown files"
+          }
+        }
+      }
+    },
+    "大文件提醒": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Large File Reminders"
+          }
+        }
+      }
+    },
+    "添加文本超过 60,000 字符或大小超过 100 MB 的文件时提醒。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show a reminder when adding a file with over 60,000 text characters or a size over 100 MB."
+          }
+        }
+      }
+    },
+    "可在设置的「偏好设置」中重新开启": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can turn reminders back on in Settings → Preferences."
+          }
+        }
+      }
+    },
+    "这份文件有点大": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This file is quite large"
+          }
+        }
+      }
+    },
+    "超过 60,000 字符或 100 MB · 保留完整文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Over 60,000 characters or 100 MB · Full file preserved"
+          }
+        }
+      }
+    },
+    "文件较大，导入可能需要更多时间并占用本地空间。较长文本可能增加模型用量；文件能否被模型读取取决于格式，ZIP 等压缩包不会自动解压读取。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Large files may take longer to import and use more local storage. Longer text may increase model usage. Whether a model can read the file depends on its format; ZIP and other archives are not automatically extracted or read."
+          }
+        }
+      }
+    },
+    "保留文件并继续": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep File and Continue"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

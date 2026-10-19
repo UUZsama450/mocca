@@ -796,6 +796,7 @@ final class AppModel {
     var mcpRuntimeStates: [UUID: MCPServerRuntimeState]
     var mcpRequestTimeoutSeconds: Int
     private(set) var pendingToolApproval: MCPApprovalRequest?
+    let largeFileConfirmation = LargeFileConfirmation()
     private(set) var pendingDuplicateFileDecision: DuplicateFileDecisionRequest?
     var isBottomToolsPresented = false
     var isErrorPresented = false
@@ -7253,7 +7254,16 @@ final class AppModel {
         guard !Task.isCancelled,
               conversations.contains(where: { $0.id == conversationID }),
               canCommit() else { return false }
-        let attachment = try await AttachmentStore.savePastedText(text)
+        let oversized = largeFileConfirmation.isEnabled ? await Task.detached(priority: .userInitiated) {
+            LargeFilePolicy.needsConfirmation(text)
+        }.value : false
+        if oversized {
+            guard await largeFileConfirmation.confirm(names: ["粘贴文本.txt"], includesLargeFile: LargeFilePolicy.exceedsByteLimit(Int64(text.utf8.count))),
+                  !Task.isCancelled, canCommit(),
+                  conversations.contains(where: { $0.id == conversationID }) else { return false }
+        }
+        var attachment = try await AttachmentStore.savePastedText(text)
+        if oversized { attachment.metadata[AttachmentStore.largeContentApprovedMetadataKey] = "true" }
         guard !Task.isCancelled,
               conversations.contains(where: { $0.id == conversationID }),
               canCommit() else {
@@ -7278,47 +7288,69 @@ final class AppModel {
     private func processPendingFileImportBatches() async {
         while !pendingFileImportBatches.isEmpty {
             let batch = pendingFileImportBatches.removeFirst()
+            var staged: [MessageAttachment] = []
             for url in batch.urls {
-                await addPendingFile(url, for: batch.conversationID)
+                if let attachment = await preparePendingFile(url, for: batch.conversationID) {
+                    staged.append(attachment)
+                }
             }
+            let stagedSnapshot = staged
+            let oversizedIDs: Set<UUID> = largeFileConfirmation.isEnabled ? await Task.detached(priority: .userInitiated) {
+                Set(stagedSnapshot.compactMap { attachment -> UUID? in
+                    guard attachment.metadata[AttachmentStore.largeContentApprovedMetadataKey] != "true" else { return nil }
+                    if LargeFilePolicy.exceedsByteLimit(attachment.byteCount ?? 0) { return attachment.id }
+                    guard attachment.kind == .file,
+                          (attachment.byteCount ?? Int64.max) > Int64(LargeFilePolicy.characterThreshold),
+                          let text = AttachmentStore.readTextContent(of: attachment),
+                          LargeFilePolicy.needsConfirmation(text) else { return nil }
+                    return attachment.id
+                })
+            }.value : []
+            let names = staged.filter { oversizedIDs.contains($0.id) }.map { $0.fileName ?? "未命名" }
+            let accepted = names.isEmpty ? true : await largeFileConfirmation.confirm(names: names, includesLargeFile: staged.contains { oversizedIDs.contains($0.id) && LargeFilePolicy.exceedsByteLimit($0.byteCount ?? 0) })
+            guard accepted, !Task.isCancelled,
+                  conversations.contains(where: { $0.id == batch.conversationID }) else {
+                for attachment in staged { deleteAttachmentIfUnreferenced(attachment) }
+                continue
+            }
+            for index in staged.indices where oversizedIDs.contains(staged[index].id) {
+                staged[index].metadata[AttachmentStore.largeContentApprovedMetadataKey] = "true"
+            }
+            for attachment in staged { appendComposerAttachment(attachment, for: batch.conversationID) }
         }
         pendingFileImportTask = nil
     }
 
-    private func addPendingFile(_ url: URL, for conversationID: UUID) async {
-        guard conversations.contains(where: { $0.id == conversationID }) else { return }
+    private func preparePendingFile(_ url: URL, for conversationID: UUID) async -> MessageAttachment? {
+        guard conversations.contains(where: { $0.id == conversationID }) else { return nil }
         guard let inspection = await AttachmentStore.inspectFileForImport(
             from: url,
             existingAttachments: locallyStoredAttachmentCandidates()
         ) else {
             presentError(L10n.format("无法读取文件“%@”", [url.lastPathComponent]))
-            return
+            return nil
         }
 
-        guard conversations.contains(where: { $0.id == conversationID }) else { return }
-        let attachment: MessageAttachment?
-        if let duplicate = inspection.duplicate {
-            let useExisting = await requestDuplicateFileDecision(
-                fileName: inspection.fileName
-            )
-            attachment = useExisting
-                ? AttachmentStore.reuseFile(from: duplicate, inspection: inspection)
-                : AttachmentStore.importFile(
-                    from: inspection.sourceURL,
-                    contentSHA256: inspection.contentSHA256
-                )
+        guard conversations.contains(where: { $0.id == conversationID }) else { return nil }
+        let useExisting: Bool
+        if inspection.duplicate != nil {
+            useExisting = await requestDuplicateFileDecision(fileName: inspection.fileName)
         } else {
-            attachment = AttachmentStore.importFile(
-                from: inspection.sourceURL,
-                contentSHA256: inspection.contentSHA256
-            )
+            useExisting = false
         }
+        let attachment = await Task.detached(priority: .userInitiated) {
+            if useExisting, let duplicate = inspection.duplicate {
+                return AttachmentStore.reuseFile(from: duplicate, inspection: inspection)
+            }
+            return AttachmentStore.importFile(from: inspection.sourceURL,
+                contentSHA256: inspection.contentSHA256)
+        }.value
 
         guard let attachment else {
             presentError(L10n.format("无法读取文件“%@”", [inspection.fileName]))
-            return
+            return nil
         }
-        appendComposerAttachment(attachment, for: conversationID)
+        return attachment
     }
 
     func removePendingAttachment(_ id: UUID) {
@@ -8763,19 +8795,19 @@ final class AppModel {
                     }
                 },
                 assistantFileExecutor: { [weak self] request in
-                    await MainActor.run {
-                        guard let self, !Task.isCancelled,
-                              self.isCurrentStreamingRun(conversationID, runID: fileToolRunID),
-                              self.activeStreamingMessageIDsByConversation[conversationID] == fileToolMessageID,
-                              self.conversations.contains(where: { $0.id == conversationID }) else {
-                            return Self.assistantFileToolError("request_expired", "本轮回复已结束，文件未修改。")
-                        }
-                        return self.executeAssistantFileTool(
-                            request, assistantID: assistantForHandler.id,
-                            readableFileIDs: readableFileIDs,
-                            writableFileIDs: writableFileIDs
-                        )
+                    guard let self else {
+                        return await Self.assistantFileToolError("request_expired", "本轮回复已结束，文件未修改。")
                     }
+                    return await self.executeAssistantFileToolWithConfirmation(
+                        request, assistantID: assistantForHandler.id,
+                        readableFileIDs: readableFileIDs, writableFileIDs: writableFileIDs,
+                        isCurrent: { [weak self] in
+                            guard let self else { return false }
+                            return self.isCurrentStreamingRun(conversationID, runID: fileToolRunID)
+                                && self.activeStreamingMessageIDsByConversation[conversationID] == fileToolMessageID
+                                && self.conversations.contains(where: { $0.id == conversationID })
+                        }
+                    )
                 }
             )
             stream = AIChatService.streamReplyWithTools(
