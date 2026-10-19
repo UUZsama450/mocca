@@ -23,6 +23,8 @@ struct AssistantFile: Codable, Identifiable, Hashable, Sendable {
     var updatedAt: Date
     var lastModifiedBy: AssistantFileAuthor
     var previousVersion: AssistantFileVersion?
+    // Optional for compatibility with files saved before large-file confirmation.
+    var largeContentApproved: Bool?
 
     init(
         id: UUID = UUID(),
@@ -33,7 +35,8 @@ struct AssistantFile: Codable, Identifiable, Hashable, Sendable {
         revision: Int = 1,
         updatedAt: Date = .now,
         lastModifiedBy: AssistantFileAuthor = .user,
-        previousVersion: AssistantFileVersion? = nil
+        previousVersion: AssistantFileVersion? = nil,
+        largeContentApproved: Bool? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -44,6 +47,7 @@ struct AssistantFile: Codable, Identifiable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.lastModifiedBy = lastModifiedBy
         self.previousVersion = previousVersion
+        self.largeContentApproved = largeContentApproved
     }
 
     var byteCount: Int { content.utf8.count }
@@ -60,8 +64,6 @@ enum AssistantFileError: Error, LocalizedError, Equatable, Sendable {
     case invalidFileName
     case notRegularFile
     case invalidUTF8
-    case fileTooLarge
-    case totalTooLarge
     case tooManyFiles
     case duplicateID
     case invalidRevision
@@ -79,8 +81,6 @@ enum AssistantFileError: Error, LocalizedError, Equatable, Sendable {
         case .invalidFileName: ErrorLocalization.lookup("请使用有效的 Markdown 文件名，不要包含路径、换行或特殊控制字符。")
         case .notRegularFile: ErrorLocalization.lookup("请选择普通 Markdown 文件，不能导入文件夹、链接或压缩包。")
         case .invalidUTF8: ErrorLocalization.lookup("这个文件不是有效的 UTF-8 文本，请另存为 UTF-8 后再导入。")
-        case .fileTooLarge: ErrorLocalization.lookup("每个文件最多 64 KB，请缩短内容后再保存。")
-        case .totalTooLarge: ErrorLocalization.lookup("每个助手的文件正文合计最多 256 KB，请缩短内容或移除部分文件。")
         case .tooManyFiles: ErrorLocalization.lookup("每个助手最多保存 32 个文件。")
         case .duplicateID: ErrorLocalization.lookup("文件标识重复，无法保存，请重新导入。")
         case .invalidRevision: ErrorLocalization.lookup("文件版本信息无效，无法保存。")
@@ -90,8 +90,6 @@ enum AssistantFileError: Error, LocalizedError, Equatable, Sendable {
 }
 
 enum AssistantFileService {
-    static let maximumFileBytes = 64 * 1024
-    static let maximumTotalBytes = 256 * 1024
     static let maximumFileCount = 32
 
     static func normalizedFileName(_ rawName: String) throws -> String {
@@ -138,24 +136,12 @@ enum AssistantFileService {
                 guard values.isRegularFile == true, values.isSymbolicLink != true else {
                     throw AssistantFileError.notRegularFile
                 }
-                if let size = values.fileSize, size > maximumFileBytes {
-                    throw AssistantFileError.fileTooLarge
-                }
-
-                // Bound the read itself as well as the initial size check: an
-                // external file may change while the file picker is open.
                 let handle = try FileHandle(forReadingFrom: sourceURL)
                 defer { try? handle.close() }
                 var data = Data()
-                while data.count <= maximumFileBytes {
+                while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
                     try Task.checkCancellation()
-                    let remaining = maximumFileBytes + 1 - data.count
-                    guard let chunk = try handle.read(upToCount: min(16 * 1024, remaining)),
-                          !chunk.isEmpty else { break }
                     data.append(chunk)
-                }
-                guard data.count <= maximumFileBytes else {
-                    throw AssistantFileError.fileTooLarge
                 }
                 guard let content = String(data: data, encoding: .utf8) else {
                     throw AssistantFileError.invalidUTF8
@@ -184,7 +170,6 @@ enum AssistantFileService {
             throw AssistantFileError.tooManyFiles
         }
         var ids = Set<UUID>()
-        var totalBytes = 0
         for file in files {
             guard ids.insert(file.id).inserted else { throw AssistantFileError.duplicateID }
             guard file.revision > 0, file.revision < Int.max else {
@@ -194,10 +179,6 @@ enum AssistantFileService {
             if let previous = file.previousVersion {
                 try validateDocument(fileName: previous.fileName, content: previous.content)
             }
-            totalBytes += file.byteCount
-        }
-        guard totalBytes <= maximumTotalBytes else {
-            throw AssistantFileError.totalTooLarge
         }
     }
 
@@ -207,7 +188,8 @@ enum AssistantFileService {
         fileName: String,
         content: String,
         isEnabled: Bool,
-        allowsAssistantEditing: Bool
+        allowsAssistantEditing: Bool,
+        largeContentApproved: Bool? = nil
     ) throws -> AssistantFile {
         try checkRevision(file, expectedRevision: expectedRevision)
         var updated = file
@@ -215,6 +197,7 @@ enum AssistantFileService {
         updated.content = content
         updated.isEnabled = isEnabled
         updated.allowsAssistantEditing = allowsAssistantEditing
+        if largeContentApproved == true { updated.largeContentApproved = true }
         return try finishUpdate(original: file, updated: updated, author: .user)
     }
 
@@ -289,9 +272,6 @@ enum AssistantFileService {
         guard try normalizedFileName(fileName) == fileName else {
             throw AssistantFileError.invalidFileName
         }
-        guard content.utf8.count <= maximumFileBytes else {
-            throw AssistantFileError.fileTooLarge
-        }
     }
 
     private static func checkRevision(_ file: AssistantFile, expectedRevision: Int) throws {
@@ -321,5 +301,23 @@ enum AssistantFileService {
         result.lastModifiedBy = author
         try validate([result])
         return result
+    }
+}
+
+/// Used only at import/content-change boundaries, never by request assembly.
+enum LargeFilePolicy {
+    static let characterThreshold = 60_000
+    static let byteThreshold: Int64 = 100_000_000
+
+    static func exceedsByteLimit(_ byteCount: Int64) -> Bool {
+        byteCount > byteThreshold
+    }
+
+    static func needsConfirmation(_ content: String, approved: Bool = false) -> Bool {
+        guard !approved else { return false }
+        if exceedsByteLimit(Int64(content.utf8.count)) { return true }
+        guard let boundary = content.index(content.startIndex,
+            offsetBy: characterThreshold, limitedBy: content.endIndex) else { return false }
+        return boundary < content.endIndex
     }
 }

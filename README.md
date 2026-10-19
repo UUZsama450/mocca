@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.4">IPA preview</a> · <a href="CHANGELOG.md">What’s new</a>
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.5">IPA preview</a> · <a href="CHANGELOG.md">What’s new</a>
 </p>
 
 <p align="center">
@@ -46,7 +46,7 @@ Chats and attachments are stored locally. Requests send the data needed for the 
 
 ## Download
 
-The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The **1.0.5 (5228)** GitHub IPA preview requires your own signing; see [installation](docs/INSTALLATION.md) and [source verification](docs/RELEASE_1.0.5_5228.md). App Store updates are reviewed separately and released manually after approval.
+The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The **1.0.5 (5237)** GitHub IPA preview requires your own signing; see [installation](docs/INSTALLATION.md) and [source verification](docs/RELEASE_1.0.5_5237.md). App Store updates are reviewed separately and released manually after approval.
 
 
 ## Build locally

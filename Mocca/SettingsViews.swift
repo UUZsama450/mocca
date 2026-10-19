@@ -89,6 +89,7 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "MCP", context: "模型与服务", keywords: "工具 服务器", systemImage: "terminal", destination: .mcp),
         .init(title: "网络代理", context: "模型与服务", keywords: "代理 Proxy HTTP HTTPS", systemImage: "network", destination: .networkProxy),
         .init(title: "颜色模式", context: "外观与应用", keywords: "浅色 深色 跟随系统", systemImage: "circle.lefthalf.filled", destination: .appearanceMode),
+        .init(title: "大文件提醒", context: "偏好设置", keywords: "文件 附件 提醒 60000 100 MB", systemImage: "doc", destination: .preferences),
         .init(title: "偏好设置", context: "外观与应用", keywords: "外观 字体 渲染 交互", systemImage: "display", destination: .preferences),
         .init(title: "主题设置", context: "偏好设置", keywords: "主题 颜色 原生绿色", systemImage: "paintpalette", destination: .theme),
         .init(title: "应用字体", context: "偏好设置", keywords: "字体 font", systemImage: "textformat", destination: .appFont),
@@ -3691,6 +3692,7 @@ struct SettingsInfoText: View {
 
 struct PreferencesPage: View {
     @Environment(AppModel.self) private var model
+    @State private var largeFilePreference = LargeFileReminderPreference.shared
     @State private var activeSheet: PreferencesSheetRoute?
 
     fileprivate init(initialSheet: PreferencesSheetRoute? = nil) {
@@ -3807,6 +3809,17 @@ struct PreferencesPage: View {
                         systemImage: "text.alignleft"
                     )
                 }
+            }
+
+            Section {
+                Toggle(isOn: Binding(
+                    get: { !largeFilePreference.isDisabled },
+                    set: { largeFilePreference.setEnabled($0) }
+                )) {
+                    SettingsRowLabel(title: L10n.lookup("大文件提醒"), systemImage: "doc")
+                }
+            } footer: {
+                Text(L10n.lookup("添加文本超过 60,000 字符或大小超过 100 MB 的文件时提醒。"))
             }
 
             Section {

@@ -33,7 +33,8 @@ extension AppModel {
                 files[index], expectedRevision: expectedRevision,
                 fileName: file.fileName, content: file.content,
                 isEnabled: file.isEnabled,
-                allowsAssistantEditing: file.allowsAssistantEditing
+                allowsAssistantEditing: file.allowsAssistantEditing,
+                largeContentApproved: file.largeContentApproved
             )
             files[index] = saved
         } else {
@@ -45,7 +46,8 @@ extension AppModel {
                 fileName: try AssistantFileService.normalizedFileName(file.fileName),
                 content: file.content,
                 isEnabled: file.isEnabled,
-                allowsAssistantEditing: file.allowsAssistantEditing
+                allowsAssistantEditing: file.allowsAssistantEditing,
+                largeContentApproved: file.largeContentApproved
             )
             files.append(saved)
         }
@@ -65,7 +67,8 @@ extension AppModel {
                 fileName: try AssistantFileService.normalizedFileName(file.fileName),
                 content: file.content,
                 isEnabled: true,
-                allowsAssistantEditing: false
+                allowsAssistantEditing: false,
+                largeContentApproved: file.largeContentApproved
             )
         }
         try commitAssistantFiles(assistant.files + additions, assistantID: assistantID)
@@ -118,6 +121,41 @@ extension AppModel {
         assistants = candidate
     }
 
+    func executeAssistantFileToolWithConfirmation(
+        _ request: AssistantFileToolRequest,
+        assistantID: UUID,
+        readableFileIDs: Set<UUID>,
+        writableFileIDs: Set<UUID>,
+        isCurrent: @MainActor () -> Bool
+    ) async -> String {
+        guard !Task.isCancelled, isCurrent() else {
+            return Self.assistantFileToolError("request_expired", "本轮回复已结束，文件未修改。")
+        }
+        var approved = false
+        if case .edit(_, let revision, let content) = request,
+           largeFileConfirmation.isEnabled,
+           readableFileIDs.contains(request.fileID), writableFileIDs.contains(request.fileID),
+           let file = assistants.first(where: { $0.id == assistantID })?.files.first(where: { $0.id == request.fileID }),
+           file.isEnabled, file.allowsAssistantEditing, file.revision == revision,
+           file.largeContentApproved != true {
+            let oversized = await Task.detached(priority: .userInitiated) {
+                LargeFilePolicy.needsConfirmation(content)
+            }.value
+            if oversized {
+                guard await largeFileConfirmation.confirm(names: [file.fileName], assistantFile: true, includesLargeFile: LargeFilePolicy.exceedsByteLimit(Int64(content.utf8.count))) else {
+                    return Self.assistantFileToolError("user_cancelled", "用户取消了超大文件修改，原文件保持不变。")
+                }
+                approved = true
+            }
+        }
+        guard !Task.isCancelled, isCurrent() else {
+            return Self.assistantFileToolError("request_expired", "本轮回复已结束，文件未修改。")
+        }
+        return executeAssistantFileTool(request, assistantID: assistantID,
+            readableFileIDs: readableFileIDs, writableFileIDs: writableFileIDs,
+            largeContentApproved: approved)
+    }
+
     /// The calling stream checks its run/message identity immediately before
     /// entering this synchronous MainActor transaction. Permissions are checked
     /// both against that request's grant and against the live file below.
@@ -125,7 +163,8 @@ extension AppModel {
         _ request: AssistantFileToolRequest,
         assistantID: UUID,
         readableFileIDs: Set<UUID>,
-        writableFileIDs: Set<UUID>
+        writableFileIDs: Set<UUID>,
+        largeContentApproved: Bool = false
     ) -> String {
         guard readableFileIDs.contains(request.fileID),
               let assistant = assistants.first(where: { $0.id == assistantID }),
@@ -135,7 +174,7 @@ extension AppModel {
         }
         var files = assistant.files
         do {
-            let result: AssistantFile
+            var result: AssistantFile
             switch request {
             case .read:
                 result = files[index]
@@ -146,6 +185,7 @@ extension AppModel {
                 result = try AssistantFileService.updateByAssistant(
                     files[index], expectedRevision: expectedRevision, content: content
                 )
+                if largeContentApproved { result.largeContentApproved = true }
                 files[index] = result
                 try commitAssistantFiles(files, assistantID: assistantID)
             }

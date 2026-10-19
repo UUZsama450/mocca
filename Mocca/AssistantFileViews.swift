@@ -38,6 +38,7 @@ struct AssistantFilesSettingsView: View {
 
     let assistantID: UUID
 
+    @State private var largeFileConfirmation = LargeFileConfirmation()
     @State private var editorSelection: AssistantFileEditorSelection?
     @State private var importPresented = false
     @State private var importTask: Task<Void, Never>?
@@ -117,7 +118,7 @@ struct AssistantFilesSettingsView: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(L10n.lookup("启用的文件会用于这个助手的每次聊天，内容会发送给你选择的模型服务。文件在这里独立保存，无需再保存外层助手设置。"))
-                    Text(L10n.lookup("支持 Markdown 文件（.md、.markdown）；每份最多 64 KB，每个助手最多 32 份，合计 256 KB。"))
+                    Text(L10n.lookup("支持 Markdown 文件（.md、.markdown），每个助手最多 32 份。超过 60,000 字符时提醒一次，确认后保留全文。"))
                     if !files.isEmpty {
                         Text(L10n.format("已使用 %@ / 32 份 · %@", [String(describing: files.count), String(describing: ByteCountFormatter.string(fromByteCount: Int64(files.reduce(0) { $0 + $1.byteCount }), countStyle: .file))]))
                     }
@@ -134,6 +135,7 @@ struct AssistantFilesSettingsView: View {
                 isNew: selection.isNew
             )
         }
+        .modifier(LargeFileConfirmationModifier(confirmation: largeFileConfirmation))
         .fileImporter(
             isPresented: $importPresented,
             allowedContentTypes: AssistantMarkdownDocumentType.importTypes,
@@ -229,6 +231,21 @@ struct AssistantFilesSettingsView: View {
                         imported.append(try await AssistantFileService.prepareImport(from: url))
                     }
                     try Task.checkCancellation()
+                    let snapshot = imported
+                    let oversized: Set<UUID> = largeFileConfirmation.isEnabled ? await Task.detached(priority: .userInitiated) {
+                        Set(snapshot.filter { LargeFilePolicy.needsConfirmation($0.content) }.map(\.id))
+                    }.value : []
+                    if !oversized.isEmpty {
+                        guard await largeFileConfirmation.confirm(
+                            names: imported.filter { oversized.contains($0.id) }.map(\.fileName),
+                            assistantFile: true,
+                            includesLargeFile: imported.contains { LargeFilePolicy.exceedsByteLimit(Int64($0.byteCount)) }
+                        ) else { return }
+                        try Task.checkCancellation()
+                        for index in imported.indices where oversized.contains(imported[index].id) {
+                            imported[index].largeContentApproved = true
+                        }
+                    }
                     try model.appendAssistantFiles(assistantID: assistantID, files: imported)
                 } catch is CancellationError {
                     // Leaving the page cancels an unfinished import before it is saved.
@@ -282,6 +299,9 @@ private struct AssistantFileEditorView: View {
     private let originalFile: AssistantFile
     private let expectedRevision: Int?
 
+    @State private var largeFileConfirmation = LargeFileConfirmation()
+    @State private var saveTask: Task<Void, Never>?
+    @State private var isSaving = false
     @State private var draft: AssistantFile
     @State private var errorMessage: String?
     @State private var unsavedChangesPresented = false
@@ -316,7 +336,7 @@ private struct AssistantFileEditorView: View {
 
     private var canSave: Bool {
         !draft.fileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && draft.byteCount <= AssistantFileService.maximumFileBytes
+            && !isSaving
             && !hasConflict
     }
 
@@ -358,12 +378,6 @@ private struct AssistantFileEditorView: View {
                     Text(L10n.lookup("Markdown 正文"))
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(L10n.format("%@ / 65,536 字节", [String(describing: draft.byteCount)]))
-                            .foregroundStyle(draft.byteCount > AssistantFileService.maximumFileBytes ? Color.red : .secondary)
-                        if draft.byteCount > AssistantFileService.maximumFileBytes {
-                            Text(L10n.lookup("文件超过 64 KB，请缩短内容后保存。输入不会被自动截断。"))
-                                .foregroundStyle(.red)
-                        }
                         Text(L10n.lookup("点按“保存”后立即生效。这里只保存文本，不会执行文件中的脚本。"))
                     }
                 }
@@ -396,7 +410,9 @@ private struct AssistantFileEditorView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)
         .presentationBackground(Color(uiColor: .systemGroupedBackground))
-        .interactiveDismissDisabled(hasUnsavedChanges)
+        .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
+        .modifier(LargeFileConfirmationModifier(confirmation: largeFileConfirmation))
+        .onDisappear { saveTask?.cancel() }
         .fileExporter(
             isPresented: $exportPresented,
             document: exportDocument,
@@ -455,15 +471,26 @@ private struct AssistantFileEditorView: View {
     }
 
     private func saveAndDismiss() {
-        do {
-            _ = try model.saveAssistantFile(
-                assistantID: assistantID,
-                file: draft,
-                expectedRevision: expectedRevision
-            )
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
+        guard canSave else { return }
+        isSaving = true
+        let snapshot = draft
+        saveTask = Task { @MainActor in
+            defer { isSaving = false; saveTask = nil }
+            var candidate = snapshot
+            let requiresConfirmation = largeFileConfirmation.isEnabled ? await Task.detached(priority: .userInitiated) {
+                LargeFilePolicy.needsConfirmation(snapshot.content, approved: snapshot.largeContentApproved == true)
+            }.value : false
+            if requiresConfirmation {
+                guard await largeFileConfirmation.confirm(names: [snapshot.fileName], assistantFile: true, includesLargeFile: LargeFilePolicy.exceedsByteLimit(Int64(snapshot.byteCount))) else { return }
+                candidate.largeContentApproved = true
+            }
+            guard !Task.isCancelled, draft == snapshot else { return }
+            do {
+                _ = try model.saveAssistantFile(
+                    assistantID: assistantID, file: candidate, expectedRevision: expectedRevision
+                )
+                dismiss()
+            } catch { errorMessage = error.localizedDescription }
         }
     }
 

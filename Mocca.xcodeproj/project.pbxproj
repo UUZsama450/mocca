@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BF6000000000000000000002 /* LargeFileConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF6000000000000000000001 /* LargeFileConfirmation.swift */; };
 		C51900000000000000000002 /* TextSelectionEdgeAutoscroll.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51900000000000000000001 /* TextSelectionEdgeAutoscroll.swift */; };
 		C50580000000000000000012 /* LobeIcons-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000011 /* LobeIcons-LICENSE.txt */; };
 		C50580000000000000000002 /* AppBuildConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000001 /* AppBuildConfiguration.swift */; };
@@ -105,6 +106,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BF6000000000000000000001 /* LargeFileConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LargeFileConfirmation.swift; sourceTree = "<group>"; };
 		C51900000000000000000001 /* TextSelectionEdgeAutoscroll.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSelectionEdgeAutoscroll.swift; sourceTree = "<group>"; };
 		C50580000000000000000011 /* LobeIcons-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LobeIcons-LICENSE.txt"; sourceTree = "<group>"; };
 		C50580000000000000000001 /* AppBuildConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuildConfiguration.swift; sourceTree = "<group>"; };
@@ -265,6 +267,7 @@
 				C48110000000000000000003 /* SponsorPage.swift */,
 				C48110000000000000000005 /* Sponsor.storekit */,
 				1A57A5D201B7C0DEA1140008 /* Attachments.swift */,
+				BF6000000000000000000001 /* LargeFileConfirmation.swift */,
 				1A57A5D201B7C0DEA114000A /* PromptInjection.swift */,
 				1A57A5D201B7C0DEA114000C /* PromptInjectionViews.swift */,
 				1A57A5D201B7C0DEA114000E /* QuickPhrases.swift */,
@@ -475,6 +478,7 @@
 				C48110000000000000000002 /* SponsorStore.swift in Sources */,
 				C48110000000000000000004 /* SponsorPage.swift in Sources */,
 				1A57A5D201B7C0DEA1140007 /* Attachments.swift in Sources */,
+				BF6000000000000000000002 /* LargeFileConfirmation.swift in Sources */,
 				1A57A5D201B7C0DEA1140009 /* PromptInjection.swift in Sources */,
 				1A57A5D201B7C0DEA114000B /* PromptInjectionViews.swift in Sources */,
 				1A57A5D201B7C0DEA114000D /* QuickPhrases.swift in Sources */,
@@ -551,7 +555,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5233;
+				CURRENT_PROJECT_VERSION = 5237;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -580,7 +584,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5233;
+				CURRENT_PROJECT_VERSION = 5237;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -674,7 +678,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5233;
+				CURRENT_PROJECT_VERSION = 5237;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -758,7 +762,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5233;
+				CURRENT_PROJECT_VERSION = 5237;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
