@@ -1940,7 +1940,8 @@ final class AppModel {
 
     private func appendMessagePreservingLatestWindow(
         _ message: ChatMessage,
-        to conversationID: UUID
+        to conversationID: UUID,
+        afterMessageID: UUID? = nil
     ) {
         let previousMessages = conversationMessageStore[conversationID] ?? []
         let previousSelectedMessages = selectedMessages(for: conversationID)
@@ -1949,7 +1950,20 @@ final class AppModel {
             messages: previousSelectedMessages
         )
         var updatedMessages = previousMessages
-        updatedMessages.append(message)
+        let insertionLogicalIndex = afterMessageID.flatMap { id in
+            previousSelectedMessages.firstIndex(where: { $0.id == id }).map { $0 + 1 }
+        }
+        if let insertionLogicalIndex {
+            let groupKey = previousSelectedMessages[insertionLogicalIndex - 1].versionGroupKey
+            let insertionIndex = previousMessages.firstIndex(where: { $0.versionGroupKey == groupKey })! + 1
+            updatedMessages.insert(message, at: insertionIndex)
+            if let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }),
+               conversations[conversationIndex].truncateIndex >= insertionIndex {
+                conversations[conversationIndex].truncateIndex += 1
+            }
+        } else {
+            updatedMessages.append(message)
+        }
         conversationMessageStore[conversationID] = updatedMessages
         let updatedSelectedMessages = selectedMessages(for: conversationID)
         let logicalGrowth = max(0, updatedSelectedMessages.count - previousSelectedMessages.count)
@@ -1959,7 +1973,24 @@ final class AppModel {
         // instead of jumping to the newest messages.
         guard logicalGrowth > 0 else { return }
 
-        if previousWindow.endIndex == previousSelectedMessages.count {
+        if let insertionLogicalIndex {
+            // A missing historical reply is inserted beside its question.
+            // Keep the same historical window instead of applying send-to-tail
+            // paging. This runs only once when a new reply is staged.
+            var start = previousWindow.startIndex + (insertionLogicalIndex <= previousWindow.startIndex ? logicalGrowth : 0)
+            let growth = insertionLogicalIndex > previousWindow.startIndex && insertionLogicalIndex <= previousWindow.endIndex
+                ? logicalGrowth : 0
+            let count = min(Self.messageWindowLoadedMax, previousWindow.count + growth)
+            if growth > 0, insertionLogicalIndex >= start + count {
+                // At capacity, retain the reply beside the last loaded user
+                // row by dropping an offscreen row from the window's start.
+                start = insertionLogicalIndex - count + 1
+            }
+            messageWindowsByConversation[conversationID] = MessageWindowState(
+                startIndex: start,
+                count: count
+            )
+        } else if previousWindow.endIndex == previousSelectedMessages.count {
             let nextCount = min(Self.messageWindowLoadedMax, previousWindow.count + logicalGrowth)
             messageWindowsByConversation[conversationID] = MessageWindowState(
                 startIndex: updatedSelectedMessages.count - nextCount,
@@ -2440,7 +2471,7 @@ final class AppModel {
             ChatMessage(
                 conversationID: conversation.id,
                 role: .user,
-                text: "请帮我检查一下键盘弹出时的位置。"
+                text: "宝宝帮我检查一下键盘弹出时的位置。"
             ),
             ChatMessage(
                 conversationID: conversation.id,
@@ -5329,23 +5360,11 @@ final class AppModel {
         )
     }
 
-    var themeSwitchUIColor: UIColor {
-        preferences.themePaletteID == .defaultPalette
-            ? .systemGreen
-            : themeAccentUIColor
-    }
+    var themeSwitchUIColor: UIColor { themeAccentUIColor }
 
-    var themeActionUIColor: UIColor {
-        preferences.themePaletteID == .defaultPalette
-            ? .systemBlue
-            : themeAccentUIColor
-    }
+    var themeActionUIColor: UIColor { themeAccentUIColor }
 
-    var themeSliderUIColor: UIColor {
-        preferences.themePaletteID == .defaultPalette
-            ? .systemBlue
-            : themeAccentUIColor
-    }
+    var themeSliderUIColor: UIColor { themeAccentUIColor }
 
     var themeTextSelectionUIColor: UIColor {
         preferences.themePaletteID == .defaultPalette
@@ -7825,11 +7844,27 @@ final class AppModel {
             rawMessages: messages
         )
         let groupKey = messages[index].versionGroupKey
+        let previousTruncateIndex = conversations.first(where: {
+            $0.id == location.conversationID
+        })?.truncateIndex ?? -1
+        var nextTruncateIndex = previousTruncateIndex
+        if index < nextTruncateIndex { nextTruncateIndex -= 1 }
         messages.remove(at: index)
+        if let remainingIndex = messages.firstIndex(where: { $0.versionGroupKey == groupKey }),
+           remainingIndex > index {
+            // Logical order is anchored by a group's first raw record. When
+            // that record is deleted, retain its slot with a surviving version
+            // instead of letting a later regeneration move past other turns.
+            if index < previousTruncateIndex, remainingIndex >= nextTruncateIndex {
+                nextTruncateIndex += 1
+            }
+            let remainingVersion = messages.remove(at: remainingIndex)
+            messages.insert(remainingVersion, at: index)
+        }
         conversationMessageStore[location.conversationID] = messages
-        if let conversationIndex = conversations.firstIndex(where: { $0.id == location.conversationID }),
-           conversations[conversationIndex].truncateIndex > index {
-            conversations[conversationIndex].truncateIndex -= 1
+        if nextTruncateIndex != previousTruncateIndex,
+           let conversationIndex = conversations.firstIndex(where: { $0.id == location.conversationID }) {
+            conversations[conversationIndex].truncateIndex = nextTruncateIndex
         }
         reconcileVersionSelection(
             conversationID: location.conversationID,
@@ -8163,7 +8198,8 @@ final class AppModel {
                 ? reactionTargetMessageID
                 : nil,
             versionGroupID: replyGroupKey,
-            version: nextVersion
+            version: nextVersion,
+            insertionAfterMessageID: replyGroupKey == nil ? projection[targetLogicalIndex].message.id : nil
         )
     }
 
@@ -8249,7 +8285,8 @@ final class AppModel {
         selection: ModelSelection,
         assistant: AssistantProfile,
         versionGroupID: String? = nil,
-        version: Int = 0
+        version: Int = 0,
+        insertionAfterMessageID: UUID? = nil
     ) -> ChatMessage {
         let now = Date()
         let providerID = provider.id.uuidString
@@ -8278,7 +8315,9 @@ final class AppModel {
             versionGroupID: versionGroupID,
             version: version
         )
-        appendMessagePreservingLatestWindow(assistantMessage, to: conversationID)
+        appendMessagePreservingLatestWindow(
+            assistantMessage, to: conversationID, afterMessageID: insertionAfterMessageID
+        )
         touchConversation(
             conversationID,
             providerID: providerID,
@@ -8324,8 +8363,23 @@ final class AppModel {
         selection: ModelSelection,
         assistant: AssistantProfile,
         versionGroupID: String? = nil,
-        version: Int = 0
+        version: Int = 0,
+        insertionAfterMessageID: UUID? = nil
     ) throws -> ChatMessage {
+        // The user can delete a regeneration's destination before its queued
+        // task stages the reply. Do not resurrect that deleted turn at the tail.
+        if let versionGroupID,
+           conversationMessageStore[conversationID]?.contains(where: {
+               $0.versionGroupKey == versionGroupID
+           }) != true {
+            throw CancellationError()
+        }
+        if let insertionAfterMessageID,
+           !selectedMessages(for: conversationID).contains(where: {
+               $0.id == insertionAfterMessageID
+           }) {
+            throw CancellationError()
+        }
         let conversationsBeforeStage = conversations
         let messagesBeforeStage = conversationMessageStore[conversationID]
         let messageWindowBeforeStage =
@@ -8336,7 +8390,8 @@ final class AppModel {
             selection: selection,
             assistant: assistant,
             versionGroupID: versionGroupID,
-            version: version
+            version: version,
+            insertionAfterMessageID: insertionAfterMessageID
         )
         guard saveImmediately() else {
             conversations = conversationsBeforeStage
@@ -8364,7 +8419,8 @@ final class AppModel {
         reactionTargetMessageID: UUID? = nil,
         preparedInitialAssistantMessage: ChatMessage? = nil,
         versionGroupID: String? = nil,
-        version: Int = 0
+        version: Int = 0,
+        insertionAfterMessageID: UUID? = nil
     ) {
         guard !isConversationStreaming(conversationID) else { return }
         let reactionContext = makeAssistantReactionContext(
@@ -8403,7 +8459,8 @@ final class AppModel {
                     reactionContext: reactionContext,
                     versionGroupID: versionGroupID,
                     version: version,
-                    preparedAssistantMessage: preparedInitialAssistantMessage
+                    preparedAssistantMessage: preparedInitialAssistantMessage,
+                    insertionAfterMessageID: insertionAfterMessageID
                 )
                 completedNormally = true
                 self.markReplyUnreadIfNeeded(for: conversationID)
@@ -8535,7 +8592,8 @@ final class AppModel {
         reactionContext: AssistantReactionContext?,
         versionGroupID: String? = nil,
         version: Int = 0,
-        preparedAssistantMessage: ChatMessage? = nil
+        preparedAssistantMessage: ChatMessage? = nil,
+        insertionAfterMessageID: UUID? = nil
     ) async throws -> ChatMessage {
         let providerID = provider.id.uuidString
         // Freeze a consistent file prompt/tool grant for this reply. In a group,
@@ -8551,7 +8609,8 @@ final class AppModel {
                 selection: selection,
                 assistant: assistant,
                 versionGroupID: versionGroupID,
-                version: version
+                version: version,
+                insertionAfterMessageID: insertionAfterMessageID
             )
         }
 
@@ -8696,7 +8755,9 @@ final class AppModel {
 
         var finalSystemPrompt = assembled.systemPrompt
         if usesClientSearch {
-            let searchPrompt = SearchToolConstants.systemPrompt
+            let searchPrompt = SearchToolConstants.requestSystemPrompt(
+                preferences.searchToolPrompt, imageSearchEnabled: assistant.imageSearchEnabled
+            )
             finalSystemPrompt = finalSystemPrompt.map { $0 + "\n\n" + searchPrompt } ?? searchPrompt
         }
         if reactionContext != nil {
@@ -11752,6 +11813,7 @@ final class AppModel {
     ) -> ChatMessage? {
         var completedMessage: ChatMessage?
         var removedVersionGroupKey: String?
+        var removalWindow: (messages: [ChatMessage], window: MessageWindowState, logicalIndex: Int?)?
         let resolvedMessageID = explicitMessageID ?? activeStreamingMessageIDsByConversation[conversationID]
         releaseSendPresentationGate(
             conversationID: conversationID,
@@ -11816,6 +11878,16 @@ final class AppModel {
         )
         conversationMessages[index].streamingRevision = (streamingRevisions[messageID] ?? 0) + 1
         if removeIfEmpty && failureDescription == nil && Self.isEmptyAssistantResponse(conversationMessages[index]) {
+            let previousMessages = selectedMessages(for: conversationID)
+            removalWindow = (
+                previousMessages,
+                messageWindow(for: conversationID, messages: previousMessages),
+                previousMessages.firstIndex(where: { $0.id == messageID })
+            )
+            if let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }),
+               conversations[conversationIndex].truncateIndex > index {
+                conversations[conversationIndex].truncateIndex -= 1
+            }
             removedVersionGroupKey = conversationMessages[index].versionGroupKey
             conversationMessages.remove(at: index)
         } else {
@@ -11844,6 +11916,14 @@ final class AppModel {
                 conversationID: conversationID,
                 groupKey: removedVersionGroupKey,
                 rawMessages: conversationMessages
+            )
+        }
+        if let removalWindow {
+            preserveMessageWindowAfterDeletion(
+                for: conversationID,
+                previousMessages: removalWindow.messages,
+                previousWindow: removalWindow.window,
+                deletedLogicalIndex: removalWindow.logicalIndex
             )
         }
         touchConversation(conversationID)

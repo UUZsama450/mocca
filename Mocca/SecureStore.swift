@@ -306,6 +306,10 @@ enum ChatBubbleStyle: String, Codable, CaseIterable, Identifiable, Sendable {
 enum ThemePaletteID: String, Codable, CaseIterable, Identifiable, Sendable {
     case custom
     case defaultPalette = "default"
+    case latte
+    case matcha
+    case berry
+    case mist
     case blue
     case green
     case purple
@@ -317,10 +321,21 @@ enum ThemePaletteID: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    static let presets: [Self] = [.defaultPalette, .latte, .matcha, .berry, .mist]
+
+    /// Older saved palettes remain intact until the person chooses a new color.
+    static func presetsIncludingCurrent(_ current: Self) -> [Self] {
+        presets + (current != .custom && !presets.contains(current) ? [current] : [])
+    }
+
     var title: String {
         switch self {
         case .custom: "自定义"
         case .defaultPalette: "默认"
+        case .latte: "拿铁"
+        case .matcha: "抹茶"
+        case .berry: "莓果"
+        case .mist: "雾蓝"
         case .blue: "海霄蓝"
         case .green: "竹影绿"
         case .purple: "暮紫韵"
@@ -334,6 +349,10 @@ enum ThemePaletteID: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var lightAccentARGB: Int {
         switch self {
+        case .latte: 0xff89644c
+        case .matcha: 0xff55765d
+        case .berry: 0xffaa5d78
+        case .mist: 0xff51769b
         case .custom: 0xffff8fbc
         // The default palette stays quiet and neutral: cool graphite adds
         // definition without introducing a green or saturated color cast.
@@ -351,6 +370,10 @@ enum ThemePaletteID: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var darkAccentARGB: Int {
         switch self {
+        case .latte: 0xffdab99b
+        case .matcha: 0xffb4cba3
+        case .berry: 0xffe1aec0
+        case .mist: 0xffaac7e4
         case .custom: 0xffff8fbc
         case .defaultPalette: 0xffc3cad4
         case .blue: 0xffacc7ff
@@ -366,6 +389,10 @@ enum ThemePaletteID: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var lightSurfaceARGB: Int {
         switch self {
+        case .latte: 0xfffbf8f4
+        case .matcha: 0xfff7faf4
+        case .berry: 0xfffcf6f8
+        case .mist: 0xfff5f8fc
         case .blue: 0xfffdfbff
         case .green: 0xfffbfdf8
         case .purple, .smokyRose, .terracotta: 0xfffffbff
@@ -377,6 +404,10 @@ enum ThemePaletteID: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var darkSurfaceARGB: Int {
         switch self {
+        case .latte: 0xff211d1a
+        case .matcha: 0xff1b211b
+        case .berry: 0xff251b20
+        case .mist: 0xff1a2028
         case .blue: 0xff1b1b1d
         case .green: 0xff191c1a
         case .purple: 0xff1c1b1f
@@ -730,6 +761,11 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var searchResultCount: Int
     var searchTimeoutSeconds: Int
     var searchToolResultRetentionTurns: Int
+    /// Empty means follow the bundled search instructions.
+    var searchToolPrompt: String
+    var effectiveSearchToolPrompt: String {
+        SearchToolConstants.resolvedSystemPrompt(searchToolPrompt)
+    }
     var voiceServices: [VoiceServiceConfiguration]
     var selectedVoiceServiceID: UUID?
     var ttsAutoPlayAssistantReplies: Bool
@@ -863,6 +899,7 @@ struct UserPreferences: Codable, Hashable, Sendable {
         searchResultCount: Int = 5,
         searchTimeoutSeconds: Int = 15,
         searchToolResultRetentionTurns: Int = 0,
+        searchToolPrompt: String = "",
         voiceServices: [VoiceServiceConfiguration] = [],
         selectedVoiceServiceID: UUID? = nil,
         ttsAutoPlayAssistantReplies: Bool = false,
@@ -1012,6 +1049,7 @@ struct UserPreferences: Codable, Hashable, Sendable {
         self.searchResultCount = min(max(searchResultCount, 1), 20)
         self.searchTimeoutSeconds = min(max(searchTimeoutSeconds, 1), 30)
         self.searchToolResultRetentionTurns = min(max(searchToolResultRetentionTurns, -1), 20)
+        self.searchToolPrompt = SearchToolConstants.normalizedCustomPrompt(searchToolPrompt)
         self.voiceServices = voiceServices
         self.selectedVoiceServiceID = voiceServices.contains(where: { $0.id == selectedVoiceServiceID })
             ? selectedVoiceServiceID
@@ -1264,6 +1302,9 @@ struct UserPreferences: Codable, Hashable, Sendable {
         searchToolResultRetentionTurns = min(
             max(try container.decodeIfPresent(Int.self, forKey: .searchToolResultRetentionTurns) ?? 0, -1),
             20
+        )
+        searchToolPrompt = SearchToolConstants.normalizedCustomPrompt(
+            try container.decodeIfPresent(String.self, forKey: .searchToolPrompt) ?? ""
         )
         voiceServices = try container.decodeIfPresent(
             [VoiceServiceConfiguration].self,

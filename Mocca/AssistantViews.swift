@@ -1719,6 +1719,7 @@ private struct AssistantParameterSlider: View {
 struct AssistantMCPServersView: View {
     @Environment(AppModel.self) private var model
     @Binding var profile: AssistantProfile
+    @State private var isManagingServers = false
 
     private var selectableServers: [MCPServerConfig] {
         model.mcpServers.filter { $0.enabled && !$0.tools.isEmpty }
@@ -1728,7 +1729,7 @@ struct AssistantMCPServersView: View {
         List {
             Section {
                 if selectableServers.isEmpty {
-                    ContentUnavailableView(L10n.lookup("没有可用 MCP 服务器"), systemImage: "terminal", description: Text(L10n.lookup("先在设置的 MCP 页面添加并同步工具")))
+                    ContentUnavailableView(L10n.lookup("没有可用 MCP 服务器"), systemImage: "terminal", description: Text(L10n.lookup("点 ＋ 添加服务器或同步工具")))
                 } else {
                     Button(L10n.lookup("全选")) {
                         profile.mcpServerIDs = selectableServers.map(\.id)
@@ -1739,7 +1740,7 @@ struct AssistantMCPServersView: View {
                 }
             }
 
-            Section(L10n.lookup("服务器")) {
+            Section {
                 ForEach(selectableServers) { server in
                     let selected = profile.mcpServerIDs.contains(server.id)
                     Toggle(isOn: Binding(
@@ -1762,9 +1763,37 @@ struct AssistantMCPServersView: View {
                         }
                     }
                 }
+            } header: {
+                HStack {
+                    Text(L10n.lookup("服务器"))
+                    Spacer()
+                    Button {
+                        isManagingServers = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .foregroundStyle(Color(uiColor: model.themeActionUIColor))
+                    .accessibilityLabel(L10n.lookup("添加 MCP 服务器"))
+                    .accessibilityIdentifier("assistant.mcp.manage")
+                }
             }
         }
         .settingsGroupedPageStyle()
+        .sheet(isPresented: $isManagingServers) {
+            NavigationStack {
+                MCPSettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button(L10n.lookup("返回")) { isManagingServers = false }
+                                .accessibilityIdentifier("assistant.mcp.closeManagement")
+                        }
+                    }
+            }
+            .tint(Color(uiColor: model.themeActionUIColor))
+            .presentationDetents([.large])
+        }
     }
 }
 
@@ -4195,8 +4224,14 @@ struct AssistantLocalToolsView: View {
                     }
                 }
                 .disabled(!profile.searchEnabled)
+                Toggle(L10n.lookup("图片搜索"), isOn: $profile.imageSearchEnabled)
+                    .disabled(profile.searchMode == .modelBuiltIn)
+                    .accessibilityIdentifier("assistant.imageSearch")
             } footer: {
-                Text(profile.searchMode.explanation)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(profile.searchMode.explanation)
+                    Text(L10n.lookup("图片搜索仅用于应用搜索服务。搜图结果的后续发送遵循「历史图片发送」开关和数量上限。"))
+                }
             }
 
             Section(L10n.lookup("本地工具")) {

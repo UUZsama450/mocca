@@ -915,8 +915,12 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
                 needsIndexRebuild = true
             }
             if let configuration = context.configuration, configuration != self.configuration {
+                // The height index contains only row estimates plus inter-row
+                // gaps. Composer/footer and viewport-only changes affect the
+                // outer geometry, not those entries or the ID-to-index map.
+                let gapChanged = configuration.gap != self.configuration.gap
                 self.configuration = configuration; changedMetrics = true; changedFrom = 0
-                needsIndexRebuild = true
+                needsIndexRebuild = needsIndexRebuild || gapChanged
             }
             if needsIndexRebuild { rebuild() }
             if let sample = context.measurement,
@@ -1543,7 +1547,12 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         if requestedPagePublication != next.publicationID { requestedPagePublication = nil }
         guard structural || !changed.isEmpty || contextChanged || metricsChanged else { return }
         let context = NativeChatInvalidation()
-        context.rows = next.rows.map { .init(id: $0.id, revision: $0.revision) }
+        // Ordered IDs and revisions have already been checked above. A frame
+        // that only changes bottom spacing must not resend the identical keys
+        // through the layout's per-row cache reconciliation.
+        if structural || !changed.isEmpty || contextChanged {
+            context.rows = next.rows.map { .init(id: $0.id, revision: $0.revision) }
+        }
         context.configuration = next.configuration
         context.structural = structural; context.preservedID = anchor
         context.mutationTarget = mutationLanding?.target

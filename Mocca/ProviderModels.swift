@@ -358,19 +358,6 @@ struct ProviderPreset: Identifiable, Hashable, Sendable {
             systemImage: "arrow.triangle.branch"
         ),
         ProviderPreset(
-            id: "tensdaq",
-            configurationID: UUID(uuidString: "00000000-0000-4000-8000-000000000006")!,
-            title: "Tensdaq",
-            aliases: [],
-            type: .openAI,
-            enabled: true,
-            baseURL: "https://tensdaq-api.x-aio.com/v1",
-            apiKey: "",
-            chatPath: "/chat/completions",
-            models: [],
-            systemImage: "chart.line.uptrend.xyaxis"
-        ),
-        ProviderPreset(
             id: "deepseek",
             configurationID: UUID(uuidString: "00000000-0000-4000-8000-000000000007")!,
             title: "DeepSeek",
@@ -382,32 +369,6 @@ struct ProviderPreset: Identifiable, Hashable, Sendable {
             chatPath: "/chat/completions",
             models: [],
             systemImage: "scope"
-        ),
-        ProviderPreset(
-            id: "aihubmix",
-            configurationID: UUID(uuidString: "00000000-0000-4000-8000-000000000008")!,
-            title: "AIhubmix",
-            aliases: [],
-            type: .openAI,
-            enabled: false,
-            baseURL: "https://aihubmix.com/v1",
-            apiKey: "",
-            chatPath: "/chat/completions",
-            models: [],
-            systemImage: "square.stack.3d.up"
-        ),
-        ProviderPreset(
-            id: "aliyun",
-            configurationID: UUID(uuidString: "00000000-0000-4000-8000-000000000009")!,
-            title: "阿里云",
-            aliases: ["Aliyun", "Alibaba Cloud"],
-            type: .openAI,
-            enabled: false,
-            baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            apiKey: "",
-            chatPath: "/chat/completions",
-            models: [],
-            systemImage: "cloud.sun"
         ),
         ProviderPreset(
             id: "zhipu",
@@ -448,19 +409,6 @@ struct ProviderPreset: Identifiable, Hashable, Sendable {
             models: [],
             systemImage: "bolt.horizontal.circle"
         ),
-        ProviderPreset(
-            id: "bytedance",
-            configurationID: UUID(uuidString: "00000000-0000-4000-8000-000000000013")!,
-            title: "字节跳动",
-            aliases: ["ByteDance", "火山方舟", "Volcengine"],
-            type: .openAI,
-            enabled: false,
-            baseURL: "https://ark.cn-beijing.volces.com/api/v3",
-            apiKey: "",
-            chatPath: "/chat/completions",
-            models: [],
-            systemImage: "music.note"
-        )
     ]
 
     private static func normalize(_ value: String) -> String {

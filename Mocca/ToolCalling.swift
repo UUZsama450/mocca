@@ -78,6 +78,23 @@ enum SearchToolConstants {
         如果 search_web 连续返回错误，最多换一个查询再重试一次；仍失败就停止搜索，并在最终回答里简短说明限制。
         """
 
+    /// Empty storage follows the bundled default, including future improvements.
+    static func normalizedCustomPrompt(_ prompt: String) -> String {
+        let cleaned = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned == systemPrompt ? "" : cleaned
+    }
+
+    static func resolvedSystemPrompt(_ customPrompt: String) -> String {
+        let cleaned = normalizedCustomPrompt(customPrompt)
+        return cleaned.isEmpty ? systemPrompt : cleaned
+    }
+
+    static func requestSystemPrompt(_ customPrompt: String, imageSearchEnabled: Bool) -> String {
+        let prompt = resolvedSystemPrompt(customPrompt)
+        guard !imageSearchEnabled else { return prompt }
+        return prompt + "\n\n当前助手已关闭图片搜索。调用 search_web 时 include_images 必须为 false；只使用网页文字结果，不请求或输出搜图图片标记。"
+    }
+
     static func queryLooksImageOriented(_ query: String) -> Bool {
         let normalized = query.lowercased()
         let keywords = [
@@ -105,7 +122,7 @@ enum ToolDefinitionBuilder {
         var defs: [[String: Any]] = []
 
         if includeSearchTool {
-            defs.append(searchWebToolDefinition())
+            defs.append(searchWebToolDefinition(imageSearchEnabled: assistant.imageSearchEnabled))
         }
 
         if assistant.enableMemory {
@@ -175,12 +192,14 @@ enum ToolDefinitionBuilder {
         return definitions
     }
 
-    static func searchWebToolDefinition() -> [String: Any] {
+    static func searchWebToolDefinition(imageSearchEnabled: Bool = true) -> [String: Any] {
         [
             "type": "function",
             "function": [
                 "name": SearchToolConstants.toolName,
-                "description": "Search the web for information and optional image candidates",
+                "description": imageSearchEnabled
+                    ? "Search the web for information and optional image candidates"
+                    : "Search the web for text information. Image search is disabled.",
                 "parameters": [
                     "type": "object",
                     "properties": [
@@ -190,7 +209,9 @@ enum ToolDefinitionBuilder {
                         ],
                         "include_images": [
                             "type": "boolean",
-                            "description": "Set true when the user wants images, photos, screenshots, icons, stickers, or other visual references"
+                            "description": imageSearchEnabled
+                                ? "Set true when the user wants images, photos, screenshots, icons, stickers, or other visual references"
+                                : "Must be false. Image search is disabled for this assistant."
                         ]
                     ],
                     "required": ["query", "include_images"]
@@ -483,8 +504,8 @@ enum ToolCallExecutor {
                 guard !query.isEmpty else {
                     return toolError(error: "empty_query", message: "query is required for search_web", tool: name)
                 }
-                let includeImages = (args["include_images"] as? Bool)
-                    ?? SearchToolConstants.queryLooksImageOriented(query)
+                let includeImages = assistant.imageSearchEnabled && ((args["include_images"] as? Bool)
+                    ?? SearchToolConstants.queryLooksImageOriented(query))
                 return await executor(query, includeImages)
             }
             if let execute = handleMemoryTool(name: name, args: args, assistant: assistant, memoryUpdater: memoryUpdater) {

@@ -50,3 +50,8 @@ Mocca 可以按用户操作加载远程图片或字体。远程内容仍受其�
 ## 界面英文翻译
 
 `Mocca/Localizable.xcstrings` 中一部分英文文案依据 [Kelivo](https://github.com/chevey339/kelivo) 的 `lib/l10n/app_en.arb`、`app_zh.arb` 中相同中文键整理，沿用上游 AGPL-3.0 许可证。其余文案针对 Mocca 的 SwiftUI 界面补充和调整。上游译文贡献者的权利和仓库许可证继续适用；此次修改包括去除 Flutter 插值格式、适配 Mocca 参数与界面术语。
+
+## 数学公式显示（1.0.6）
+
+- [SwiftMath](https://github.com/mgriebling/SwiftMath)：固定 1.7.3，用于本地数学公式排版，采用 MIT 许可证。
+- 版权与许可证原文保留在 [Mocca/SwiftMath-LICENSE.txt](Mocca/SwiftMath-LICENSE.txt)，并作为应用资源随包分发；固定版本见 `Package.resolved`。

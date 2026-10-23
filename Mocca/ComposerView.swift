@@ -208,8 +208,8 @@ struct ComposerView: View {
                 onLongPaste: receiveLongPaste,
                 editorFont: editorFont,
                 animatesHeightChanges: model.preferences.composerHeightAnimationEnabled && !reduceMotion,
-                onMeasuredHeight: { height, fromEdit in
-                    updateInputHeight(height, fromEdit: fromEdit, identity: inputIdentity)
+                onMeasuredHeight: { height, fromEdit, compositionEdit in
+                    updateInputHeight(height, fromEdit: fromEdit, compositionEdit: compositionEdit, identity: inputIdentity)
                 },
                 currentText: { model.composerDraftText(for: conversationID) },
                 sendSource: sendSource
@@ -435,7 +435,7 @@ struct ComposerView: View {
         #endif
     }
 
-    private func updateInputHeight(_ height: CGFloat, fromEdit: Bool, identity: ComposerInputIdentity) {
+    private func updateInputHeight(_ height: CGFloat, fromEdit: Bool, compositionEdit: Bool, identity: ComposerInputIdentity) {
         guard identity.conversationID == model.selectedConversationID,
               identity.resetRevision == inputResetID else { return }
         let previous = inputHeight.flatMap { $0.identity == identity ? $0.height : nil }
@@ -443,9 +443,10 @@ struct ComposerView: View {
         let change = previous.flatMap { old in
             fromEdit && isFocused && allowsHeightAnimation
                 && model.preferences.composerHeightAnimationEnabled && !reduceMotion
-                ? ComposerInputHeightChange(identity: identity, previous: old, target: height) : nil
+                ? ComposerInputHeightChange(identity: identity, previous: old, target: height,
+                                            isCompositionEdit: compositionEdit) : nil
         }
-        var transaction = Transaction(animation: change == nil ? nil : ComposerInputHeightChange.animation)
+        var transaction = Transaction(animation: change?.resolvedAnimation)
         transaction.composerInputHeightChange = change
         withTransaction(transaction) {
             inputHeight = (identity, height)
