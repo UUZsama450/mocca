@@ -110,6 +110,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
     var background: String?
     var searchEnabled: Bool
     var searchMode: AssistantSearchMode
+    var imageSearchEnabled: Bool
     var messageTimeEnabled: Bool
     var localToolIDs: Set<String>
     var mcpServerIDs: [UUID]
@@ -139,8 +140,8 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         id: UUID = UUID(),
         name: String,
         avatar: String? = nil,
-        useAssistantAvatar: Bool = false,
-        useAssistantName: Bool = false,
+        useAssistantAvatar: Bool = true,
+        useAssistantName: Bool = true,
         chatModel: ModelSelection? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
@@ -157,6 +158,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         background: String? = nil,
         searchEnabled: Bool = false,
         searchMode: AssistantSearchMode = .automatic,
+        imageSearchEnabled: Bool = false,
         messageTimeEnabled: Bool = false,
         localToolIDs: Set<String> = [],
         mcpServerIDs: [UUID] = [],
@@ -195,6 +197,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         self.background = background
         self.searchEnabled = searchEnabled
         self.searchMode = searchMode
+        self.imageSearchEnabled = imageSearchEnabled
         self.messageTimeEnabled = messageTimeEnabled
         self.localToolIDs = localToolIDs
         self.mcpServerIDs = mcpServerIDs
@@ -220,8 +223,8 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? "助手"
         avatar = try container.decodeIfPresent(String.self, forKey: .avatar)
-        useAssistantAvatar = try container.decodeIfPresent(Bool.self, forKey: .useAssistantAvatar) ?? false
-        useAssistantName = try container.decodeIfPresent(Bool.self, forKey: .useAssistantName) ?? false
+        useAssistantAvatar = try container.decodeIfPresent(Bool.self, forKey: .useAssistantAvatar) ?? true
+        useAssistantName = try container.decodeIfPresent(Bool.self, forKey: .useAssistantName) ?? true
         chatModel = try container.decodeIfPresent(ModelSelection.self, forKey: .chatModel)
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
         topP = try container.decodeIfPresent(Double.self, forKey: .topP)
@@ -242,6 +245,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         searchMode = AssistantSearchMode(
             rawValue: try container.decodeIfPresent(String.self, forKey: .searchMode) ?? ""
         ) ?? .automatic
+        imageSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .imageSearchEnabled) ?? false
         messageTimeEnabled = try container.decodeIfPresent(Bool.self, forKey: .messageTimeEnabled) ?? false
         localToolIDs = Set(try container.decodeIfPresent([String].self, forKey: .localToolIDs) ?? [])
         mcpServerIDs = try container.decodeIfPresent([UUID].self, forKey: .mcpServerIDs) ?? []

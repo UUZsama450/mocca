@@ -102,9 +102,24 @@ struct ComposerInputHeightChange: Equatable, Sendable {
     let identity: ComposerInputIdentity
     let previous: CGFloat
     let target: CGFloat
+    var isCompositionEdit = false
     var delta: CGFloat { target - previous }
     static let duration: TimeInterval = 0.18
     static var animation: Animation { .timingCurve(0.25, 0, 0.15, 1, duration: duration) }
+
+    var resolvedAnimation: Animation {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-baselineComposerCompositionMotion") {
+            return Self.animation
+        }
+        #endif
+        // Marked text can wrap and then contract as the candidate is committed.
+        // Keep velocity across those retargets without introducing bounce.
+        // Ordinary typing retains the previously accepted timing curve.
+        return isCompositionEdit
+            ? .spring(duration: Self.duration, bounce: 0, blendDuration: 0)
+            : Self.animation
+    }
 }
 
 private struct ComposerInputHeightChangeKey: TransactionKey {
@@ -204,7 +219,7 @@ struct ComposerNativeTextInput: UIViewRepresentable {
 
     var editorFont: UIFont = .systemFont(ofSize: 17)
     var animatesHeightChanges = true
-    var onMeasuredHeight: (CGFloat, Bool) -> Void = { _, _ in }
+    var onMeasuredHeight: (CGFloat, Bool, Bool) -> Void = { _, _, _ in }
     var currentText: (() -> String)? = nil
     var sendSource: ComposerSendSource? = nil
 
@@ -346,12 +361,14 @@ final class ComposerInputTextView: UITextView {
     var isApplyingNativeEdit: Bool { nativeEditDepth > 0 || isInsertingPaste }
     var onLongPaste: ((ComposerLongPasteRequest) -> Void)?
     var onFocusRequested: (() -> Void)?
-    var onMeasuredHeight: ((CGFloat, Bool) -> Void)?
+    var onMeasuredHeight: ((CGFloat, Bool, Bool) -> Void)?
     private var lastMeasuredWidth: CGFloat = 0
     private var lastMeasuredHeight: CGFloat?
     private var pendingHeightMeasurement: CGSize?
     private var heightPublicationRevision = 0
     private var editingHeightPublicationScheduled = false
+    private var pendingCompositionHeightEdit = false
+    private var nativeEditIncludesComposition = false
     private var keyboardTransitionDeadline: TimeInterval = 0
     private var keyboardScreenFrame: CGRect?
     var animatesHeightChanges = true
@@ -466,6 +483,8 @@ final class ComposerInputTextView: UITextView {
 
     func publishEditingHeight() {
         guard onMeasuredHeight != nil else { return }
+        pendingCompositionHeightEdit = pendingCompositionHeightEdit
+            || markedTextRange != nil || isHandlingCompositionCommit || nativeEditIncludesComposition
         // Publish after UIKit finishes the edit, then drive the editor and
         // shell from the same existing height animation.
         heightPublicationRevision += 1
@@ -481,13 +500,16 @@ final class ComposerInputTextView: UITextView {
     private func finishEditingHeightPublication() {
         guard editingHeightPublicationScheduled, !isRetired else { return }
         editingHeightPublicationScheduled = false
+        let compositionEdit = pendingCompositionHeightEdit
+        pendingCompositionHeightEdit = false
         publishMeasuredHeight(
             fromEdit: isFirstResponder && CACurrentMediaTime() >= keyboardTransitionDeadline,
-            deferred: false
+            deferred: false,
+            compositionEdit: compositionEdit
         )
     }
 
-    private func publishMeasuredHeight(fromEdit: Bool, deferred: Bool) {
+    private func publishMeasuredHeight(fromEdit: Bool, deferred: Bool, compositionEdit: Bool = false) {
         guard onMeasuredHeight != nil, !isRetired, window != nil, bounds.width > 0 else { return }
         let width = bounds.width
         let measured = composerSize(fitting: width).height
@@ -510,7 +532,7 @@ final class ComposerInputTextView: UITextView {
             self.pendingHeightMeasurement = nil
             self.lastMeasuredWidth = width
             self.lastMeasuredHeight = measured
-            self.onMeasuredHeight?(measured, animate)
+            self.onMeasuredHeight?(measured, animate, animate && compositionEdit)
         }
         // Layout/external draft reconciliation must not write SwiftUI state
         // during a view update. A newer real edit supersedes this publication.
@@ -572,8 +594,11 @@ final class ComposerInputTextView: UITextView {
     }
 
     private func performNativeEdit(_ edit: () -> Void) {
+        let previousComposition = nativeEditIncludesComposition
+        nativeEditIncludesComposition = previousComposition || markedTextRange != nil
         nativeEditDepth += 1
         defer {
+            nativeEditIncludesComposition = previousComposition
             nativeEditDepth -= 1
             if nativeEditDepth == 0 {
                 cachedNaturalSize = nil
@@ -725,6 +750,7 @@ final class ComposerInputTextView: UITextView {
         cachedNaturalSize = nil
         lastMeasuredHeight = nil
         pendingHeightMeasurement = nil
+        pendingCompositionHeightEdit = false
         lastMeasuredWidth = 0
         heightPublicationRevision += 1
         undoManager?.removeAllActions()
@@ -734,6 +760,7 @@ final class ComposerInputTextView: UITextView {
         isRetired = true
         NotificationCenter.default.removeObserver(self)
         heightPublicationRevision += 1
+        pendingCompositionHeightEdit = false
         onMeasuredHeight = nil
         pendingRequest = nil
         onLongPaste = nil

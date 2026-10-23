@@ -1,6 +1,204 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "雾蓝": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mist Blue"
+          }
+        }
+      }
+    },
+    "莓果": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Berry"
+          }
+        }
+      }
+    },
+    "抹茶": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matcha"
+          }
+        }
+      }
+    },
+    "拿铁": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latte"
+          }
+        }
+      }
+    },
+    "点 ＋ 添加服务器或同步工具": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap + to add a server or sync tools."
+          }
+        }
+      }
+    },
+    "图片搜索仅用于应用搜索服务。搜图结果的后续发送遵循「历史图片发送」开关和数量上限。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image search applies to app search services. Sending these images in later conversations follows the historical image setting and shared limit."
+          }
+        }
+      }
+    },
+    "图片搜索": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image Search"
+          }
+        }
+      }
+    },
+    "保存对搜索工具提示词的修改？": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save changes to the search tool prompt?"
+          }
+        }
+      }
+    },
+    "编辑或恢复默认后，点保存生效。留空保存也会使用默认提示词。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap Save to apply your edits or restore the default. Saving an empty prompt also uses the default."
+          }
+        }
+      }
+    },
+    "指导模型何时搜索及如何使用搜索结果。所有助手的应用搜索服务共用此提示词，模型内置搜索不受影响。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guide when the model searches and how it uses results. This prompt applies to app search services across all assistants. Model built-in search is unaffected."
+          }
+        }
+      }
+    },
+    "搜索工具提示词": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Tool Prompt"
+          }
+        }
+      }
+    },
+    "文件导入": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "File Import"
+          }
+        }
+      }
+    },
+    "可在「偏好设置 → 行为与启动」中重新开启": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can turn reminders back on in Preferences → Behavior & Startup."
+          }
+        }
+      }
+    },
+    "添加 MCP 服务器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add MCP Server"
+          }
+        }
+      }
+    },
+    "管理 MCP 服务器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage MCP Servers"
+          }
+        }
+      }
+    },
+    "已同步 %@ 个工具": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synced %@ tools"
+          }
+        }
+      }
+    },
+    "同步仅更新当前草稿，点保存后生效。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync updates this draft only. Tap Save to apply changes."
+          }
+        }
+      }
+    },
+    "点右上角＋添加并同步服务器工具": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap + at the top right to add a server and sync its tools."
+          }
+        }
+      }
+    },
     "%@说明": {
       "localizations": {
         "en": {
@@ -22194,61 +22392,6 @@
         }
       }
     },
-    "添加 MCP 服务器": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add MCP Server"
-          }
-        }
-      }
-    },
-    "管理 MCP 服务器": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Manage MCP Servers"
-          }
-        }
-      }
-    },
-    "已同步 %@ 个工具": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Synced %@ tools"
-          }
-        }
-      }
-    },
-    "同步仅更新当前草稿，点保存后生效。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sync updates this draft only. Tap Save to apply changes."
-          }
-        }
-      }
-    },
-    "点右上角＋添加并同步服务器工具": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tap + at the top right to add a server and sync its tools."
-          }
-        }
-      }
-    },
     "投喂完全自愿，不影响聊天能力，也不会自动续费。任意档位首次投喂都会解锁 💧 小水滴；各档另会解锁页面标注的纪念装扮。所有装扮均为没有功能加成的纯装饰。同一档可以重复投喂，但不会重复增加装扮；每次购买都会由 App Store 单独确认。": {
       "extractionState": "manual",
       "localizations": {
@@ -22913,6 +23056,281 @@
           "stringUnit": {
             "state": "translated",
             "value": "Keep File and Continue"
+          }
+        }
+      }
+    },
+    "自定义搜索": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom Search"
+          }
+        }
+      }
+    },
+    "DeepSeek 官方网页搜索 API，使用 DeepSeek API Key，返回网页与摘要。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Official DeepSeek web search API. Uses a DeepSeek API key and returns pages and summaries."
+          }
+        }
+      }
+    },
+    "连接自建或其他 JSON 搜索接口，可配置请求参数和结果字段。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect a self-hosted or other JSON search API with configurable request and result fields."
+          }
+        }
+      }
+    },
+    "API Key（可选）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API Key (optional)"
+          }
+        }
+      }
+    },
+    "同时返回网页正文": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Include page content"
+          }
+        }
+      }
+    },
+    "默认使用搜索摘要；开启后优先使用正文，会增加发送给模型的内容。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uses search summaries by default. Enabling this prioritizes full page content and sends more text to the model."
+          }
+        }
+      }
+    },
+    "搜索请求": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Request"
+          }
+        }
+      }
+    },
+    "请求方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request Method"
+          }
+        }
+      }
+    },
+    "鉴权方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Authentication"
+          }
+        }
+      }
+    },
+    "自定义请求头": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom Header"
+          }
+        }
+      }
+    },
+    "API Key 请求头": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API Key Header"
+          }
+        }
+      }
+    },
+    "搜索词参数名": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Query Parameter"
+          }
+        }
+      }
+    },
+    "结果数量参数名": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Result Count Parameter"
+          }
+        }
+      }
+    },
+    "GET 使用网址参数，POST 使用 JSON 请求体。API Key 留空时不发送鉴权信息。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "GET uses URL parameters; POST uses a JSON body. Leave the API key empty for requests without authentication."
+          }
+        }
+      }
+    },
+    "搜索结果字段": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Result Fields"
+          }
+        }
+      }
+    },
+    "结果数组路径": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Results Array Path"
+          }
+        }
+      }
+    },
+    "标题字段": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Title Field"
+          }
+        }
+      }
+    },
+    "链接字段": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL Field"
+          }
+        }
+      }
+    },
+    "摘要或正文字段": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Summary or Content Field"
+          }
+        }
+      }
+    },
+    "默认读取 results 数组中的 title、url、content。嵌套路径用点分隔，例如 data.results；顶层数组填 $。其余字段相对于单条结果。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Defaults to title, url and content in the results array. Use dots for nested paths, such as data.results, or $ for a top-level array. Other fields are relative to each result."
+          }
+        }
+      }
+    },
+    "自定义搜索配置无效，请检查请求方式、鉴权和参数名。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid custom search configuration. Check the method, authentication and parameter names."
+          }
+        }
+      }
+    },
+    "API Key 请求头名称无效。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid API key header name."
+          }
+        }
+      }
+    },
+    "搜索结果路径未找到数组，请检查返回字段配置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No array was found at the results path. Check your result field configuration."
+          }
+        }
+      }
+    },
+    "搜索结果没有有效的网页链接，请检查链接字段配置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No valid web links were found. Check your URL field configuration."
+          }
+        }
+      }
+    },
+    "DeepSeek 搜索词不能超过 128 个 Unicode 字符，请缩短后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DeepSeek search queries are limited to 128 Unicode characters. Shorten the query and try again."
           }
         }
       }

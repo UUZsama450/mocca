@@ -18,6 +18,8 @@ enum SearchServiceKind: String, Codable, CaseIterable, Identifiable, Hashable, S
     case serper
     case grok
     case querit
+    case deepseek
+    case custom
 
     var id: String { rawValue }
 
@@ -39,6 +41,8 @@ enum SearchServiceKind: String, Codable, CaseIterable, Identifiable, Hashable, S
         case .serper: "Serper"
         case .grok: "Grok"
         case .querit: "Querit"
+        case .deepseek: "DeepSeek"
+        case .custom: "自定义搜索"
         }
     }
 
@@ -76,6 +80,10 @@ enum SearchServiceKind: String, Codable, CaseIterable, Identifiable, Hashable, S
             "通过 xAI Responses API 使用 Grok 的网页和 X 搜索。"
         case .querit:
             "面向 LLM 的实时网页搜索，支持站点、时间、国家和语言过滤。"
+        case .deepseek:
+            "DeepSeek 官方网页搜索 API，使用 DeepSeek API Key，返回网页与摘要。"
+        case .custom:
+            "连接自建或其他 JSON 搜索接口，可配置请求参数和结果字段。"
         }
     }
 
@@ -97,6 +105,8 @@ enum SearchServiceKind: String, Codable, CaseIterable, Identifiable, Hashable, S
         case .serper: "SearchSerper"
         case .grok: "ProviderGrok"
         case .querit: "SearchQuerit"
+        case .deepseek: "ProviderDeepSeek"
+        case .custom: nil
         }
     }
 
@@ -118,18 +128,20 @@ enum SearchServiceKind: String, Codable, CaseIterable, Identifiable, Hashable, S
         case .serper: "https://google.serper.dev/search"
         case .grok: "https://api.x.ai/v1/responses"
         case .querit: "https://api.querit.ai/v1/search"
+        case .deepseek: "https://api.deepseek.com/v1/tools/search"
+        case .custom: ""
         }
     }
 
     var requiresAPIKey: Bool {
         switch self {
-        case .bingLocal, .searxng, .duckDuckGo: false
+        case .bingLocal, .searxng, .duckDuckGo, .custom: false
         default: true
         }
     }
 
     var requiresEndpoint: Bool {
-        self == .searxng
+        self == .searxng || self == .custom
     }
 }
 
@@ -401,6 +413,23 @@ enum SearchServiceExecutor {
               components.host != nil else {
             return ErrorLocalization.format("%@ 服务地址无效。", [configuration.kind.title])
         }
+        if configuration.kind == .custom {
+            guard components.user == nil, components.password == nil,
+                  ["GET", "POST"].contains(option(configuration, "method", default: "POST")),
+                  ["bearer", "header", "none"].contains(option(configuration, "auth", default: "bearer")),
+                  option(configuration, "queryField", default: "query") != option(configuration, "countField", default: "count"),
+                  !configuration.apiKey.contains(where: { $0.isNewline }) else {
+                return ErrorLocalization.format("自定义搜索配置无效，请检查请求方式、鉴权和参数名。", [])
+            }
+            if option(configuration, "auth", default: "bearer") == "header" {
+                let header = option(configuration, "keyHeader", default: "X-API-Key")
+                let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~")
+                guard header.unicodeScalars.allSatisfy(allowed.contains),
+                      !["host", "content-length", "content-type", "connection", "transfer-encoding"].contains(header.lowercased()) else {
+                    return ErrorLocalization.format("API Key 请求头名称无效。", [])
+                }
+            }
+        }
         return nil
     }
 
@@ -447,6 +476,7 @@ enum SearchServiceExecutor {
                 query: cleanedQuery,
                 configuration: effective,
                 common: common,
+                includeImages: includeImages,
                 session: session
             )
             if includeImages {
@@ -693,13 +723,14 @@ private extension SearchServiceExecutor {
         query: String,
         configuration: SearchServiceConfiguration,
         common: SearchCommonOptions,
+        includeImages: Bool,
         session: URLSession
     ) async throws -> SearchExecutionResult {
         switch configuration.kind {
         case .bingLocal:
             return try await bingSearch(query, configuration, common, session)
         case .tavily:
-            return try await tavilySearch(query, configuration, common, session)
+            return try await tavilySearch(query, configuration, common, session, includeImages: includeImages)
         case .exa:
             return try await exaSearch(query, configuration, common, session)
         case .zhipu:
@@ -707,7 +738,7 @@ private extension SearchServiceExecutor {
         case .searxng:
             return try await searXNGSearch(query, configuration, common, session)
         case .linkup:
-            return try await linkUpSearch(query, configuration, common, session)
+            return try await linkUpSearch(query, configuration, common, session, includeImages: includeImages)
         case .brave:
             return try await braveSearch(query, configuration, common, session)
         case .metaso:
@@ -728,10 +759,107 @@ private extension SearchServiceExecutor {
             return try await grokSearch(query, configuration, common, session)
         case .querit:
             return try await queritSearch(query, configuration, common, session)
+        case .deepseek:
+            return try await deepSeekSearch(query, configuration, common, session)
+        case .custom:
+            return try await customSearch(query, configuration, common, session)
         }
     }
 
     // MARK: - Providers
+
+    static func deepSeekSearch(
+        _ query: String,
+        _ configuration: SearchServiceConfiguration,
+        _ common: SearchCommonOptions,
+        _ session: URLSession
+    ) async throws -> SearchExecutionResult {
+        // The API counts Unicode characters, not UTF-8 bytes or grapheme clusters.
+        guard query.unicodeScalars.count <= 128 else {
+            throw SearchExecutionError.provider("DeepSeek 搜索词不能超过 128 个 Unicode 字符，请缩短后重试。")
+        }
+        let includeContent = boolOption(configuration, "needContent", default: false)
+        let data = try await performJSONRequest(
+            endpoint: configuration.resolvedEndpoint,
+            headers: ["Authorization": "Bearer \(configuration.apiKey)"],
+            body: ["query": query, "count": common.resultCount, "need_content": includeContent],
+            timeout: common.timeoutSeconds, provider: configuration.resolvedName, session: session
+        )
+        let object = try jsonObject(data, provider: configuration.resolvedName)
+        guard object["results"] is [[String: Any]] else {
+            throw SearchExecutionError.invalidResponse(configuration.resolvedName)
+        }
+        return SearchExecutionResult(
+            items: resultItems(object["results"], titleKeys: ["title"], urlKeys: ["url"],
+                               textKeys: includeContent ? ["content", "summary", "snippet"] : ["summary", "snippet", "content"])
+        )
+    }
+
+    static func customSearch(
+        _ query: String,
+        _ configuration: SearchServiceConfiguration,
+        _ common: SearchCommonOptions,
+        _ session: URLSession
+    ) async throws -> SearchExecutionResult {
+        let queryField = option(configuration, "queryField", default: "query")
+        let countField = option(configuration, "countField", default: "count")
+        var headers = ["Accept": "application/json"]
+        let key = configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty {
+            switch option(configuration, "auth", default: "bearer") {
+            case "bearer": headers["Authorization"] = "Bearer \(key)"
+            case "header": headers[option(configuration, "keyHeader", default: "X-API-Key")] = key
+            default: break
+            }
+        }
+        let data: Data
+        if option(configuration, "method", default: "POST") == "GET" {
+            // Replace existing dynamic parameters, keeping static endpoint parameters.
+            var components = URLComponents(string: configuration.resolvedEndpoint)!
+            components.queryItems = components.queryItems?.filter { $0.name != queryField && $0.name != countField }
+            data = try await performGETRequest(
+                endpoint: components.string!,
+                queryItems: [.init(name: queryField, value: query), .init(name: countField, value: String(common.resultCount))],
+                headers: headers, timeout: common.timeoutSeconds, provider: configuration.resolvedName, session: session
+            )
+        } else {
+            data = try await performJSONRequest(
+                endpoint: configuration.resolvedEndpoint, headers: headers,
+                body: [queryField: query, countField: common.resultCount],
+                timeout: common.timeoutSeconds, provider: configuration.resolvedName, session: session
+            )
+        }
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let values = customJSONValue(object, path: option(configuration, "resultsPath", default: "results")) as? [[String: Any]] else {
+            throw SearchExecutionError.provider("搜索结果路径未找到数组，请检查返回字段配置。")
+        }
+        let items = values.compactMap { value -> SearchExecutionItem? in
+            guard let url = string(customJSONValue(value, path: option(configuration, "urlPath", default: "url"))),
+                  let components = URLComponents(string: url),
+                  ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+                  components.host != nil else { return nil }
+            return SearchExecutionItem(
+                title: string(customJSONValue(value, path: option(configuration, "titlePath", default: "title"))) ?? url,
+                url: url,
+                text: string(customJSONValue(value, path: option(configuration, "textPath", default: "content"))) ?? ""
+            )
+        }
+        guard values.isEmpty || !items.isEmpty else {
+            throw SearchExecutionError.provider("搜索结果没有有效的网页链接，请检查链接字段配置。")
+        }
+        return SearchExecutionResult(items: items)
+    }
+
+    // Simple dotted object/array paths, deliberately no evaluated expressions.
+    static func customJSONValue(_ root: Any, path: String) -> Any? {
+        if path == "$" { return root }
+        let path = path.hasPrefix("$.") ? String(path.dropFirst(2)) : path
+        return path.split(separator: ".", omittingEmptySubsequences: false).reduce(Optional(root)) { value, key in
+            if let object = value as? [String: Any] { return object[String(key)] }
+            if let array = value as? [Any], let index = Int(key), array.indices.contains(index) { return array[index] }
+            return nil
+        }
+    }
 
     static func bingSearch(
         _ query: String,
@@ -769,13 +897,14 @@ private extension SearchServiceExecutor {
         _ query: String,
         _ configuration: SearchServiceConfiguration,
         _ common: SearchCommonOptions,
-        _ session: URLSession
+        _ session: URLSession,
+        includeImages: Bool
     ) async throws -> SearchExecutionResult {
         let body: [String: Any] = [
             "query": query,
             "max_results": common.resultCount,
-            "include_images": true,
-            "include_image_descriptions": true,
+            "include_images": includeImages,
+            "include_image_descriptions": includeImages,
         ]
         let data = try await performJSONRequest(
             endpoint: configuration.resolvedEndpoint,
@@ -914,7 +1043,8 @@ private extension SearchServiceExecutor {
         _ query: String,
         _ configuration: SearchServiceConfiguration,
         _ common: SearchCommonOptions,
-        _ session: URLSession
+        _ session: URLSession,
+        includeImages: Bool
     ) async throws -> SearchExecutionResult {
         let data = try await performJSONRequest(
             endpoint: configuration.resolvedEndpoint,
@@ -923,7 +1053,7 @@ private extension SearchServiceExecutor {
                 "q": query,
                 "depth": "standard",
                 "outputType": "sourcedAnswer",
-                "includeImages": "true"
+                "includeImages": includeImages ? "true" : "false"
             ],
             timeout: common.timeoutSeconds,
             provider: configuration.resolvedName,

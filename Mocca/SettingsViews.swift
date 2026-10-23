@@ -83,13 +83,13 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "供应商", context: "模型与服务", keywords: "Provider API Key 密钥", systemImage: "shippingbox", destination: .providers),
         .init(title: "默认模型", context: "模型与服务", keywords: "模型 语言模型", systemImage: "heart", destination: .defaultModels),
         .init(title: "图像生成接口", context: "供应商", keywords: "图片 生图 OpenRouter OpenAI", systemImage: "photo.badge.plus", destination: .providers),
-        .init(title: "搜索服务", context: "模型与服务", keywords: "联网搜索 web search", systemImage: "globe", destination: .searchServices),
+        .init(title: "搜索服务", context: "模型与服务", keywords: "联网搜索 搜索工具提示词 web search prompt", systemImage: "globe", destination: .searchServices),
         .init(title: "OCR 图片识别", context: "模型与服务", keywords: "OCR 图片 识别", systemImage: "eye", destination: .ocr),
         .init(title: "语音服务", context: "模型与服务", keywords: "语音 TTS ASR", systemImage: "speaker.wave.2", destination: .voice),
         .init(title: "MCP", context: "模型与服务", keywords: "工具 服务器", systemImage: "terminal", destination: .mcp),
         .init(title: "网络代理", context: "模型与服务", keywords: "代理 Proxy HTTP HTTPS", systemImage: "network", destination: .networkProxy),
         .init(title: "颜色模式", context: "外观与应用", keywords: "浅色 深色 跟随系统", systemImage: "circle.lefthalf.filled", destination: .appearanceMode),
-        .init(title: "大文件提醒", context: "偏好设置", keywords: "文件 附件 提醒 60000 100 MB", systemImage: "doc", destination: .preferences),
+        .init(title: "大文件提醒", context: "行为与启动", keywords: "文件 附件 提醒 60000 100 MB", systemImage: "doc", destination: .behavior),
         .init(title: "偏好设置", context: "外观与应用", keywords: "外观 字体 渲染 交互", systemImage: "display", destination: .preferences),
         .init(title: "主题设置", context: "偏好设置", keywords: "主题 颜色 原生绿色", systemImage: "paintpalette", destination: .theme),
         .init(title: "应用字体", context: "偏好设置", keywords: "字体 font", systemImage: "textformat", destination: .appFont),
@@ -240,7 +240,7 @@ struct SettingsView: View {
                     .settingsOverviewRowStyle()
                     }
 
-                    if settingsMatch("搜索服务", keywords: "联网搜索 web search") {
+                    if settingsMatch("搜索服务", keywords: "联网搜索 搜索工具提示词 web search prompt") {
                         NavigationLink {
                         SearchServiceSettingsView()
                     } label: {
@@ -575,10 +575,7 @@ struct SettingsView: View {
     }
 
     private var searchResults: [SettingsSearchItem] {
-        SettingsSearchItem.catalog.filter {
-            (AppBuildConfiguration.sponsorshipEnabled || $0.destination != .sponsor)
-                && $0.matches(normalizedSearchText)
-        }
+        SettingsSearchItem.catalog.filter { (AppBuildConfiguration.sponsorshipEnabled || $0.destination != .sponsor) && $0.matches(normalizedSearchText) }
     }
 
     @ViewBuilder
@@ -657,9 +654,7 @@ struct SettingsView: View {
         case .legal:
             MoccaLegalNoticesPage()
         case .sponsor:
-            if AppBuildConfiguration.sponsorshipEnabled {
-                SponsorPage()
-            }
+            if AppBuildConfiguration.sponsorshipEnabled { SponsorPage() }
         }
     }
 
@@ -674,7 +669,7 @@ struct SettingsView: View {
     private var showsModelsAndServicesSection: Bool {
         settingsMatch("默认模型", keywords: "模型 语言模型")
             || settingsMatch("供应商", keywords: "Provider API Key 密钥 图像供应商")
-            || settingsMatch("搜索服务", keywords: "联网搜索 web search")
+            || settingsMatch("搜索服务", keywords: "联网搜索 搜索工具提示词 web search prompt")
             || settingsMatch("OCR 图片识别", keywords: "OCR 图片 识别")
             || settingsMatch("语音服务", keywords: "语音 TTS ASR")
             || settingsMatch("MCP", keywords: "工具 服务器")
@@ -1928,13 +1923,13 @@ private struct MoccaDocumentationPage: View {
             }
 
             if AppBuildConfiguration.sponsorshipEnabled {
-                Section(L10n.lookup("赞助与纪念装扮")) {
-                    Text(L10n.lookup("赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会解锁对应的纪念装扮，重复购买不会增加新装扮。"))
-                        .font(.subheadline)
-                    Text(L10n.lookup("购买由 Apple App Store 处理。重复购买不会增加新的装扮副本。"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            Section(L10n.lookup("赞助与纪念装扮")) {
+                Text(L10n.lookup("赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会解锁对应的纪念装扮，重复购买不会增加新装扮。"))
+                    .font(.subheadline)
+                Text(L10n.lookup("购买由 Apple App Store 处理。重复购买不会增加新的装扮副本。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             }
 
             Section(L10n.lookup("常见问题")) {
@@ -3692,7 +3687,6 @@ struct SettingsInfoText: View {
 
 struct PreferencesPage: View {
     @Environment(AppModel.self) private var model
-    @State private var largeFilePreference = LargeFileReminderPreference.shared
     @State private var activeSheet: PreferencesSheetRoute?
 
     fileprivate init(initialSheet: PreferencesSheetRoute? = nil) {
@@ -3809,17 +3803,6 @@ struct PreferencesPage: View {
                         systemImage: "text.alignleft"
                     )
                 }
-            }
-
-            Section {
-                Toggle(isOn: Binding(
-                    get: { !largeFilePreference.isDisabled },
-                    set: { largeFilePreference.setEnabled($0) }
-                )) {
-                    SettingsRowLabel(title: L10n.lookup("大文件提醒"), systemImage: "doc")
-                }
-            } footer: {
-                Text(L10n.lookup("添加文本超过 60,000 字符或大小超过 100 MB 的文件时提醒。"))
             }
 
             Section {
@@ -4658,7 +4641,7 @@ private struct ThemePreferencesPage: View {
                         .accessibilityLabel(L10n.lookup("调整自定义颜色"))
                 }
 
-                ForEach(ThemePaletteID.allCases.filter { $0 != .custom }) { palette in
+                ForEach(ThemePaletteID.presetsIncludingCurrent(model.preferences.themePaletteID)) { palette in
                     Button {
                         model.performListItemHaptic()
                         model.updatePreferences { $0.themePaletteID = palette }
@@ -4676,6 +4659,7 @@ private struct ThemePreferencesPage: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("theme.palette.\(palette.rawValue)")
                 }
             }
         }
@@ -4908,6 +4892,8 @@ private struct AssistantMessageActionsPreferencesPage: View {
                     .font(.system(size: 15, weight: .semibold))
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
+                    .tint(Color(uiColor: model.themeActionUIColor))
+                    .accessibilityIdentifier("assistantMessageActions.edit")
                     .accessibilityHint(editMode == .active ? L10n.lookup("结束按钮排序") : L10n.lookup("显示拖动排序把手"))
                 }
                 .padding(.horizontal, 20)
@@ -5178,6 +5164,7 @@ private struct RenderingPreferencesGuideView: View {
 
 private struct BehaviorStartupPreferencesPage: View {
     @Environment(AppModel.self) private var model
+    @State private var largeFilePreference = LargeFileReminderPreference.shared
 
     var body: some View {
         Form {
@@ -5215,6 +5202,22 @@ private struct BehaviorStartupPreferencesPage: View {
                 Text(L10n.lookup("导航与侧栏"))
             } footer: {
                 Text(L10n.lookup("“始终显示”和“滚动时显示”使用包含到顶部、上一条用户消息、下一条用户消息和到底部的完整导航面板；“简单”只在离开最新底部后显示一个回到底部箭头，真正到底后自动消失。"))
+            }
+
+            Section {
+                Toggle(isOn: Binding(
+                    get: { !largeFilePreference.isDisabled },
+                    set: {
+                        model.performSwitchHaptic()
+                        largeFilePreference.setEnabled($0)
+                    }
+                )) {
+                    SettingsRowLabel(title: L10n.lookup("大文件提醒"), systemImage: "doc")
+                }
+            } header: {
+                Text(L10n.lookup("文件导入"))
+            } footer: {
+                Text(L10n.lookup("添加文本超过 60,000 字符或大小超过 100 MB 的文件时提醒。"))
             }
 
             Section {
@@ -6717,6 +6720,98 @@ private struct AboutPage: View {
 
 // MARK: - Search Service Settings
 
+struct SearchToolPromptEditorPage: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: String
+    @State private var isLeaveConfirmationPresented = false
+    @State private var didFinish = false
+    private let initialPrompt: String
+    let onSave: (String) -> Void
+
+    init(initialPrompt: String, onSave: @escaping (String) -> Void) {
+        _draft = State(initialValue: initialPrompt)
+        self.initialPrompt = initialPrompt
+        self.onSave = onSave
+    }
+
+    private var hasUnsavedChanges: Bool {
+        !didFinish && SearchToolConstants.normalizedCustomPrompt(draft)
+            != SearchToolConstants.normalizedCustomPrompt(initialPrompt)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            NativeMultilineTextEditor(text: $draft, font: .body)
+                .accessibilityLabel(L10n.lookup("搜索工具提示词"))
+                .accessibilityIdentifier("searchToolPrompt.editor")
+                .padding(8)
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+
+            Button(L10n.lookup("恢复默认")) {
+                draft = SearchToolConstants.systemPrompt
+            }
+            .foregroundStyle(Color(uiColor: model.themeActionUIColor))
+            .accessibilityIdentifier("searchToolPrompt.restoreDefault")
+
+            Text(L10n.lookup("编辑或恢复默认后，点保存生效。留空保存也会使用默认提示词。"))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(L10n.lookup("搜索工具提示词"))
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(hasUnsavedChanges)
+        .toolbar {
+            if hasUnsavedChanges {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: requestDismiss) {
+                        Label(L10n.lookup("返回"), systemImage: "chevron.left")
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("searchToolPrompt.back")
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(L10n.lookup("保存"), action: saveAndDismiss)
+                    .accessibilityIdentifier("searchToolPrompt.save")
+            }
+        }
+        .interactiveDismissDisabled(hasUnsavedChanges)
+        .background {
+            DraftDismissObserver(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
+            DraftNavigationGuard(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
+        }
+        .alert(L10n.lookup("保存对搜索工具提示词的修改？"), isPresented: $isLeaveConfirmationPresented) {
+            Button(L10n.lookup("保存并离开"), action: saveAndDismiss)
+            Button(L10n.lookup("不保存"), role: .destructive, action: discardAndDismiss)
+            Button(L10n.lookup("继续编辑"), role: .cancel) {}
+        } message: {
+            Text(L10n.lookup("你的修改尚未保存。"))
+        }
+    }
+
+    private func requestDismiss() {
+        if hasUnsavedChanges {
+            isLeaveConfirmationPresented = true
+        } else {
+            discardAndDismiss()
+        }
+    }
+
+    private func saveAndDismiss() {
+        onSave(draft)
+        didFinish = true
+        dismiss()
+    }
+
+    private func discardAndDismiss() {
+        didFinish = true
+        dismiss()
+    }
+}
+
 struct SearchServiceSettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var services: [SearchServiceConfiguration] = []
@@ -6807,10 +6902,16 @@ struct SearchServiceSettingsView: View {
                     }
                 }
                 .disabled(!model.currentAssistant.searchEnabled)
+                Toggle(L10n.lookup("图片搜索"), isOn: imageSearchEnabledBinding)
+                    .disabled(model.currentAssistant.searchMode == .modelBuiltIn)
+                    .accessibilityIdentifier("searchService.imageSearch")
             } header: {
                 Text(L10n.lookup("当前助手"))
             } footer: {
-                Text(model.currentAssistant.searchMode.explanation)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.currentAssistant.searchMode.explanation)
+                    Text(L10n.lookup("图片搜索仅用于应用搜索服务。搜图结果的后续发送遵循「历史图片发送」开关和数量上限。"))
+                }
             }
 
             Section {
@@ -6829,6 +6930,26 @@ struct SearchServiceSettingsView: View {
                 Text(L10n.lookup("搜索提供商"))
             } footer: {
                 Text(L10n.lookup("这些提供商用于应用搜索服务，配置由所有助手共用。模型内置搜索由模型服务商提供。"))
+            }
+
+            Section {
+                NavigationLink {
+                    SearchToolPromptEditorPage(initialPrompt: model.preferences.effectiveSearchToolPrompt) { prompt in
+                        model.updatePreferences {
+                            $0.searchToolPrompt = SearchToolConstants.normalizedCustomPrompt(prompt)
+                        }
+                    }
+                } label: {
+                    HStack {
+                        SettingsRowLabel(title: L10n.lookup("搜索工具提示词"), systemImage: "text.alignleft")
+                        Spacer()
+                        Text(L10n.lookup(SearchToolConstants.normalizedCustomPrompt(model.preferences.searchToolPrompt).isEmpty ? "默认" : "自定义"))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("searchService.toolPrompt")
+            } footer: {
+                Text(L10n.lookup("指导模型何时搜索及如何使用搜索结果。所有助手的应用搜索服务共用此提示词，模型内置搜索不受影响。"))
             }
 
             Section {
@@ -6868,6 +6989,19 @@ struct SearchServiceSettingsView: View {
                 guard assistant.searchEnabled != value else { return }
                 model.performSwitchHaptic()
                 assistant.searchEnabled = value
+                model.updateAssistant(assistant)
+            }
+        )
+    }
+
+    private var imageSearchEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { model.currentAssistant.imageSearchEnabled },
+            set: { value in
+                var assistant = model.currentAssistant
+                guard assistant.imageSearchEnabled != value else { return }
+                model.performSwitchHaptic()
+                assistant.imageSearchEnabled = value
                 model.updateAssistant(assistant)
             }
         )
@@ -7236,10 +7370,11 @@ private struct SearchServiceEditorView: View {
 
                 if draft.kind.requiresEndpoint || !draft.kind.defaultEndpoint.isEmpty {
                     Section {
-                        TextField(draft.kind.defaultEndpoint, text: $draft.endpoint)
+                        TextField(draft.kind.defaultEndpoint.isEmpty ? "https://example.com/search" : draft.kind.defaultEndpoint, text: $draft.endpoint)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .accessibilityIdentifier("searchService.endpoint")
                     } header: {
                         Text(L10n.lookup("服务地址"))
                     } footer: {
@@ -7249,9 +7384,9 @@ private struct SearchServiceEditorView: View {
                     }
                 }
 
-                if draft.kind.requiresAPIKey {
+                if draft.kind.requiresAPIKey || draft.kind == .custom {
                     Section(L10n.lookup("凭据")) {
-                        SecureField("API Key", text: $draft.apiKey)
+                        SecureField(draft.kind == .custom ? L10n.lookup("API Key（可选）") : "API Key", text: $draft.apiKey)
                             .textContentType(.password)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -7334,6 +7469,21 @@ private struct SearchServiceEditorView: View {
     @ViewBuilder
     private var providerSpecificFields: some View {
         switch kindKey {
+        case "deepseek":
+            Section {
+                Toggle(L10n.lookup("同时返回网页正文"), isOn: Binding(
+                    get: { draft.options["needContent"] == "true" },
+                    set: { draft.options["needContent"] = $0 ? "true" : "false" }
+                ))
+            } header: {
+                Text("DeepSeek")
+            } footer: {
+                Text(L10n.lookup("默认使用搜索摘要；开启后优先使用正文，会增加发送给模型的内容。"))
+            }
+
+        case "custom":
+            customSearchFields
+
         case let key where key.contains("duck"):
             Section("DuckDuckGo") {
                 TextField(L10n.lookup("区域，例如 us-en"), text: optionBinding("region", defaultValue: "us-en"))
@@ -7399,6 +7549,54 @@ private struct SearchServiceEditorView: View {
 
         default:
             EmptyView()
+        }
+    }
+
+    private var customSearchFields: some View {
+        Group {
+            Section {
+                Picker(L10n.lookup("请求方式"), selection: optionBinding("method", defaultValue: "POST")) {
+                    Text("POST (JSON)").tag("POST")
+                    Text("GET").tag("GET")
+                }
+                Picker(L10n.lookup("鉴权方式"), selection: optionBinding("auth", defaultValue: "bearer")) {
+                    Text("Bearer").tag("bearer")
+                    Text(L10n.lookup("自定义请求头")).tag("header")
+                    Text(L10n.lookup("无")).tag("none")
+                }
+                if draft.options["auth"] == "header" {
+                    customSearchField("API Key 请求头", key: "keyHeader", fallback: "X-API-Key")
+                }
+                customSearchField("搜索词参数名", key: "queryField", fallback: "query")
+                customSearchField("结果数量参数名", key: "countField", fallback: "count")
+            } header: {
+                Text(L10n.lookup("搜索请求"))
+            } footer: {
+                Text(L10n.lookup("GET 使用网址参数，POST 使用 JSON 请求体。API Key 留空时不发送鉴权信息。"))
+            }
+            Section {
+                customSearchField("结果数组路径", key: "resultsPath", fallback: "results")
+                customSearchField("标题字段", key: "titlePath", fallback: "title")
+                customSearchField("链接字段", key: "urlPath", fallback: "url")
+                customSearchField("摘要或正文字段", key: "textPath", fallback: "content")
+            } header: {
+                Text(L10n.lookup("搜索结果字段"))
+            } footer: {
+                Text(L10n.lookup("默认读取 results 数组中的 title、url、content。嵌套路径用点分隔，例如 data.results；顶层数组填 $。其余字段相对于单条结果。"))
+            }
+        }
+    }
+
+    private func customSearchField(_ title: String, key: String, fallback: String) -> some View {
+        HStack {
+            Text(L10n.lookup(title))
+            Spacer(minLength: 12)
+            TextField(fallback, text: optionBinding(key, defaultValue: fallback))
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel(L10n.lookup(title))
+                .accessibilityIdentifier("searchService.\(key)")
         }
     }
 
@@ -7523,7 +7721,7 @@ private struct SearchServiceKindPicker: View {
         [
             ("无需 API Key", [.duckDuckGo, .bingLocal]),
             ("需要 API Key", SearchServiceKind.allCases.filter(\.requiresAPIKey)),
-            ("自建服务", [.searxng])
+            ("自建服务", [.searxng, .custom])
         ]
     }
 

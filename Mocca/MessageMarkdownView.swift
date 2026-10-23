@@ -596,7 +596,7 @@ final class DrawerHorizontalScrollProbeView: UIView {
 }
 
 private enum MarkdownReadingRhythm {
-    static let layoutSignature = "reading-rhythm-v5-inline-code"
+    static let layoutSignature = "reading-rhythm-v8-native-math"
 
     // Keep ordinary lines compact while giving semantic Markdown blocks a
     // clearer visual hierarchy. These values are shared by the streaming and
@@ -801,7 +801,8 @@ struct MessageMarkdownView: View {
                                 smallHeadingColor: smallHeadingColor.map { UIColor($0) },
                                 fontName: fontName,
                                 citationSources: citationSources,
-                                citationFavicons: citationFavicons
+                                citationFavicons: citationFavicons,
+                                cachesQuoteBlocks: !isStreaming
                             )
                         },
                         renderSignature: "mixed|\(MarkdownReadingRhythm.layoutSignature)|\(segment.id)|\(proseBlocks.hashValue)|\(fontSize)|\(lineSpacing)|\(resolvedListItemSpacing)|\(resolvedBlockSpacingScale)|\(fontName ?? "system")|\(String(describing: foregroundColor))|\(String(describing: largeHeadingColor))|\(String(describing: smallHeadingColor))|\(String(describing: resolvedLinkColor))|\(citationRenderSignature)",
@@ -989,7 +990,8 @@ struct MessageMarkdownView: View {
                 smallHeadingColor: smallHeadingColor.map { UIColor($0) },
                 fontName: fontName,
                 citationSources: citationSources,
-                citationFavicons: citationFavicons
+                citationFavicons: citationFavicons,
+                cachesQuoteBlocks: !isStreaming
             )
         } else {
             attributedText = UnifiedSelectableProseBuilder.makePlainText(
@@ -1090,7 +1092,7 @@ struct MessageMarkdownView: View {
     private func nativeSelectionRoute(
         in blocks: [MarkdownRenderBlock]
     ) -> NativeSelectionRoute {
-        guard prefersUnifiedNativeSelection,
+        guard prefersUnifiedNativeSelection || (rendersMarkdown && MarkdownMathSyntax.containsClosedMath(text)),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .legacy
         }
@@ -2368,6 +2370,15 @@ private struct DrawerViewportRefreshKey: Equatable {
 }
 
 private final class GlyphSelectableTextView: UITextView {
+    override func copy(_ sender: Any?) {
+        if selectedRange.length > 0,
+           let source = MarkdownMathRendering.copyableText(attributedText.attributedSubstring(from: selectedRange)) {
+            UIPasteboard.general.string = source
+        } else {
+            super.copy(sender)
+        }
+    }
+
     static let initialSelectionLongPressDuration: TimeInterval = 0.28
     private static let viewportOverscan: CGFloat = 720
 
@@ -3060,6 +3071,7 @@ private enum InlineCodeReadingStyle {
     }
 }
 
+@MainActor
 private enum UnifiedSelectableProseBuilder {
     private static let horizontalRuleLightImage = solidImage(
         color: UIColor(red: 198 / 255, green: 198 / 255, blue: 208 / 255, alpha: 0.40)
@@ -3102,7 +3114,9 @@ private enum UnifiedSelectableProseBuilder {
         smallHeadingColor: UIColor?,
         fontName: String?,
         citationSources: [MessageCitationSource] = [],
-        citationFavicons: [String: UIImage] = [:]
+        citationFavicons: [String: UIImage] = [:],
+        isQuoteContent: Bool = false,
+        cachesQuoteBlocks: Bool = true
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let baseFont = AppFontStore.uiFont(postScriptName: fontName, size: fontSize)
@@ -3129,7 +3143,7 @@ private enum UnifiedSelectableProseBuilder {
                         baseFont: baseFont,
                         fontName: fontName,
                         lineSpacing: lineSpacing,
-                        paragraphSpacing: scaledBlockSpacing(
+                        paragraphSpacing: isQuoteContent ? 0 : scaledBlockSpacing(
                             MarkdownReadingRhythm.bodyBlockSpacing,
                             scale: resolvedBlockSpacingScale
                         ),
@@ -3153,7 +3167,7 @@ private enum UnifiedSelectableProseBuilder {
                         fontName: fontName,
                         baseWeight: weight,
                         lineSpacing: lineSpacing,
-                        paragraphSpacing: scaledBlockSpacing(
+                        paragraphSpacing: isQuoteContent ? 0 : scaledBlockSpacing(
                             MarkdownReadingRhythm.headingBlockSpacing,
                             scale: resolvedBlockSpacingScale
                         ),
@@ -3175,7 +3189,8 @@ private enum UnifiedSelectableProseBuilder {
                     blockSpacingScale: resolvedBlockSpacingScale,
                     textColor: textColor,
                     citationSources: citationSources,
-                    citationFavicons: citationFavicons
+                    citationFavicons: citationFavicons,
+                    cachesQuoteBlocks: cachesQuoteBlocks
                 )
 
             case let .quote(value):
@@ -3192,7 +3207,10 @@ private enum UnifiedSelectableProseBuilder {
                     lineSpacing: lineSpacing,
                     textColor: textColor,
                     citationSources: citationSources,
-                    citationFavicons: citationFavicons
+                    citationFavicons: citationFavicons,
+                    listItemSpacing: listItemSpacing,
+                    blockSpacingScale: resolvedBlockSpacingScale,
+                    cachesQuoteBlocks: cachesQuoteBlocks
                 )
 
             case .horizontalRule:
@@ -3210,7 +3228,10 @@ private enum UnifiedSelectableProseBuilder {
             }
         }
 
-        InlineCodeReadingStyle.applySpacing(to: result, fontSize: fontSize)
+        // The owning surface applies code spacing once, after quote indents.
+        if !isQuoteContent {
+            InlineCodeReadingStyle.applySpacing(to: result, fontSize: fontSize)
+        }
         return result
     }
 
@@ -3225,7 +3246,8 @@ private enum UnifiedSelectableProseBuilder {
         blockSpacingScale: CGFloat,
         textColor: UIColor,
         citationSources: [MessageCitationSource],
-        citationFavicons: [String: UIImage]
+        citationFavicons: [String: UIImage],
+        cachesQuoteBlocks: Bool = true
     ) {
         let markerLeadingPadding: CGFloat = 6
         let unorderedMarkerTrailingPadding: CGFloat = 3
@@ -3330,7 +3352,10 @@ private enum UnifiedSelectableProseBuilder {
                     lineSpacing: lineSpacing,
                     textColor: textColor,
                     citationSources: citationSources,
-                    citationFavicons: citationFavicons
+                    citationFavicons: citationFavicons,
+                    listItemSpacing: listItemSpacing,
+                    blockSpacingScale: blockSpacingScale,
+                    cachesQuoteBlocks: cachesQuoteBlocks
                 )
             }
         }
@@ -3347,26 +3372,51 @@ private enum UnifiedSelectableProseBuilder {
         lineSpacing: CGFloat,
         textColor: UIColor,
         citationSources: [MessageCitationSource],
-        citationFavicons: [String: UIImage]
+        citationFavicons: [String: UIImage],
+        listItemSpacing: CGFloat = MarkdownReadingRhythm.compactListItemSpacing,
+        blockSpacingScale: CGFloat = 1,
+        cachesQuoteBlocks: Bool = true
     ) {
-        let quote = inlineText(
-            source,
-            baseFont: baseFont,
-            fontName: fontName,
+        let prepared = makeAttributedText(
+            blocks: cachesQuoteBlocks
+                ? MarkdownRenderCache.blocks(for: source, context: .quoteContent)
+                : MarkdownRenderParser.parse(source, context: .quoteContent),
+            fontSize: baseFont.pointSize,
             lineSpacing: lineSpacing,
-            paragraphSpacing: paragraphSpacing,
+            listItemSpacing: listItemSpacing,
+            blockSpacingScale: blockSpacingScale,
             textColor: textColor,
+            largeHeadingColor: nil,
+            smallHeadingColor: nil,
+            fontName: fontName,
             citationSources: citationSources,
-            citationFavicons: citationFavicons
+            citationFavicons: citationFavicons,
+            isQuoteContent: true,
+            cachesQuoteBlocks: cachesQuoteBlocks
         )
+        // This builder returns fresh storage; do not copy the whole quote again.
+        let quote = (prepared as? NSMutableAttributedString)
+            ?? NSMutableAttributedString(attributedString: prepared)
         let fullRange = NSRange(location: 0, length: quote.length)
         guard fullRange.length > 0 else { return }
-        let style = paragraphStyle(lineSpacing: lineSpacing, paragraphSpacing: 0)
-        style.firstLineHeadIndent = leadingIndent + 13
-        style.headIndent = leadingIndent + 13
+        // Keep child paragraph/list geometry and translate it into the quote.
+        // A quote still owns one text surface and one decoration range.
+        quote.enumerateAttribute(.paragraphStyle, in: fullRange) { value, range, _ in
+            let style = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+                ?? paragraphStyle(lineSpacing: lineSpacing, paragraphSpacing: 0)
+            let offset = leadingIndent + 13
+            let hasChildIndent = style.firstLineHeadIndent != 0 || style.headIndent != 0
+            style.firstLineHeadIndent += offset
+            style.headIndent += offset
+            if hasChildIndent {
+                style.tabStops = style.tabStops.map {
+                    NSTextTab(textAlignment: $0.alignment, location: $0.location + offset, options: $0.options)
+                }
+            }
+            quote.addAttribute(.paragraphStyle, value: style, range: range)
+        }
         quote.addAttributes(
             [
-                .paragraphStyle: style,
                 .moccaQuoteBlock: identifier,
                 .moccaQuoteIndent: leadingIndent
             ],
@@ -3375,7 +3425,8 @@ private enum UnifiedSelectableProseBuilder {
         let finalParagraphRange = (quote.string as NSString).paragraphRange(
             for: NSRange(location: max(0, quote.length - 1), length: 0)
         )
-        let finalStyle = style.mutableCopy() as! NSMutableParagraphStyle
+        let finalStyle = (quote.attribute(.paragraphStyle, at: finalParagraphRange.location, effectiveRange: nil)
+            as! NSParagraphStyle).mutableCopy() as! NSMutableParagraphStyle
         finalStyle.paragraphSpacing = max(0, paragraphSpacing - lineSpacing)
         quote.addAttribute(.paragraphStyle, value: finalStyle, range: finalParagraphRange)
         result.append(quote)
@@ -3433,9 +3484,10 @@ private enum UnifiedSelectableProseBuilder {
             source,
             citationSources: citationSources
         )
+        let math = MarkdownMathSyntax.prepare(prepared.markdown)
         let rendered = NSMutableAttributedString(
             attributedString: NSAttributedString(
-                MarkdownRenderCache.attributedText(for: prepared.markdown)
+                MarkdownRenderCache.attributedText(for: math.markdown)
             )
         )
 
@@ -3489,6 +3541,8 @@ private enum UnifiedSelectableProseBuilder {
             to: rendered,
             range: fullRange
         )
+        MarkdownMathRendering.replaceTokens(math.tokens, in: rendered,
+                                            fontSize: baseFont.pointSize, color: textColor)
         return rendered
     }
 
@@ -3858,6 +3912,12 @@ private struct MarkdownQuoteBlock: View {
     let fontName: String?
     let usesCache: Bool
 
+    private var blocks: [MarkdownRenderBlock] {
+        usesCache
+            ? MarkdownRenderCache.blocks(for: text, context: .quoteContent)
+            : MarkdownRenderParser.parse(text, context: .quoteContent)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -3865,16 +3925,40 @@ private struct MarkdownQuoteBlock: View {
                 .frame(width: 3)
                 .padding(.vertical, 2)
 
-            MarkdownTextBlock(
-                text: text,
-                fontSize: fontSize,
-                lineSpacing: lineSpacing,
-                isUserMessage: isUserMessage,
-                allowsTextSelection: allowsTextSelection,
-                foregroundColor: foregroundColor,
-                fontName: fontName,
-                usesCache: usesCache
-            )
+            VStack(alignment: .leading, spacing: lineSpacing) {
+                ForEach(blocks) { block in
+                    switch block.kind {
+                    case let .heading(level, value):
+                        MarkdownHeadingBlock(
+                            level: level, text: value, fontSize: fontSize,
+                            lineSpacing: lineSpacing, isUserMessage: isUserMessage,
+                            allowsTextSelection: allowsTextSelection,
+                            foregroundColor: foregroundColor, fontName: fontName,
+                            usesCache: usesCache
+                        )
+                    case let .list(entries):
+                        MarkdownListBlock(
+                            entries: entries, fontSize: fontSize,
+                            lineSpacing: lineSpacing, isUserMessage: isUserMessage,
+                            allowsTextSelection: allowsTextSelection,
+                            foregroundColor: foregroundColor, fontName: fontName,
+                            usesCache: usesCache
+                        )
+                    case let .text(value):
+                        MarkdownTextBlock(
+                            text: value, fontSize: fontSize,
+                            lineSpacing: lineSpacing, isUserMessage: isUserMessage,
+                            allowsTextSelection: allowsTextSelection,
+                            foregroundColor: foregroundColor, fontName: fontName,
+                            usesCache: usesCache
+                        )
+                    case .quote, .code, .table, .horizontalRule:
+                        // The quote-content context preserves unsupported
+                        // embedded containers as source text during parsing.
+                        EmptyView()
+                    }
+                }
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -5143,15 +5227,20 @@ private enum MarkdownRenderCache {
         return cache
     }()
 
-    static func blocks(for source: String) -> [MarkdownRenderBlock] {
+    static func blocks(
+        for source: String,
+        context: MarkdownRenderParser.Context = .document
+    ) -> [MarkdownRenderBlock] {
         guard !source.isEmpty else { return [] }
-        let key = NSString(string: source)
-        if let cached = blockCache.object(forKey: key) {
+        // Keep the original document lookup path; only embedded quote content
+        // needs a namespace. The entry tag also guards literal-key collisions.
+        let key = NSString(string: context == .document ? source : context.cachePrefix + source)
+        if let cached = blockCache.object(forKey: key), cached.context == context {
             return cached.blocks
         }
-        let parsed = MarkdownRenderParser.parse(source)
+        let parsed = MarkdownRenderParser.parse(source, context: context)
         blockCache.setObject(
-            MarkdownBlockCacheEntry(blocks: parsed),
+            MarkdownBlockCacheEntry(blocks: parsed, context: context),
             forKey: key,
             cost: max(1, source.utf16.count + parsed.count * 24)
         )
@@ -5173,6 +5262,39 @@ private enum MarkdownRenderCache {
     }
 
     static func makeAttributedText(for source: String) -> AttributedString {
+        // The inline-only API deliberately ignores block boundaries. Keep the
+        // original whitespace, but never let delimiters pair across paragraphs.
+        // Atomic line endings prevent one CRLF from being read as a blank line.
+        guard source.utf8.contains(where: { $0 == 0x0A || $0 == 0x0D }),
+              source.utf8.contains(where: {
+                  $0 == 0x60 || $0 == 0x2A || $0 == 0x5F || $0 == 0x5B || $0 == 0x7E || $0 == 0x3C
+              }) else {
+            return makeInlineAttributedText(for: source)
+        }
+        let boundaries = paragraphBoundaryExpression.matches(
+            in: source, range: NSRange(source.startIndex..., in: source)
+        )
+        guard !boundaries.isEmpty else { return makeInlineAttributedText(for: source) }
+        var result = AttributedString()
+        var start = source.startIndex
+        for boundary in boundaries {
+            guard let range = Range(boundary.range, in: source) else { continue }
+            // Completed paragraphs are immutable during normal token append.
+            // Reuse their existing bounded inline cache; only the active tail
+            // needs reparsing as it grows.
+            result.append(attributedText(for: String(source[start..<range.lowerBound])))
+            result.append(AttributedString(String(source[range])))
+            start = range.upperBound
+        }
+        result.append(makeInlineAttributedText(for: String(source[start...])))
+        return result
+    }
+
+    private static let paragraphBoundaryExpression = try! NSRegularExpression(
+        pattern: #"(?>\r\n|\r|\n)[ \t]*(?>\r\n|\r|\n)(?:[ \t]*(?>\r\n|\r|\n))*"#
+    )
+
+    private static func makeInlineAttributedText(for source: String) -> AttributedString {
         do {
             let compatibleSource = sourceWithInlineCompatibilityRepairs(source)
             let parsed = try AttributedString(
@@ -5228,11 +5350,13 @@ private enum MarkdownRenderCache {
         return (result, markerOffsets.isEmpty ? nil : marker)
     }
 
+    private static let kaomojiMouths = Set("ω▽∀Дд益ㅅᴥᗜヮ")
+    private static let kaomojiFaceCharacters = Set("ω▽∀Дд益ㅅᴥᗜヮ´｀`'‘’^＾・･·•｡。；;:°ﾟ˘￣¬≧≦><＞＜つっ╥ＴTＱQoＯＯ-＿_~～ ́̀\\")
+
     private static func escapingKaomojiBackticks(in source: String) -> String {
-        guard source.utf8.contains(0x60) else { return source }
+        guard source.utf8.contains(0x60),
+              source.contains("(") || source.contains("（") else { return source }
         let characters = Array(source)
-        let mouths = Set("ω▽∀Дд益ㅅᴥᗜヮ")
-        let faceCharacters = Set("ω▽∀Дд益ㅅᴥᗜヮ´｀`'‘’^＾・･·•｡。；;:°ﾟ˘￣¬≧≦><＞＜つっ╥ＴTＱQoＯＯ-＿_~～ ́̀\\")
         var candidates = Set<Int>()
         for open in characters.indices where characters[open] == "(" || characters[open] == "（" {
             let closer: Character = characters[open] == "(" ? ")" : "）"
@@ -5245,14 +5369,14 @@ private enum MarkdownRenderCache {
                     if hasMouth { candidates.formUnion(ticks) }
                     break
                 }
-                guard faceCharacters.contains(character) else { break }
+                guard kaomojiFaceCharacters.contains(character) else { break }
                 if character == "`" {
                     // Repeated ticks are intentional Markdown delimiters.
                     guard characters[close - 1] != "`",
                           close + 1 == characters.count || characters[close + 1] != "`" else { break }
                     if !isEscaped(characters, at: close) { ticks.append(close) }
                 }
-                hasMouth = hasMouth || mouths.contains(character)
+                hasMouth = hasMouth || kaomojiMouths.contains(character)
                 close += 1
             }
         }
@@ -5328,9 +5452,12 @@ private enum MarkdownRenderCache {
         var offsets = Set<Int>()
         var open = 0
         while open + 3 < characters.count {
-            guard !code[open], !code[open + 2], !isLineBreak(characters[open + 2]),
-                  characters[open] == "(", characters[open + 1] == "*",
-                  characters[open + 2] != "*" else { open += 1; continue }
+            guard characters[open] == "(", characters[open + 1] == "*",
+                  characters[open + 2] != "*",
+                  !code[open], !code[open + 2], !isLineBreak(characters[open + 2]) else {
+                open += 1
+                continue
+            }
             var close = open + 3
             var containsSymbol = containsKaomojiSymbol(characters[open + 2])
             while close + 1 < characters.count,
@@ -5486,16 +5613,20 @@ private enum MarkdownRenderCache {
         }
     }
 
+    private static let markdownWhitespace = CharacterSet.whitespacesAndNewlines
+    private static let markdownPunctuation = CharacterSet.punctuationCharacters
+    private static let kaomojiSymbols = CharacterSet.symbols
+
     private static func isMarkdownWhitespace(_ character: Character) -> Bool {
-        character.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains)
+        character.unicodeScalars.allSatisfy(markdownWhitespace.contains)
     }
 
     private static func isMarkdownPunctuation(_ character: Character) -> Bool {
-        character.unicodeScalars.allSatisfy(CharacterSet.punctuationCharacters.contains)
+        character.unicodeScalars.allSatisfy(markdownPunctuation.contains)
     }
 
     private static func containsKaomojiSymbol(_ character: Character) -> Bool {
-        character.unicodeScalars.contains { CharacterSet.symbols.contains($0) }
+        character.unicodeScalars.contains { kaomojiSymbols.contains($0) }
     }
 
     private static func isEscaped(_ characters: [Character], at index: Int) -> Bool {
@@ -5513,9 +5644,11 @@ private enum MarkdownRenderCache {
 
 private final class MarkdownBlockCacheEntry {
     let blocks: [MarkdownRenderBlock]
+    let context: MarkdownRenderParser.Context
 
-    init(blocks: [MarkdownRenderBlock]) {
+    init(blocks: [MarkdownRenderBlock], context: MarkdownRenderParser.Context = .document) {
         self.blocks = blocks
+        self.context = context
     }
 }
 
@@ -5725,9 +5858,22 @@ private enum StreamingEmphasisPreview {
 }
 
 private enum MarkdownRenderParser {
+    enum Context {
+        case document
+        case quoteContent
+
+        var cachePrefix: String {
+            switch self {
+            case .document: ""
+            case .quoteContent: "quote-content:"
+            }
+        }
+    }
+
     static func parse(
         _ source: String,
-        previewsIncompleteEmphasis: Bool = false
+        previewsIncompleteEmphasis: Bool = false,
+        context: Context = .document
     ) -> [MarkdownRenderBlock] {
         guard !source.isEmpty else { return [] }
 
@@ -5739,14 +5885,19 @@ private enum MarkdownRenderParser {
         var fenceMarker: Character?
         var fenceLength = 0
         var fenceLanguage = ""
+        var mathCloser: String?
+        let hasDisplayMath = (source.utf8.contains(36) && source.contains("$$"))
+            || (source.utf8.contains(92) && source.contains(#"\["#))
+        let mathOpeningLines = hasDisplayMath ? MarkdownMathSyntax.displayOpeningLines(in: source) : []
         var reopenStrongAfterList = false
         var pendingReusableStrongOpenerLineIndex: Int?
         var pendingStrongCloserLineIndex: Int?
 
         func appendTextBlock() {
             guard !textLines.isEmpty else { return }
-            let text = trimOuterBlankLines(textLines.joined(separator: "\n"))
-            if !text.isEmpty {
+            let joined = textLines.joined(separator: "\n")
+            let text = context == .quoteContent ? joined : trimOuterBlankLines(joined)
+            if !text.isEmpty || context == .quoteContent {
                 blocks.append(MarkdownRenderBlock(id: blocks.count, kind: .text(text)))
             }
             textLines.removeAll(keepingCapacity: true)
@@ -5776,7 +5927,9 @@ private enum MarkdownRenderParser {
             blocks.append(
                 MarkdownRenderBlock(
                     id: blocks.count,
-                    kind: .code(language: fenceLanguage, code: code, isClosed: isClosed)
+                    kind: context == .quoteContent
+                        ? .text(code)
+                        : .code(language: fenceLanguage, code: code, isClosed: isClosed)
                 )
             )
             codeLines.removeAll(keepingCapacity: true)
@@ -5793,10 +5946,28 @@ private enum MarkdownRenderParser {
 
             if let marker = fenceMarker {
                 if isClosingFence(line, marker: marker, minimumLength: fenceLength) {
+                    if context == .quoteContent { codeLines.append(line) }
                     appendCodeBlock(isClosed: true)
                 } else {
                     codeLines.append(line)
                 }
+                continue
+            }
+
+            if let closer = mathCloser {
+                textLines.append(line)
+                if line.contains(closer) {
+                    appendTextBlock()
+                    mathCloser = nil
+                }
+                continue
+            }
+            if hasDisplayMath, mathOpeningLines.contains(sourceLineIndex), let closer = MarkdownMathSyntax.displayClosingDelimiter(for: line) {
+                appendTextBlock()
+                appendQuoteBlock()
+                appendListBlock()
+                textLines.append(line)
+                mathCloser = closer
                 continue
             }
 
@@ -5835,6 +6006,10 @@ private enum MarkdownRenderParser {
                 fenceMarker = opening.marker
                 fenceLength = opening.length
                 fenceLanguage = opening.language
+                // Embedded code/table widgets retain their existing rendering
+                // boundary. In quotes keep their exact source in one text block,
+                // so a heading-looking line inside a fence is never reparsed.
+                if context == .quoteContent { codeLines.append(line) }
                 continue
             }
 
@@ -5848,7 +6023,9 @@ private enum MarkdownRenderParser {
                 blocks.append(
                     MarkdownRenderBlock(
                         id: blocks.count,
-                        kind: .table(parsedTable.table)
+                        kind: context == .quoteContent
+                            ? .text(sourceLines[sourceLineIndex..<parsedTable.nextLineIndex].joined(separator: "\n"))
+                            : .table(parsedTable.table)
                     )
                 )
                 sourceLineIndex = parsedTable.nextLineIndex - 1
@@ -5856,6 +6033,11 @@ private enum MarkdownRenderParser {
             }
 
             if isHorizontalRule(line) {
+                if context == .quoteContent {
+                    appendListBlock()
+                    textLines.append(line)
+                    continue
+                }
                 appendTextBlock()
                 appendQuoteBlock()
                 appendListBlock()
@@ -5876,13 +6058,18 @@ private enum MarkdownRenderParser {
                 continue
             }
 
-            if !listEntries.isEmpty,
+            if context == .document, !listEntries.isEmpty,
                let nestedQuoteLine = nestedListBlockquoteContent(in: line) {
                 listEntries[listEntries.count - 1].nestedQuoteLines.append(nestedQuoteLine)
                 continue
             }
 
             if let quoteLine = blockquoteContent(in: line) {
+                if context == .quoteContent {
+                    appendListBlock()
+                    textLines.append(line)
+                    continue
+                }
                 appendTextBlock()
                 appendListBlock()
                 quoteLines.append(quoteLine)
