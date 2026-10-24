@@ -5360,11 +5360,23 @@ final class AppModel {
         )
     }
 
-    var themeSwitchUIColor: UIColor { themeAccentUIColor }
+    var themeSwitchUIColor: UIColor {
+        preferences.themePaletteID == .defaultPalette
+            ? .systemGreen
+            : themeAccentUIColor
+    }
 
-    var themeActionUIColor: UIColor { themeAccentUIColor }
+    var themeActionUIColor: UIColor {
+        preferences.themePaletteID == .defaultPalette
+            ? .systemBlue
+            : themeAccentUIColor
+    }
 
-    var themeSliderUIColor: UIColor { themeAccentUIColor }
+    var themeSliderUIColor: UIColor {
+        preferences.themePaletteID == .defaultPalette
+            ? .systemBlue
+            : themeAccentUIColor
+    }
 
     var themeTextSelectionUIColor: UIColor {
         preferences.themePaletteID == .defaultPalette

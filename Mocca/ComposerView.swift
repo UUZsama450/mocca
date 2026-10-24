@@ -81,6 +81,7 @@ struct ComposerView: View {
     @Binding var inputHeight: (identity: ComposerInputIdentity, height: CGFloat)?
     var allowsHeightAnimation = true
     var onInputHeightChange: (ComposerInputHeightChange) -> Void = { _ in }
+    var onShellHeightChange: (CGFloat) -> Void = { _ in }
     var onMeasuredHeight: (CGFloat) -> Void = { _ in }
     @Environment(\.composerHeightPresentation) private var heightPresentation
     @Environment(AppModel.self) private var model
@@ -143,7 +144,10 @@ struct ComposerView: View {
             size: 18 * CGFloat(model.preferences.chatFontScale)
         )
         let targetHeight = inputHeight?.identity == inputIdentity ? inputHeight?.height : nil
-        let displayedHeight = heightPresentation?.identity == inputIdentity
+        // The transcript still consumes the interpolated height when the editor
+        // itself is configured to resize immediately.
+        let displayedHeight = model.preferences.composerHeightAnimationEnabled && !reduceMotion
+            && heightPresentation?.identity == inputIdentity
             ? heightPresentation?.inputHeight : targetHeight
         let draftBinding = Binding(
             get: {
@@ -186,7 +190,11 @@ struct ComposerView: View {
                let conversationID = model.selectedConversation?.id {
                 GroupReplyControl(
                     conversationID: conversationID,
-                    isExpanded: $isGroupReplyControlExpanded
+                    isExpanded: $isGroupReplyControlExpanded,
+                    onHeightChange: { delta in
+                        guard conversationID == model.selectedConversationID else { return }
+                        onShellHeightChange(delta)
+                    }
                 )
             }
 
@@ -441,8 +449,7 @@ struct ComposerView: View {
         let previous = inputHeight.flatMap { $0.identity == identity ? $0.height : nil }
         guard previous == nil || abs(previous! - height) > 0.5 else { return }
         let change = previous.flatMap { old in
-            fromEdit && isFocused && allowsHeightAnimation
-                && model.preferences.composerHeightAnimationEnabled && !reduceMotion
+            fromEdit && isFocused && allowsHeightAnimation && !reduceMotion
                 ? ComposerInputHeightChange(identity: identity, previous: old, target: height,
                                             isCompositionEdit: compositionEdit) : nil
         }
@@ -772,9 +779,12 @@ struct GroupChatMembersView: View {
 }
 
 private struct GroupReplyControl: View {
+    private static let spacing: CGFloat = 8
+    private static let chipHeight: CGFloat = 34
     @Environment(AppModel.self) private var model
     let conversationID: UUID
     @Binding var isExpanded: Bool
+    let onHeightChange: (CGFloat) -> Void
 
     private var members: [AssistantProfile] {
         model.selectedConversationAssistantProfiles
@@ -800,11 +810,15 @@ private struct GroupReplyControl: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Self.spacing) {
             Button {
                 guard DrawerInlineActionTapGate.allowsAction else { return }
                 withAnimation(.snappy(duration: 0.22)) {
                     isExpanded.toggle()
+                    // These are the same fixed dimensions used by the chip row.
+                    // Publish its target in this transaction, before layout, so
+                    // the transcript shares the existing expansion animation.
+                    onHeightChange((isExpanded ? 1 : -1) * (Self.spacing + Self.chipHeight))
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -829,6 +843,7 @@ private struct GroupReplyControl: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("groupReplyControl.expand")
 
             if isExpanded {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -898,7 +913,7 @@ private struct GroupReplyControl: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
-            .frame(height: 34)
+            .frame(height: Self.chipHeight)
             .background(selected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.055), in: Capsule())
             .foregroundStyle(selected ? Color.accentColor : .primary)
         }
@@ -918,7 +933,7 @@ private struct GroupReplyControl: View {
                 .font(.system(size: 13, weight: .semibold))
         }
         .padding(.horizontal, 10)
-        .frame(height: 34)
+        .frame(height: Self.chipHeight)
         .background(selected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.055), in: Capsule())
         .foregroundStyle(selected ? Color.accentColor : .primary)
     }

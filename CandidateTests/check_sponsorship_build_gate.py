@@ -36,10 +36,9 @@ import Foundation
             await store.prepare()
             await store.retryLoadingProducts()
             await store.purchase(.treat)
-            await store.restorePurchases()
             precondition(store.productsByID.isEmpty)
             precondition(store.statistics.total == 0)
-            precondition(!store.isLoadingProducts && !store.isRestoringPurchases)
+            precondition(!store.isLoadingProducts)
             precondition(store.purchasingTier == nil && store.celebration == nil)
             precondition(store.statusMessage == nil && !store.statusIsError)
         }

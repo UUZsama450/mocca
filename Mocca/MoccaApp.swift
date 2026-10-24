@@ -18,10 +18,10 @@ struct MoccaApp: App {
             RootView()
                 .environment(model)
                 .environment(\.locale, AppLocalization.shared.locale)
-                // Keep inherited controls, sheets and safe-area toolbars in sync
-                // with the selected theme on every supported iOS version.
-                .tint(Color(uiColor: model.themeActionUIColor))
-                .accentColor(Color(uiColor: model.themeActionUIColor))
+                // Theme color is applied explicitly to selection surfaces and
+                // controls. Keeping it out of the root environment prevents
+                // SwiftUI from tinting whole button labels and reducing text
+                // contrast in settings pages.
                 .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
                 .appFontEnvironment(model.preferences.appFontPostScriptName)
                 .onChange(of: scenePhase) { _, phase in

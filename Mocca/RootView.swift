@@ -6551,6 +6551,7 @@ private struct ChatView: View {
                 // from this one input measurement, including interrupted edits.
                 composerHeight += change.delta
             },
+            onShellHeightChange: { composerHeight += $0 },
             onMeasuredHeight: updateComposerHeight
         )
             #if DEBUG

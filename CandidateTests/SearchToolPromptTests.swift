@@ -26,14 +26,17 @@ private actor ImageSearchCallRecorder {
         let old = try JSONDecoder().decode(ThemePaletteID.self, from: Data("\"smoky_rose\"".utf8))
         XCTAssertEqual(old.lightAccentARGB, 0xff824e6c)
         let model = AppModel()
-        for palette in ThemePaletteID.presets + [.custom] {
+        for palette in ThemePaletteID.allCases {
             model.preferences.themePaletteID = palette
             for style: UIUserInterfaceStyle in [.light, .dark] {
                 let traits = UITraitCollection(userInterfaceStyle: style)
-                let expected = model.themeAccentUIColor.resolvedColor(with: traits)
-                XCTAssertEqual(model.themeActionUIColor.resolvedColor(with: traits), expected)
-                XCTAssertEqual(model.themeSwitchUIColor.resolvedColor(with: traits), expected)
-                XCTAssertEqual(model.themeSliderUIColor.resolvedColor(with: traits), expected)
+                let accent = model.themeAccentUIColor.resolvedColor(with: traits)
+                let action = palette == .defaultPalette ? UIColor.systemBlue.resolvedColor(with: traits) : accent
+                let toggle = palette == .defaultPalette ? UIColor.systemGreen.resolvedColor(with: traits) : accent
+                XCTAssertEqual(model.themeActionUIColor.resolvedColor(with: traits), action)
+                XCTAssertEqual(model.themeSwitchUIColor.resolvedColor(with: traits), toggle)
+                XCTAssertEqual(model.themeSliderUIColor.resolvedColor(with: traits), action)
+                XCTAssertEqual(model.themeTextSelectionUIColor.resolvedColor(with: traits), action)
             }
         }
     }
@@ -48,7 +51,7 @@ private actor ImageSearchCallRecorder {
         XCTAssertTrue(restored[0].imageSearchEnabled)
         XCTAssertFalse(restored[1].imageSearchEnabled)
         XCTAssertEqual(SearchToolConstants.requestSystemPrompt("custom", imageSearchEnabled: true), "custom")
-        XCTAssertTrue(SearchToolConstants.requestSystemPrompt("custom", imageSearchEnabled: false).contains("include_images 必须为 false"))
+        XCTAssertTrue(SearchToolConstants.requestSystemPrompt("custom", imageSearchEnabled: false).contains("include_images must be false"))
     }
 
     func testImageSearchCannotBeEnabledByToolArgumentsWhenDisabled() async {
@@ -99,7 +102,7 @@ private actor ImageSearchCallRecorder {
         XCTAssertEqual(rows[1].attachments.count, 2, "History transmission never deletes displayed results")
     }
 
-    func testOldPreferencesUseUnchangedDefault() throws {
+    func testOldPreferencesFollowBundledDefault() throws {
         let old = try JSONDecoder().decode(UserPreferences.self, from: Data("{}".utf8))
         XCTAssertEqual(old.searchToolPrompt, "")
         XCTAssertEqual(old.effectiveSearchToolPrompt, SearchToolConstants.systemPrompt)
