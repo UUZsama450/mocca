@@ -1,6 +1,79 @@
 import SwiftUI
 import UIKit
 
+/// Native alert with an explicit order. SwiftUI inserts a bottom Cancel action
+/// when a destructive action has no cancel-role peer, preventing Discard last.
+struct DraftExitConfirmation: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let title: String
+    let onSave: () -> Void
+    let onDiscard: () -> Void
+
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.requested = isPresented
+        controller.alertTitle = title
+        controller.onClose = { isPresented = false }
+        controller.onSave = onSave
+        controller.onDiscard = onDiscard
+        controller.updatePresentation()
+    }
+    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
+        controller.requested = false
+        controller.updatePresentation()
+    }
+
+    final class Controller: UIViewController {
+        var requested = false
+        var alertTitle = ""
+        var onClose: () -> Void = {}
+        var onSave: () -> Void = {}
+        var onDiscard: () -> Void = {}
+        private weak var ownedAlert: UIAlertController?
+
+        override func loadView() {
+            view = UIView()
+            view.isUserInteractionEnabled = false
+        }
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            updatePresentation()
+        }
+        func updatePresentation() {
+            guard requested else {
+                ownedAlert?.dismiss(animated: true)
+                ownedAlert = nil
+                return
+            }
+            guard viewIfLoaded?.window != nil, ownedAlert == nil,
+                  presentedViewController == nil else { return }
+            let alert = UIAlertController(title: alertTitle, message: L10n.lookup("你的修改尚未保存。"), preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: L10n.lookup("保存并离开"), style: .default) { [weak self] _ in
+                self?.finish(.save)
+            })
+            alert.addAction(UIAlertAction(title: L10n.lookup("继续编辑"), style: .default) { [weak self] _ in
+                self?.finish(.keepEditing)
+            })
+            alert.addAction(UIAlertAction(title: L10n.lookup("不保存"), style: .destructive) { [weak self] _ in
+                self?.finish(.discard)
+            })
+            ownedAlert = alert
+            present(alert, animated: true)
+        }
+        private enum Choice { case save, keepEditing, discard }
+        private func finish(_ choice: Choice) {
+            requested = false
+            ownedAlert = nil
+            onClose()
+            switch choice {
+            case .save: onSave()
+            case .keepEditing: break
+            case .discard: onDiscard()
+            }
+        }
+    }
+}
+
 /// Intercepts only the sheet containing this probe. It never follows a presented
 /// child sheet, and restores the previous delegate only while it still owns it.
 struct DraftDismissObserver: UIViewControllerRepresentable {

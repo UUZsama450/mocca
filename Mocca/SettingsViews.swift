@@ -2495,7 +2495,7 @@ private struct OCRPromptEditorPage: View {
         VStack(spacing: 12) {
             NativeMultilineTextEditor(
                 text: $draft,
-                font: .monospacedBody
+                font: .body
             )
                 .padding(8)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
@@ -3837,7 +3837,7 @@ struct PreferencesPage: View {
                 }
                 .accessibilityIdentifier("composerHeightAnimationEnabled")
 
-                Text(L10n.lookup("开启时，输入区域随换行平滑伸缩；关闭后直接到位。手动滚动和光标闪烁不受影响。"))
+                Text(L10n.lookup("开启时，输入区域随换行平滑伸缩；关闭后仅输入框直接到位，聊天消息仍平滑跟随。手动滚动和光标闪烁不受影响。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -6782,13 +6782,12 @@ struct SearchToolPromptEditorPage: View {
         .background {
             DraftDismissObserver(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
             DraftNavigationGuard(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
-        }
-        .alert(L10n.lookup("保存对搜索工具提示词的修改？"), isPresented: $isLeaveConfirmationPresented) {
-            Button(L10n.lookup("保存并离开"), action: saveAndDismiss)
-            Button(L10n.lookup("不保存"), role: .destructive, action: discardAndDismiss)
-            Button(L10n.lookup("继续编辑"), role: .cancel) {}
-        } message: {
-            Text(L10n.lookup("你的修改尚未保存。"))
+            DraftExitConfirmation(
+                isPresented: $isLeaveConfirmationPresented,
+                title: L10n.lookup("保存对搜索工具提示词的修改？"),
+                onSave: saveAndDismiss,
+                onDiscard: discardAndDismiss
+            )
         }
     }
 

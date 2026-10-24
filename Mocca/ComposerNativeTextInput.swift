@@ -138,10 +138,13 @@ struct ComposerHeightPresentation: Equatable {
     let inputHeight: CGFloat
     let targetInputHeight: CGFloat
     let targetShellHeight: CGFloat
+    var presentedShellHeight: CGFloat? = nil
 
-    var shellHeight: CGFloat { targetShellHeight + inputHeight - targetInputHeight }
+    var shellHeight: CGFloat { presentedShellHeight ?? (targetShellHeight + inputHeight - targetInputHeight) }
     var bottomClearance: CGFloat { Self.bottomClearance(for: shellHeight) }
-    var isAnimating: Bool { abs(inputHeight - targetInputHeight) > 0.01 }
+    var isAnimating: Bool {
+        abs(inputHeight - targetInputHeight) > 0.01 || abs(shellHeight - targetShellHeight) > 0.01
+    }
 
     static func bottomClearance(for shellHeight: CGFloat) -> CGFloat { max(110, shellHeight + 12) }
 }
@@ -157,24 +160,36 @@ extension EnvironmentValues {
     }
 }
 
-/// Interpolate once, then give both consumers the same height for this frame.
+/// Interpolate once for the transcript and, when enabled, the editor.
 /// Neither consumer starts another animation toward the final height.
 struct ComposerHeightAnimation: AnimatableModifier {
     let identity: ComposerInputIdentity?
     nonisolated var inputHeight: CGFloat
+    nonisolated var shellBaseHeight: CGFloat
     let targetInputHeight: CGFloat
     let targetShellHeight: CGFloat
 
-    nonisolated var animatableData: CGFloat {
-        get { inputHeight }
-        set { inputHeight = newValue }
+    init(identity: ComposerInputIdentity?, inputHeight: CGFloat, targetInputHeight: CGFloat, targetShellHeight: CGFloat) {
+        self.identity = identity
+        self.inputHeight = inputHeight
+        self.targetInputHeight = targetInputHeight
+        self.targetShellHeight = targetShellHeight
+        // Typing changes the input component only. Expanding the group controls
+        // changes the remaining shell height, using its own existing transaction.
+        shellBaseHeight = targetShellHeight - targetInputHeight
+    }
+
+    nonisolated var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(inputHeight, shellBaseHeight) }
+        set { inputHeight = newValue.first; shellBaseHeight = newValue.second }
     }
 
     func body(content: Content) -> some View {
         content
             .environment(\.composerHeightPresentation, identity.map {
                 ComposerHeightPresentation(identity: $0, inputHeight: inputHeight,
-                    targetInputHeight: targetInputHeight, targetShellHeight: targetShellHeight)
+                    targetInputHeight: targetInputHeight, targetShellHeight: targetShellHeight,
+                    presentedShellHeight: shellBaseHeight + inputHeight)
             })
             .transaction { transaction in
                 if transaction.composerInputHeightChange != nil {

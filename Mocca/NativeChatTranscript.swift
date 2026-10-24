@@ -867,6 +867,10 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
         return context
     }
     override func invalidateLayout(with raw: UICollectionViewLayoutInvalidationContext) {
+        #if DEBUG
+        let probeStart = ComposerLayoutWorkProbe.beginScope()
+        defer { ComposerLayoutWorkProbe.endScope("layout", start: probeStart) }
+        #endif
         guard let context = raw as? NativeChatInvalidation else { super.invalidateLayout(with: raw); return }
         let wasApplying = applyingChange; applyingChange = true
         defer { applyingChange = wasApplying }
@@ -875,6 +879,7 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
         let oldOffset = collectionView?.contentOffset.y ?? 0
         #endif
         let oldViewport = viewportHeight
+        let oldRowOrigin = configuration.top + shortTop
         // UIKit can measure incoming cells before it commits the structural
         // offset adjustment. Keep that batch's surviving anchor through those
         // measurements; choosing from the half-updated viewport can select a
@@ -919,7 +924,11 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
                 // gaps. Composer/footer and viewport-only changes affect the
                 // outer geometry, not those entries or the ID-to-index map.
                 let gapChanged = configuration.gap != self.configuration.gap
-                self.configuration = configuration; changedMetrics = true; changedFrom = 0
+                self.configuration = configuration; changedMetrics = true
+                if gapChanged { changedFrom = 0 }
+                #if DEBUG
+                if ComposerLayoutWorkProbe.legacy { changedFrom = 0 }
+                #endif
                 needsIndexRebuild = needsIndexRebuild || gapChanged
             }
             if needsIndexRebuild { rebuild() }
@@ -940,6 +949,11 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
                 viewportHeight = height
             }
         }
+        // Footer/minimum-height changes need new content metrics, but unchanged
+        // message frames do not need item invalidation. Short bottom alignment
+        // is the exception: a footer, viewport or measurement can move every
+        // row, including rows preceding the measured one.
+        if configuration.top + shortTop != oldRowOrigin { changedFrom = 0 }
         if changedFrom != nil || changedMetrics || absoluteTarget != nil {
             let newHeight = collectionViewContentSize.height
             var delta: CGFloat = 0
@@ -977,6 +991,12 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
         } else if owned {
             context.contentOffsetAdjustment = .zero; context.contentSizeAdjustment = .zero
         }
+        #if DEBUG
+        ComposerLayoutWorkProbe.items(context.invalidatedItemIndexPaths?.count ?? 0)
+        if !keys.isEmpty, context.invalidatedItemIndexPaths?.count == keys.count {
+            ComposerLayoutWorkProbe.hit("layout.fullItemInvalidation")
+        }
+        #endif
         super.invalidateLayout(with: context)
         #if DEBUG
         if recordsBatchAdjustments, let batchAnchor, batchAdjustments.count < 48 {
@@ -1072,6 +1092,9 @@ private final class NativeChatCell: UICollectionViewCell {
         }
     }
     override func preferredLayoutAttributesFitting(_ attributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
+        #if DEBUG
+        ComposerLayoutWorkProbe.hit("cell.fit")
+        #endif
         guard let attributes = attributes as? NativeChatAttributes else { return super.preferredLayoutAttributesFitting(attributes) }
         let result = attributes.copy() as! NativeChatAttributes
         guard configuredKey == attributes.key, attributes.size.width.isFinite, attributes.size.width > 0 else {
@@ -1448,6 +1471,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
 
     func update(_ next: NativeChatTranscript) {
         #if DEBUG
+        let probeStart = ComposerLayoutWorkProbe.beginScope()
+        defer { ComposerLayoutWorkProbe.endScope("controller", start: probeStart) }
+        #endif
+        #if DEBUG
         if input.driver !== next.driver || input.driver.controller !== self
             || next.driver.controller !== self {
             debugLifecycle("update.ownerMismatch", next: next,
@@ -1619,7 +1646,14 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             UIView.performWithoutAnimation {
                 applyData()
                 layout.invalidateLayout(with: context)
-                refreshVisibleCells()
+                // Metrics do not change a host's content key or publication.
+                // Newly exposed/reused cells are still configured by UIKit's
+                // data-source callback using the freshly installed rows.
+                var refreshContent = !changed.isEmpty || contextChanged
+                #if DEBUG
+                refreshContent = refreshContent || ComposerLayoutWorkProbe.legacy
+                #endif
+                if refreshContent { refreshVisibleCells() }
             }
             #if DEBUG
             recordEvent("inputDidUpdate", extra: ["structural": false])
@@ -1646,7 +1680,13 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     }
 
     private func refreshVisibleCells() {
+        #if DEBUG
+        ComposerLayoutWorkProbe.hit("cell.refreshPass")
+        #endif
         for case let cell as NativeChatCell in collection.visibleCells {
+            #if DEBUG
+            ComposerLayoutWorkProbe.hit("cell.refreshVisit")
+            #endif
             guard let index = collection.indexPath(for: cell)?.item, rows.indices.contains(index) else { continue }
             let row = rows[index]
             // A surviving cell may already have been configured inside the
@@ -1657,6 +1697,9 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         }
     }
     private func configure(_ cell: NativeChatCell, row: NativeChatRow) {
+        #if DEBUG
+        ComposerLayoutWorkProbe.hit("cell.configure")
+        #endif
         StreamLayoutWorkProbe.hit("cell.configure")
         cell.isViewportMotionActive = { [weak self] in
             guard let self, !self.detached, self.input.driver.controller === self else { return false }
@@ -2667,6 +2710,39 @@ import Darwin
     }
 }
 
+#endif
+
+#if DEBUG
+/// Opt-in, bounded counters for composer A/B runs. No timer, observation or I/O.
+/// Scope times are inclusive main-thread wall time, not process CPU or GPU FPS.
+@MainActor enum ComposerLayoutWorkProbe {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-composerLayoutProbe")
+    static let legacy = enabled && ProcessInfo.processInfo.arguments.contains("-composerLayoutLegacy")
+    private(set) static var counts: [String: Int] = [:]
+    private(set) static var milliseconds: [String: Double] = [:]
+    private(set) static var maxima: [String: Double] = [:]
+    static func reset() {
+        counts.removeAll(keepingCapacity: true)
+        milliseconds.removeAll(keepingCapacity: true)
+        maxima.removeAll(keepingCapacity: true)
+    }
+    static func hit(_ key: String) {
+        guard enabled else { return }
+        counts[key, default: 0] += 1
+    }
+    static func items(_ count: Int) {
+        guard enabled else { return }
+        counts["layout.invalidatedItems", default: 0] += count
+    }
+    static func beginScope() -> CFTimeInterval? { enabled ? CACurrentMediaTime() : nil }
+    static func endScope(_ key: String, start: CFTimeInterval?) {
+        guard let start else { return }
+        let elapsed = (CACurrentMediaTime() - start) * 1000
+        hit(key)
+        milliseconds[key, default: 0] += elapsed
+        maxima[key] = max(maxima[key, default: 0], elapsed)
+    }
+}
 #endif
 
 // Local attribution only: enabled explicitly, accumulated during the CPU probe,

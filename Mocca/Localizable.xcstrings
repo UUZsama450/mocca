@@ -22829,13 +22829,13 @@
         }
       }
     },
-    "开启时，输入区域随换行平滑伸缩；关闭后直接到位。手动滚动和光标闪烁不受影响。": {
+    "开启时，输入区域随换行平滑伸缩；关闭后仅输入框直接到位，聊天消息仍平滑跟随。手动滚动和光标闪烁不受影响。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Smoothly resize the input field as lines change. Turn off to update immediately. Manual scrolling and cursor blinking stay the same."
+            "value": "Smoothly resize the input field as lines change. When off, only the input field resizes immediately; chat messages still follow smoothly. Manual scrolling and cursor blinking stay the same."
           }
         }
       }
