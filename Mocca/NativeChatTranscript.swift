@@ -252,6 +252,22 @@ struct NativeChatViewportLayoutChange {
     let presentedOffsetBeforeLayout: CGFloat?
 }
 
+/// Keep each contact independent: a fresh long press may stop deceleration.
+/// Dragging is still rejected, and the recognizer's movement tolerance prevents
+/// the same scrolling contact from turning into a reaction when it pauses.
+@MainActor enum MessageBlankLongPressGuard {
+    static func allowsRecognition(in view: UIView?) -> Bool {
+        var ancestor = view
+        while let current = ancestor {
+            if let transcript = current as? NativeChatCollectionView {
+                return !transcript.isDragging
+            }
+            ancestor = current.superview
+        }
+        return true
+    }
+}
+
 fileprivate final class NativeChatCollectionView: UICollectionView, TextSelectionAutoscrollHost {
     var onSelectionAutoscrollBegan: (() -> Void)?
     var onSelectionAutoscrollEnded: (() -> Void)?
@@ -573,7 +589,7 @@ struct NativeChatTranscript: UIViewControllerRepresentable {
            AnyHashable(height.identity.conversationID) == sessionID {
             next.composerHeightPresentation = height
             next.configuration.bottom = height.bottomClearance
-            next.configuration.bottomFollowClearance = max(0, height.bottomClearance - height.shellHeight)
+            next.configuration.bottomFollowClearance = height.bottomFollowClearance
         }
         controller.update(next)
     }
@@ -2035,7 +2051,9 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         }
     }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate { userGesture = false }
+        if !decelerate {
+            userGesture = false
+        }
         refreshPhase()
     }
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
@@ -2053,7 +2071,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         scheduleEmission()
         refreshPhase()
     }
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { userGesture = false; refreshPhase() }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        userGesture = false
+        refreshPhase()
+    }
     func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) { scheduleEmission() }
 
     // Research route: UIKit animates the actual viewport after tail measurement.

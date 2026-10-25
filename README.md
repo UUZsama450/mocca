@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.6">Latest release</a> · <a href="CHANGELOG.md">What’s new</a>
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.7">Latest release</a> · <a href="CHANGELOG.md">What’s new</a>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 - **Your providers and models:** configure AI services and switch models between conversations.
 - **Conversations with context:** streaming replies, assistants, group chats, and assistant history searches by title or message content.
-- **More than text:** image and file attachments, image replies with supported models, OCR, and voice services.
+- **More than text:** PDF text and page images, DOCX text and embedded images, configurable OCR, image replies with supported models, and voice services. See [document support and limits](docs/DOCUMENT_ATTACHMENTS.md).
 - **Optional tools:** web search and tool integrations, depending on the services you configure.
 - **Your local library:** on-device chat storage, backup and restore, and compatible imports from older backups.
 - **Make it yours:** appearance, fonts, avatars, and a Chinese or English interface.
@@ -46,7 +46,7 @@ Chats and attachments are stored locally. Requests send the data needed for the 
 
 ## Download
 
-The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The latest source release is **1.0.6 (5248)**; a new IPA is not attached yet. The earlier **1.0.5 (5237)** GitHub IPA preview requires your own signing; see [installation](docs/INSTALLATION.md) and [source verification](docs/RELEASE_1.0.5_5237.md). App Store updates are reviewed separately and released manually after approval.
+The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The latest source release is **1.0.7 (5253)**; a new IPA is not attached yet. The earlier **1.0.5 (5237)** GitHub IPA preview requires your own signing; see [installation](docs/INSTALLATION.md) and [source verification](docs/RELEASE_1.0.5_5237.md). App Store updates are reviewed separately and released manually after approval.
 
 
 ## Build locally
@@ -57,7 +57,7 @@ Built with SwiftUI and UIKit.
 - Xcode 26.3, the currently verified development toolchain
 - Swift 6
 
-Open `Mocca.xcodeproj` in Xcode and select the `Mocca` scheme. Xcode resolves the pinned Swift package dependency. Simulator builds use a placeholder app identity without a development team. For a device build, copy `Configuration/Local.xcconfig.example` to `Configuration/Local.xcconfig` and enter your own app identifier and team. The extension and background-task identifiers follow the app identifier automatically.
+Open `Mocca.xcodeproj` in Xcode and select the `Mocca` scheme. Xcode resolves the pinned Swift package dependencies. Simulator builds use a placeholder app identity without a development team. For a device build, copy `Configuration/Local.xcconfig.example` to `Configuration/Local.xcconfig` and enter your own app identifier and team. The extension and background-task identifiers follow the app identifier automatically.
 
 Sponsorship source and avatar decorations are retained. Builds from source default to sponsorship **off** in both Debug and Release: the entry and search result are hidden, and StoreKit loading, listening, purchase, and restore calls are disabled. Existing decoration data is preserved. Developers can explicitly enable sponsorship and select `Mocca/Sponsor.storekit` for simulated purchases.
 

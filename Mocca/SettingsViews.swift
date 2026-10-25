@@ -2393,7 +2393,7 @@ private struct OCRSettingsPage: View {
                 )) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.lookup("启用 OCR"))
-                        Text(L10n.lookup("发送图片时先由独立视觉模型识别文字与画面，再把结果交给当前聊天模型。"))
+                        Text(L10n.lookup("发送图片和文档页面时，先由所选 OCR 服务商识别文字与画面，再把结果交给当前聊天模型。"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

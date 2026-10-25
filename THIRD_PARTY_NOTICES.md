@@ -55,3 +55,29 @@ Mocca 可以按用户操作加载远程图片或字体。远程内容仍受其�
 
 - [SwiftMath](https://github.com/mgriebling/SwiftMath)：固定 1.7.3，用于本地数学公式排版，采用 MIT 许可证。
 - 版权与许可证原文保留在 [Mocca/SwiftMath-LICENSE.txt](Mocca/SwiftMath-LICENSE.txt)，并作为应用资源随包分发；固定版本见 `Package.resolved`。
+
+## ZIPFoundation 0.9.20
+
+Document attachment parsing uses ZIPFoundation, https://github.com/weichsel/ZIPFoundation, revision `22787ffb59de99e5dc1fbfe80b19c97a904ad48d`. It is independent of the backup archive implementation.
+
+MIT License
+
+Copyright (c) 2017-2025 Thomas Zoechling (https://www.peakstep.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

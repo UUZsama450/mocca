@@ -135,8 +135,11 @@ final class RecordStorageTests: XCTestCase {
         try ConversationStore(directoryURL: dir).save(value)
         let store = try ConversationStore(directoryURL: dir)
         let normalized = try snapshot(store.load())
-        XCTAssertEqual(normalized.messagesByConversation[id]!.count, 2)
+        // Shipping recovery preserves even empty replies as journal ownership anchors.
+        XCTAssertEqual(normalized.messagesByConversation[id]!.map(\.id), value.messagesByConversation[id]!.map(\.id))
         XCTAssertEqual(normalized.messagesByConversation[id]![0].status, .interrupted)
+        XCTAssertEqual(normalized.messagesByConversation[id]![1].status, .interrupted)
+        XCTAssertEqual(normalized.messagesByConversation[id]![1].text, "")
         try store.save(normalized)
         let reloaded = try snapshot(ConversationStore(directoryURL: dir).load())
         XCTAssertEqual(reloaded.messagesByConversation[id]!.map(\.status), normalized.messagesByConversation[id]!.map(\.status))

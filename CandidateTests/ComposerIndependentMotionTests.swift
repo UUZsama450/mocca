@@ -23,12 +23,17 @@ import Observation
 
 private struct IndependentMotionRoot: View {
     @Bindable var state: IndependentMotionState
+    private var messageClearance: CGFloat {
+        min(32, ceil(AppFontStore.uiFont(postScriptName: state.model.preferences.appFontPostScriptName,
+                                       size: 18 * CGFloat(state.model.preferences.chatFontScale)).lineHeight))
+    }
     var body: some View {
         NativeChatTranscript(rows: state.rowIDs.enumerated().map { index, id in
             NativeChatRow(id: id, revision: 0, content: AnyView(
                 Text("Synthetic message \(index)").frame(maxWidth: .infinity).frame(height: 240)
             ))
-        }, configuration: .init(top: 20, bottom: ComposerHeightPresentation.bottomClearance(for: state.shell), gap: 10),
+        }, configuration: .init(top: 20, bottom: ComposerHeightPresentation.bottomClearance(
+            for: state.shell, additionalMessageClearance: messageClearance), gap: 10),
             publicationID: 0, sessionID: AnyHashable(state.model.selectedConversationID),
             driver: state.driver, hasEarlier: false, hasLater: false, initialBottom: false)
         .overlay(alignment: .bottom) {
@@ -43,7 +48,7 @@ private struct IndependentMotionRoot: View {
         }
         .modifier(ComposerHeightAnimation(identity: state.input?.identity,
             inputHeight: state.input?.height ?? 0, targetInputHeight: state.input?.height ?? 0,
-            targetShellHeight: state.shell))
+            targetShellHeight: state.shell, additionalMessageClearance: messageClearance))
         .environment(state.model)
     }
 }

@@ -88,13 +88,14 @@ private actor ImageSearchCallRecorder {
             ChatMessage(conversationID: chat.id, role: .assistant, text: "search", attachments: [try image(3, searched: true), try image(4, searched: true)]),
             ChatMessage(conversationID: chat.id, role: .user, text: "new", attachments: [try image(5)])
         ]
-        let provider = ProviderConfiguration.new(type: .openAI)
+        var provider = ProviderConfiguration.new(type: .openAI)
+        provider.models = [ModelConfiguration(id: "search-vision", capabilityOverride: ModelCapabilities(input: [.text, .image]))]
         var preferences = UserPreferences()
         preferences.historicalImageResendLimit = 3
         for enabled in [false, true] {
             preferences.resendHistoricalImages = enabled
             let messages = try await ChatRequestPreparation.messages(from: rows, assistant: assistant,
-                provider: provider, preferences: preferences, conversation: chat, assistants: [assistant], ocrContext: nil)
+                provider: provider, preferences: preferences, conversation: chat, assistants: [assistant], ocrContext: nil, modelID: "search-vision")
             XCTAssertEqual(messages[0].images.count, enabled ? 1 : 0)
             XCTAssertEqual(messages[1].images.count, enabled ? 2 : 0)
             XCTAssertEqual(messages[2].images.count, 1)

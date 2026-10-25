@@ -4154,7 +4154,7 @@ private struct ChatView: View {
                 gap: conversationMessageSpacing,
                 minimumIncludesTopInset: visibleMessageCount > 0 && !isFreshConversationFirstMessage,
                 alignShortContentToBottom: false,
-                bottomFollowClearance: max(0, composerBottomClearance - composerHeight)
+                bottomFollowClearance: max(0, composerOverlayBottomClearance - composerHeight)
             ),
             publicationID: AnyHashable(publicationID),
             sessionID: AnyHashable(model.selectedConversationID),
@@ -5210,7 +5210,7 @@ private struct ChatView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 18)
                     .padding(.top, 108)
-                    .padding(.bottom, composerBottomClearance)
+                    .padding(.bottom, composerOverlayBottomClearance)
                     // The empty artwork keeps its original full-height layout;
                     // only the transcript consumes the registered top bar.
                     .ignoresSafeArea(.container, edges: .top)
@@ -5294,12 +5294,13 @@ private struct ChatView: View {
             identity: composerInputHeight?.identity,
             inputHeight: composerInputHeight?.height ?? 0,
             targetInputHeight: composerInputHeight?.height ?? 0,
-            targetShellHeight: composerHeight
+            targetShellHeight: composerHeight,
+            additionalMessageClearance: composerMessageClearance
         ))
         .overlay(alignment: .bottom) {
             DrawerAwareQuickReturnToBottom(
                 baseVisible: shouldShowQuickReturnToBottomIgnoringDrawer,
-                bottomPadding: composerBottomClearance + 8,
+                bottomPadding: composerOverlayBottomClearance + 8,
                 onReturnToBottom: requestQuickReturnToBottom
             )
         }
@@ -5314,7 +5315,7 @@ private struct ChatView: View {
                 onBottom: { requestMessageNavigation(.bottom) }
             )
             .padding(.trailing, 8)
-            .padding(.bottom, composerBottomClearance + 8)
+            .padding(.bottom, composerOverlayBottomClearance + 8)
             // Scope the transition to this small leaf. Applying animation to
             // ChatView itself makes drawer-close and conversation-bottom reset
             // join the same transaction, which was 4472's switch regression.
@@ -6592,6 +6593,21 @@ private struct ChatView: View {
     }
 
     private var composerBottomClearance: CGFloat {
+        ComposerHeightPresentation.bottomClearance(
+            for: composerHeight, additionalMessageClearance: composerMessageClearance
+        )
+    }
+
+    // Reserve one editor line for immediate growth while messages keep moving.
+    // Cap unusually tall fonts; keep this out of the shell and controls' layout.
+    private var composerMessageClearance: CGFloat {
+        min(32, ceil(AppFontStore.uiFont(
+            postScriptName: model.preferences.appFontPostScriptName,
+            size: 18 * CGFloat(model.preferences.chatFontScale)
+        ).lineHeight))
+    }
+
+    private var composerOverlayBottomClearance: CGFloat {
         ComposerHeightPresentation.bottomClearance(for: composerHeight)
     }
 
@@ -14786,6 +14802,14 @@ private struct MessageBlankLongPressSurface: UIViewRepresentable {
             onLongPress(recognizer.location(in: recognizer.view?.window))
         }
 
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            MessageBlankLongPressGuard.allowsRecognition(in: gestureRecognizer.view)
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            MessageBlankLongPressGuard.allowsRecognition(in: gestureRecognizer.view)
+        }
+
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
@@ -15339,9 +15363,10 @@ private struct MessageRow: View {
         // positioning and entrance completion only reveal it; they never insert
         // another row or change its height. A reply that arrives sooner retains
         // the ordinary text/reasoning/tool presentation path.
-        return ProgressView()
-            .controlSize(.small)
-            .tint(Color(uiColor: .secondaryLabel))
+        return HStack(spacing: 8) {
+            ProgressView().controlSize(.small).tint(Color(uiColor: .secondaryLabel))
+            DocumentReadingProgressLabel(messageID: message.id)
+        }
             .opacity(waitsForSendArrival ? 0 : 1)
             .animation(nil, value: waitsForSendArrival)
             .accessibilityHidden(waitsForSendArrival)
@@ -15389,6 +15414,7 @@ private struct MessageRow: View {
                         if !message.attachments.isEmpty {
                             MessageAttachmentsView(
                                 attachments: message.attachments,
+                                sourceMessageID: message.id,
                                 collapsesImages: true,
                                 collapsedImagesAreExcludedFromHistory: true,
                                 scrollsMultipleImagesHorizontally: true,

@@ -2391,98 +2391,108 @@ enum AIChatService {
 @MainActor
 final class OCRService {
     static let shared = OCRService()
-
-    private let maxCacheEntries = 48
+    typealias Recognizer = @Sendable (ChatRequestImage, ProviderConfiguration, String, String) async throws -> String
+    private let recognizer: Recognizer
     private var cache: [String: String] = [:]
-    private var cacheOrder: [String] = []
+    private var order: [String] = []
+    private var cachedBytes = 0
+    private var cacheEpoch = 0
+    private var busy = false
+    private var waiters: [(UUID, CheckedContinuation<Void, Error>)] = []
 
-    func text(
-        for attachments: [MessageAttachment],
-        provider: ProviderConfiguration,
-        modelID: String,
-        prompt: String
-    ) async -> String? {
-        let images = attachments.filter { $0.kind == .image && $0.localURL != nil }
-        guard !images.isEmpty else { return nil }
+    init(recognizer: @escaping Recognizer = OCRService.recognize) { self.recognizer = recognizer }
 
-        var collected: [String] = []
-        for attachment in images {
-            guard !Task.isCancelled else { return nil }
-            guard let url = attachment.localURL else { continue }
-            let key = url.path
-            if let cached = cachedText(for: key) {
-                collected.append(cached)
-                continue
-            }
-            let prepared = try? await ChatRequestAttachments.prepare(
-                [attachment], imageIDs: [attachment.id]
-            )
-            guard !Task.isCancelled else { return nil }
-            guard let image = prepared?.images.first else { continue }
-            guard let recognized = await recognize(
-                image: image,
-                provider: provider,
-                modelID: modelID,
-                prompt: prompt
-            ) else { continue }
-            cacheText(recognized, for: key)
-            collected.append(recognized)
+    func text(for attachments: [MessageAttachment], provider: ProviderConfiguration, modelID: String, prompt: String) async throws -> String {
+        var parts: [String] = []
+        for attachment in attachments {
+            try Task.checkCancellation()
+            do {
+                let source = try await DocumentAttachmentReader.shared.imageSourceKey(attachment)
+                let value = try await text(source: source, provider: provider, modelID: modelID, prompt: prompt) {
+                    try await DocumentAttachmentReader.shared.image(attachment)
+                }
+                parts.append("[\(attachment.fileName ?? "Image")]\n\(value)")
+            } catch is CancellationError { throw CancellationError() }
+            catch { throw DocumentReadError.detail("\(attachment.fileName ?? "Image"): \(error.localizedDescription)") }
         }
+        return parts.joined(separator: "\n\n")
+    }
 
-        let combined = collected.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return combined.isEmpty ? nil : combined
+    func text(image: ChatRequestImage, provider: ProviderConfiguration, modelID: String, prompt: String) async throws -> String {
+        try Task.checkCancellation()
+        let key = try await DocumentAttachmentReader.shared.ocrCacheKey(image: image, provider: provider, modelID: modelID, prompt: prompt)
+        return try await recognizeCached(key: key, provider: provider, modelID: modelID, prompt: prompt) { image }
+    }
+
+    func text(source: String, provider: ProviderConfiguration, modelID: String, prompt: String,
+              loadImage: @escaping @Sendable () async throws -> ChatRequestImage) async throws -> String {
+        let key = try await DocumentAttachmentReader.shared.ocrCacheKey(source: source, provider: provider, modelID: modelID, prompt: prompt)
+        return try await recognizeCached(key: key, provider: provider, modelID: modelID, prompt: prompt, loadImage: loadImage)
+    }
+
+    private func recognizeCached(key: String, provider: ProviderConfiguration, modelID: String, prompt: String,
+                                 loadImage: @escaping @Sendable () async throws -> ChatRequestImage) async throws -> String {
+        try Task.checkCancellation()
+        if let value = cache[key] { return value }
+        // FIFO admission also lets a duplicate queued request see the completed cache.
+        try await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        if let value = cache[key] { return value }
+        let epoch = cacheEpoch
+        let image = try await loadImage()
+        let output = try await recognizer(image, provider, modelID, prompt).trimmingCharacters(in: .whitespacesAndNewlines)
+        try Task.checkCancellation()
+        guard !output.isEmpty else { throw DocumentReadError.detail(ErrorLocalization.lookup("OCR 没有返回识别内容，请重试。")) }
+        guard output.count <= DocumentLimits.textCharacters else { throw DocumentReadError.limit("附件文字过长，请缩小页码范围或拆分文件。") }
+        if epoch == cacheEpoch {
+            cache[key] = output
+            order.append(key)
+            cachedBytes += output.utf8.count
+            while order.count > 48 || cachedBytes > 2 * 1024 * 1024 {
+                if let removed = cache.removeValue(forKey: order.removeFirst()) { cachedBytes -= removed.utf8.count }
+            }
+        }
+        return output
     }
 
     func clearCache() {
-        cache.removeAll()
-        cacheOrder.removeAll()
+        cacheEpoch &+= 1
+        cache.removeAll(); order.removeAll(); cachedBytes = 0
     }
 
-    private func recognize(
-        image: ChatRequestImage,
-        provider: ProviderConfiguration,
-        modelID: String,
-        prompt: String
-    ) async -> String? {
-        var result = ""
-        do {
-            for try await event in AIChatService.streamReply(
-                provider: provider,
-                modelID: modelID,
-                messages: [
-                    ChatRequestMessage(
-                        role: "user",
-                        content: "Process the attached image using the recognition instructions. Return the result without introductory remarks.",
-                        images: [image]
-                    )
-                ],
-                options: ChatRequestOptions(systemPrompt: prompt, temperature: 0)
-            ) {
-                if case .text(let chunk) = event {
-                    result += chunk
-                }
+    private func acquire() async throws {
+        try Task.checkCancellation()
+        if !busy { busy = true; return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append((id, continuation))
             }
-        } catch {
-            return nil
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, let index = self.waiters.firstIndex(where: { $0.0 == id }) else { return }
+                self.waiters.remove(at: index).1.resume(throwing: CancellationError())
+            }
         }
-        let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? nil : cleaned
+    }
+    private func release() {
+        if waiters.isEmpty { busy = false }
+        else { waiters.removeFirst().1.resume() }
     }
 
-    private func cachedText(for key: String) -> String? {
-        guard let value = cache[key] else { return nil }
-        cacheOrder.removeAll { $0 == key }
-        cacheOrder.append(key)
-        return value
-    }
-
-    private func cacheText(_ text: String, for key: String) {
-        cache[key] = text
-        cacheOrder.removeAll { $0 == key }
-        cacheOrder.append(key)
-        while cacheOrder.count > maxCacheEntries {
-            let oldest = cacheOrder.removeFirst()
-            cache.removeValue(forKey: oldest)
+    private nonisolated static func recognize(image: ChatRequestImage, provider: ProviderConfiguration, modelID: String, prompt: String) async throws -> String {
+        var result = ""
+        for try await event in AIChatService.streamReply(
+            provider: provider, modelID: modelID,
+            messages: [ChatRequestMessage(role: "user", content: "Process the attached image using the recognition instructions. Return the result without introductory remarks.", images: [image])],
+            options: ChatRequestOptions(systemPrompt: prompt, temperature: 0)
+        ) {
+            try Task.checkCancellation()
+            if case .text(let chunk) = event { result += chunk }
+            if result.utf8.count > DocumentLimits.textCharacters * 4 { throw DocumentReadError.limit("附件文字过长，请缩小页码范围或拆分文件。") }
         }
+        try Task.checkCancellation()
+        return result
     }
 }

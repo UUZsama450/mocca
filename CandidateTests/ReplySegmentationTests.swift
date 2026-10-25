@@ -198,7 +198,7 @@ import XCTest
         XCTAssertEqual(rows.last?.status, .failed)
         let wire = try await ChatRequestPreparation.messages(from: rows, assistant: secondAssistant,
             provider: model.providers[0], preferences: model.preferences, conversation: model.conversations[0],
-            assistants: model.assistants, ocrContext: nil)
+            assistants: model.assistants, ocrContext: nil, modelID: model.selectedModel?.modelID ?? "")
         XCTAssertEqual(wire.count, 2)
         XCTAssertTrue(wire[0].content.contains(completed.text))
         XCTAssertEqual(wire[1].content, failed.text)
@@ -216,7 +216,7 @@ import XCTest
         XCTAssertEqual(edited.replySegmentation?.segments(in: edited.text), ["修改后第一泡", "修改后第二泡\n\n余下正文"])
         let wire = try await ChatRequestPreparation.messages(from: [edited], assistant: model.currentAssistant,
             provider: model.providers[0], preferences: model.preferences, conversation: model.conversations[0],
-            assistants: model.assistants, ocrContext: nil)
+            assistants: model.assistants, ocrContext: nil, modelID: model.selectedModel?.modelID ?? "")
         XCTAssertEqual(wire.count, 1)
         XCTAssertEqual(wire.first?.content, edited.text)
         model.stopStreaming() // Finish the synthetic run, as the real stream Task does.
