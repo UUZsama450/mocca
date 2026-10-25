@@ -15,6 +15,10 @@
         AA2026102000000000000005 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = AA2026102000000000000006; };
 		BF6000000000000000000002 /* LargeFileConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF6000000000000000000001 /* LargeFileConfirmation.swift */; };
 		C51900000000000000000002 /* TextSelectionEdgeAutoscroll.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51900000000000000000001 /* TextSelectionEdgeAutoscroll.swift */; };
+		D0C202610250000000000201 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = D0C202610250000000000202; };
+		D0C202610250000000000103 /* DocumentAttachmentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C202610250000000000003 /* DocumentAttachmentViews.swift */; };
+		D0C202610250000000000102 /* DOCXDocumentReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C202610250000000000002 /* DOCXDocumentReader.swift */; };
+		D0C202610250000000000101 /* DocumentAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C202610250000000000001 /* DocumentAttachments.swift */; };
 		C51680000000000000000002 /* DraftEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51680000000000000000004 /* DraftEditing.swift */; };
 		C51680000000000000000001 /* UserProfileNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51680000000000000000003 /* UserProfileNotes.swift */; };
 		BC5091000000000000000001 /* BackgroundImageCropEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC5091000000000000000002 /* BackgroundImageCropEditor.swift */; };
@@ -118,6 +122,9 @@
         AA2026102000000000000004 /* MarkdownMathRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownMathRendering.swift; sourceTree = "<group>"; };
 		BF6000000000000000000001 /* LargeFileConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LargeFileConfirmation.swift; sourceTree = "<group>"; };
 		C51900000000000000000001 /* TextSelectionEdgeAutoscroll.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSelectionEdgeAutoscroll.swift; sourceTree = "<group>"; };
+		D0C202610250000000000003 /* DocumentAttachmentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentAttachmentViews.swift; sourceTree = "<group>"; };
+		D0C202610250000000000002 /* DOCXDocumentReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DOCXDocumentReader.swift; sourceTree = "<group>"; };
+		D0C202610250000000000001 /* DocumentAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentAttachments.swift; sourceTree = "<group>"; };
 		C51680000000000000000004 /* DraftEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftEditing.swift; sourceTree = "<group>"; };
 		C51680000000000000000003 /* UserProfileNotes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserProfileNotes.swift; sourceTree = "<group>"; };
 		BC5091000000000000000002 /* BackgroundImageCropEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundImageCropEditor.swift; sourceTree = "<group>"; };
@@ -196,6 +203,7 @@
 			files = (
 				C49950000000000000000201 /* Highlighter in Frameworks */,
                 AA2026102000000000000005 /* SwiftMath in Frameworks */,
+				D0C202610250000000000201 /* ZIPFoundation in Frameworks */,
 				0F470D14F2CFC89633A2875E /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -277,6 +285,9 @@
 				C48110000000000000000005 /* Sponsor.storekit */,
 				1A57A5D201B7C0DEA1140008 /* Attachments.swift */,
 				BF6000000000000000000001 /* LargeFileConfirmation.swift */,
+				D0C202610250000000000003 /* DocumentAttachmentViews.swift */,
+				D0C202610250000000000002 /* DOCXDocumentReader.swift */,
+				D0C202610250000000000001 /* DocumentAttachments.swift */,
 				1A57A5D201B7C0DEA114000A /* PromptInjection.swift */,
 				1A57A5D201B7C0DEA114000C /* PromptInjectionViews.swift */,
 				1A57A5D201B7C0DEA114000E /* QuickPhrases.swift */,
@@ -353,7 +364,7 @@
 				B10000000000000000000027 /* PBXTargetDependency */,
 			);
 			name = Mocca;
-			packageProductDependencies = (C49950000000000000000202 /* Highlighter */, AA2026102000000000000006 /* SwiftMath */,);
+			packageProductDependencies = (D0C202610250000000000202 /* ZIPFoundation */, C49950000000000000000202 /* Highlighter */, AA2026102000000000000006 /* SwiftMath */,);
 			productName = Mocca;
 			productReference = D9C529652339093513C3A838 /* Mocca.app */;
 			productType = "com.apple.product-type.application";
@@ -402,7 +413,7 @@
 			minimizedProjectReferenceProxies = 0;
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5F31A711B52BBBE44B69C7B7 /* Products */;
-			packageReferences = (C49950000000000000000203 /* XCRemoteSwiftPackageReference HighlighterSwift */, AA2026102000000000000007 /* SwiftMath */,);
+			packageReferences = (D0C202610250000000000203 /* ZIPFoundation */, C49950000000000000000203 /* XCRemoteSwiftPackageReference HighlighterSwift */, AA2026102000000000000007 /* SwiftMath */,);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -491,6 +502,9 @@
 				C48110000000000000000004 /* SponsorPage.swift in Sources */,
 				1A57A5D201B7C0DEA1140007 /* Attachments.swift in Sources */,
 				BF6000000000000000000002 /* LargeFileConfirmation.swift in Sources */,
+				D0C202610250000000000103 /* DocumentAttachmentViews.swift in Sources */,
+				D0C202610250000000000102 /* DOCXDocumentReader.swift in Sources */,
+				D0C202610250000000000101 /* DocumentAttachments.swift in Sources */,
 				1A57A5D201B7C0DEA1140009 /* PromptInjection.swift in Sources */,
 				1A57A5D201B7C0DEA114000B /* PromptInjectionViews.swift in Sources */,
 				1A57A5D201B7C0DEA114000D /* QuickPhrases.swift in Sources */,
@@ -554,6 +568,7 @@
             repositoryURL = "https://github.com/mgriebling/SwiftMath";
             requirement = {kind = exactVersion; version = 1.7.3;};
         };
+		D0C202610250000000000203 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/weichsel/ZIPFoundation"; requirement = {kind = exactVersion; version = 0.9.20;}; };
 		C49950000000000000000203 /* XCRemoteSwiftPackageReference HighlighterSwift */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/smittytone/HighlighterSwift";
@@ -566,6 +581,7 @@
             package = AA2026102000000000000007 /* SwiftMath */;
             productName = SwiftMath;
         };
+		D0C202610250000000000202 = {isa = XCSwiftPackageProductDependency; package = D0C202610250000000000203; productName = ZIPFoundation; };
 		C49950000000000000000202 /* Highlighter */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C49950000000000000000203 /* XCRemoteSwiftPackageReference HighlighterSwift */;
@@ -579,7 +595,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5248;
+				CURRENT_PROJECT_VERSION = 5253;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -589,7 +605,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -608,7 +624,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5248;
+				CURRENT_PROJECT_VERSION = 5253;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -618,7 +634,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -702,7 +718,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5248;
+				CURRENT_PROJECT_VERSION = 5253;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -710,7 +726,7 @@
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -786,7 +802,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5248;
+				CURRENT_PROJECT_VERSION = 5253;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -794,7 +810,7 @@
 				CODE_SIGN_ENTITLEMENTS = Mocca/Mocca.entitlements;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MOCCA_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.6">最新版本</a> · <a href="CHANGELOG.md">更新说明</a>
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.7">最新版本</a> · <a href="CHANGELOG.md">更新说明</a>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 - **选择自己的服务商和模型：** 配置 AI 服务，在对话中切换模型。
 - **有上下文的聊天：** 流式回复、助手、群聊，以及助手按标题或消息内容查找历史对话。
-- **不只有文字：** 图片和文件附件、支持模型的图片回复、OCR 与语音服务。
+- **不只有文字：** PDF 文字与页面图片、DOCX 正文与内嵌图片、可配置的 OCR、支持模型的图片回复及语音服务。详见[文档读取说明](docs/DOCUMENT_ATTACHMENTS.md)。
 - **按需使用工具：** 配置网页搜索与工具服务，扩展聊天能力。
 - **本地管理记录：** 聊天存储在设备上，支持备份、恢复及旧版备份的兼容导入。
 - **调整使用习惯：** 外观、字体、头像，以及中文和英文界面。
@@ -46,7 +46,7 @@ Mocca 不附带 API Key 或第三方服务额度。模型能力、服务可用�
 
 ## 下载说明
 
-[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)在支持的账号地区提供下载。GitHub 最新源码为 **1.0.6（5248）**，暂未附带新版 IPA。此前的 **1.0.5（5237）** IPA 预览包需要自行签名，步骤见[安装说明](docs/INSTALLATION.md)和[源码验证](docs/RELEASE_1.0.5_5237.md)。App Store 更新单独送审，通过后手动发布。
+[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)在支持的账号地区提供下载。GitHub 最新源码为 **1.0.7（5253）**，暂未附带新版 IPA。此前的 **1.0.5（5237）** IPA 预览包需要自行签名，步骤见[安装说明](docs/INSTALLATION.md)和[源码验证](docs/RELEASE_1.0.5_5237.md)。App Store 更新单独送审，通过后手动发布。
 
 
 ## 本地构建

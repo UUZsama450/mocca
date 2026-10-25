@@ -1,5 +1,27 @@
 # 更新记录 / Changelog
 
+## 1.0.7 (5253)
+
+源码发布，未附带新版 IPA；App Store 发布独立进行。
+
+- **PDF 与 Word**：读取 PDF 文字、扫描页与图表，以及 DOCX 正文、基础表格和内嵌图片。PDF 可选择页码范围或仅读取文字。
+- **OCR 路由**：开启 OCR 后先识别图片，再把文字交给聊天模型；关闭时按聊天模型的图片能力处理，并明确提示未读取的内容。识别失败可重试并复用已成功结果。
+- **按需处理**：后台解析、逐页渲染、有界缓存和取消支持。没有相关附件时不启动解析或 OCR。沿用普通长文本附件的完整读取行为。
+- **现有体验**：保留 5252 的输入框底部留白，以及近期的首条消息投影复用、文本选择与长按手势调整。
+
+旧版 DOC、Excel、PowerPoint 和 Word 复杂嵌入对象暂不支持，详见[文档读取说明](docs/DOCUMENT_ATTACHMENTS.md)。
+
+### English
+
+Source release; no new IPA is attached. App Store releases are handled separately.
+
+- Read PDF text, scanned pages and charts, plus DOCX paragraphs, basic tables and embedded images. Select PDF pages or text-only reading.
+- Route visuals through the configured OCR model, or directly to a compatible vision chat model when OCR is off. Report omissions and errors; retry failed OCR while reusing successful results.
+- Parse in the background and render on demand, with bounded caches and cancellation. No document parsing or OCR starts without relevant attachments. Ordinary text attachments retain their full-content behavior.
+- Preserve build 5252's composer clearance and recent first-message projection, text selection and long-press improvements.
+
+See [supported formats and limits](docs/DOCUMENT_ATTACHMENTS.md). Legacy DOC, Excel, PowerPoint and complex Word objects are not supported by this reader.
+
 ## 1.0.6 (5248)
 
 本次先发布源码更新，暂未附带新版 IPA。App Store 版本独立发布。

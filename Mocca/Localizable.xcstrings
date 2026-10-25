@@ -23334,6 +23334,584 @@
           }
         }
       }
+    },
+    "请选择不超过 100 页的范围。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择不超过 100 页的范围。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a range of no more than 100 pages."
+          }
+        }
+      }
+    },
+    "页码范围无效，请使用 1-5,8 这样的格式。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "页码范围无效，请使用 1-5,8 这样的格式。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid page range. Use a format such as 1-5,8."
+          }
+        }
+      }
+    },
+    "PDF 已加密，请先解锁后重新添加。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PDF 已加密，请先解锁后重新添加。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This PDF is locked. Unlock it before adding it again."
+          }
+        }
+      }
+    },
+    "无法读取文档，文件可能损坏或已被移除。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取文档，文件可能损坏或已被移除。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot read the document. It may be damaged or missing."
+          }
+        }
+      }
+    },
+    "没有可读取的文字。请开启 OCR 或选择支持图片的聊天模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可读取的文字。请开启 OCR 或选择支持图片的聊天模型。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No readable text. Enable OCR or select a chat model that accepts images."
+          }
+        }
+      }
+    },
+    "暂不支持此文档格式，请转换为 PDF、DOCX 或纯文本。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂不支持此文档格式，请转换为 PDF、DOCX 或纯文本。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This document format is not supported. Convert it to PDF, DOCX, or plain text."
+          }
+        }
+      }
+    },
+    "附件在读取期间发生变化，请重新发送。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "附件在读取期间发生变化，请重新发送。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The attachment changed while being read. Please send it again."
+          }
+        }
+      }
+    },
+    "文档超过 20 MB，请拆分后添加。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文档超过 20 MB，请拆分后添加。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The document exceeds 20 MB. Split it before adding it."
+          }
+        }
+      }
+    },
+    "附件文字过长，请缩小页码范围或拆分文件。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "附件文字过长，请缩小页码范围或拆分文件。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attachment text is too long. Select fewer pages or split the file."
+          }
+        }
+      }
+    },
+    "本次文档图片超过 20 页/张，请缩小范围或选择仅文字。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次文档图片超过 20 页/张，请缩小范围或选择仅文字。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This request exceeds 20 document pages/images. Select fewer pages or text only."
+          }
+        }
+      }
+    },
+    "本次图片内容过大，请缩小页码范围或减少附件。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次图片内容过大，请缩小页码范围或减少附件。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images in this request are too large. Select fewer pages or attachments."
+          }
+        }
+      }
+    },
+    "文档解压内容过大，请拆分后添加。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文档解压内容过大，请拆分后添加。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expanded document contents are too large. Split the file before adding it."
+          }
+        }
+      }
+    },
+    "OCR 没有返回识别内容，请重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OCR 没有返回识别内容，请重试。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OCR returned no recognized content. Please retry."
+          }
+        }
+      }
+    },
+    "OCR 配置不可用，请重新选择识别模型或关闭 OCR。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OCR 配置不可用，请重新选择识别模型或关闭 OCR。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OCR configuration is unavailable. Select an OCR model again or disable OCR."
+          }
+        }
+      }
+    },
+    "正在识别图片…": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在识别图片…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recognizing images…"
+          }
+        }
+      }
+    },
+    "正在读取 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在读取 %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading %@"
+          }
+        }
+      }
+    },
+    "正在读取 %@ · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在读取 %@ · %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading %@ · %@"
+          }
+        }
+      }
+    },
+    "文字已读取 · 图片/页面 %@/%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字已读取 · 图片/页面 %@/%@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text read · images/pages %@/%@"
+          }
+        }
+      }
+    },
+    "设置文档读取范围": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置文档读取范围"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set the document reading range"
+          }
+        }
+      }
+    },
+    "仅提取文字": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅提取文字"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extract text only"
+          }
+        }
+      }
+    },
+    "开启 OCR 时，页面与图片由所选 OCR 模型识别；关闭时交给支持图片的聊天模型。纯文本模型只读取正文。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启 OCR 时，页面与图片由所选 OCR 模型识别；关闭时交给支持图片的聊天模型。纯文本模型只读取正文。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "With OCR enabled, pages and images go to the selected OCR model. Otherwise they go to an image-capable chat model. Text-only models receive document text only."
+          }
+        }
+      }
+    },
+    "PDF 页码范围": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PDF 页码范围"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PDF page range"
+          }
+        }
+      }
+    },
+    "全部页，或填写 1-5,8": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部页，或填写 1-5,8"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All pages, or enter 1-5,8"
+          }
+        }
+      }
+    },
+    "共 %@ 页": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共 %@ 页"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ pages total"
+          }
+        }
+      }
+    },
+    "每次最多读取 100 页文字、20 页/张图片。较长文档请选择范围或仅文字。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每次最多读取 100 页文字、20 页/张图片。较长文档请选择范围或仅文字。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to 100 text pages and 20 pages/images per request. For longer documents, select a range or text only."
+          }
+        }
+      }
+    },
+    "本次运行中的最近读取": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次运行中的最近读取"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Latest reading in this app session"
+          }
+        }
+      }
+    },
+    "保存设置不会自动发送。读取失败后可在消息菜单中重新生成，已成功的 OCR 结果会在本次运行中复用。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存设置不会自动发送。读取失败后，可从消息菜单重新发送或重新生成；已成功的 OCR 结果会在本次运行中复用。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saving does not send a request. After a reading failure, resend or regenerate from the message menu. Successful OCR results can be reused during this app session."
+          }
+        }
+      }
+    },
+    "当前无法修改附件，请停止生成后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前无法修改附件，请停止生成后重试。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot change this attachment now. Stop generation and try again."
+          }
+        }
+      }
+    },
+    "文档读取": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文档读取"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Document reading"
+          }
+        }
+      }
+    },
+    "发送图片和文档页面时，先由所选 OCR 服务商识别文字与画面，再把结果交给当前聊天模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送图片和文档页面时，先由所选 OCR 服务商识别文字与画面，再把结果交给当前聊天模型。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images and document pages are sent to the selected OCR provider first. Recognized text and visual descriptions then go to the current chat model."
+          }
+        }
+      }
+    },
+    "当前聊天模型不支持图片，请启用 OCR 或选择支持图片的模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前聊天模型不支持图片，请启用 OCR 或选择支持图片的模型。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The chat model cannot accept images. Enable OCR or choose an image-capable model."
+          }
+        }
+      }
+    },
+    "文字层：%@ · 图片/页面 %@/%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字层：%@ · 图片/页面 %@/%@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text layer: %@ · images/pages %@/%@"
+          }
+        }
+      }
+    },
+    "已读取": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已读取"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "read"
+          }
+        }
+      }
+    },
+    "无文字层": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无文字层"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "none"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

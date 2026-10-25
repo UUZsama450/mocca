@@ -3071,6 +3071,24 @@ private enum InlineCodeReadingStyle {
     }
 }
 
+/// Keep fullwidth parentheses at their nominal width in system-font prose.
+/// Explicit zero kerning prevents the UI fallback font from tightening these
+/// glyphs; the stored string, other glyphs and custom fonts remain unchanged.
+@MainActor
+private enum FullwidthParenthesisTypography {
+    static func apply(to text: NSMutableAttributedString, fontName: String?) {
+        guard fontName?.isEmpty ?? true else { return }
+        let source = text.string as NSString
+        for index in 0..<source.length {
+            let character = source.character(at: index)
+            guard character == 0xFF08 || character == 0xFF09,
+                  text.attribute(.moccaInlineCode, at: index, effectiveRange: nil) == nil,
+                  text.attribute(.kern, at: index, effectiveRange: nil) == nil else { continue }
+            text.addAttribute(.kern, value: 0, range: NSRange(location: index, length: 1))
+        }
+    }
+}
+
 @MainActor
 private enum UnifiedSelectableProseBuilder {
     private static let horizontalRuleLightImage = solidImage(
@@ -3100,6 +3118,7 @@ private enum UnifiedSelectableProseBuilder {
             value: paragraphStyle(lineSpacing: lineSpacing, paragraphSpacing: 0),
             range: NSRange(location: 0, length: result.length)
         )
+        FullwidthParenthesisTypography.apply(to: result, fontName: fontName)
         return result
     }
 
@@ -3541,6 +3560,7 @@ private enum UnifiedSelectableProseBuilder {
             to: rendered,
             range: fullRange
         )
+        FullwidthParenthesisTypography.apply(to: rendered, fontName: fontName)
         MarkdownMathRendering.replaceTokens(math.tokens, in: rendered,
                                             fontSize: baseFont.pointSize, color: textColor)
         return rendered

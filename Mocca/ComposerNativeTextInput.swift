@@ -139,14 +139,21 @@ struct ComposerHeightPresentation: Equatable {
     let targetInputHeight: CGFloat
     let targetShellHeight: CGFloat
     var presentedShellHeight: CGFloat? = nil
+    var additionalMessageClearance: CGFloat = 0
 
     var shellHeight: CGFloat { presentedShellHeight ?? (targetShellHeight + inputHeight - targetInputHeight) }
-    var bottomClearance: CGFloat { Self.bottomClearance(for: shellHeight) }
+    var bottomClearance: CGFloat {
+        Self.bottomClearance(for: shellHeight, additionalMessageClearance: additionalMessageClearance)
+    }
+    // Extra visual space must not increase the existing streaming motion lag.
+    var bottomFollowClearance: CGFloat { max(0, Self.bottomClearance(for: shellHeight) - shellHeight) }
     var isAnimating: Bool {
         abs(inputHeight - targetInputHeight) > 0.01 || abs(shellHeight - targetShellHeight) > 0.01
     }
 
-    static func bottomClearance(for shellHeight: CGFloat) -> CGFloat { max(110, shellHeight + 12) }
+    static func bottomClearance(for shellHeight: CGFloat, additionalMessageClearance: CGFloat = 0) -> CGFloat {
+        max(110, shellHeight + 12) + additionalMessageClearance
+    }
 }
 
 private struct ComposerHeightPresentationKey: EnvironmentKey {
@@ -168,12 +175,15 @@ struct ComposerHeightAnimation: AnimatableModifier {
     nonisolated var shellBaseHeight: CGFloat
     let targetInputHeight: CGFloat
     let targetShellHeight: CGFloat
+    let additionalMessageClearance: CGFloat
 
-    init(identity: ComposerInputIdentity?, inputHeight: CGFloat, targetInputHeight: CGFloat, targetShellHeight: CGFloat) {
+    init(identity: ComposerInputIdentity?, inputHeight: CGFloat, targetInputHeight: CGFloat, targetShellHeight: CGFloat,
+         additionalMessageClearance: CGFloat = 0) {
         self.identity = identity
         self.inputHeight = inputHeight
         self.targetInputHeight = targetInputHeight
         self.targetShellHeight = targetShellHeight
+        self.additionalMessageClearance = additionalMessageClearance
         // Typing changes the input component only. Expanding the group controls
         // changes the remaining shell height, using its own existing transaction.
         shellBaseHeight = targetShellHeight - targetInputHeight
@@ -189,7 +199,8 @@ struct ComposerHeightAnimation: AnimatableModifier {
             .environment(\.composerHeightPresentation, identity.map {
                 ComposerHeightPresentation(identity: $0, inputHeight: inputHeight,
                     targetInputHeight: targetInputHeight, targetShellHeight: targetShellHeight,
-                    presentedShellHeight: shellBaseHeight + inputHeight)
+                    presentedShellHeight: shellBaseHeight + inputHeight,
+                    additionalMessageClearance: additionalMessageClearance)
             })
             .transaction { transaction in
                 if transaction.composerInputHeightChange != nil {

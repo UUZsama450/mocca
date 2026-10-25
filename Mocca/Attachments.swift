@@ -548,6 +548,10 @@ struct PendingAttachmentsStrip: View {
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(L10n.lookup("预览图片"))
                                 .accessibilityValue(attachment.fileName ?? L10n.lookup("图片"))
+                            } else if let attachment = item.attachment, DocumentAttachmentReader.supports(attachment) {
+                                DocumentAttachmentButton(attachment: attachment) {
+                                    AttachmentThumbnail(attachment: attachment, size: 58)
+                                }
                             } else if let attachment = item.attachment {
                                 AttachmentThumbnail(attachment: attachment, size: 58)
                             } else {
@@ -634,6 +638,7 @@ struct AttachmentThumbnail: View {
 /// 消息气泡里的附件展示。
 struct MessageAttachmentsView: View {
     let attachments: [MessageAttachment]
+    let sourceMessageID: UUID?
     let alignment: HorizontalAlignment
     private let collapsesImages: Bool
     private let collapsedImagesAreExcludedFromHistory: Bool
@@ -646,6 +651,7 @@ struct MessageAttachmentsView: View {
 
     init(
         attachments: [MessageAttachment],
+        sourceMessageID: UUID? = nil,
         alignment: HorizontalAlignment = .trailing,
         collapsesImages: Bool = false,
         collapsedImagesAreExcludedFromHistory: Bool = false,
@@ -653,6 +659,7 @@ struct MessageAttachmentsView: View {
         imagesExpanded: Binding<Bool> = .constant(true)
     ) {
         self.attachments = attachments
+        self.sourceMessageID = sourceMessageID
         self.alignment = alignment
         self.collapsesImages = collapsesImages
         self.collapsedImagesAreExcludedFromHistory = collapsedImagesAreExcludedFromHistory
@@ -845,17 +852,11 @@ struct MessageAttachmentsView: View {
                 }
             }
             ForEach(files) { attachment in
-                HStack(spacing: 7) {
-                    Image(systemName: "doc.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.accentColor)
-                    Text(attachment.fileName ?? L10n.lookup("文件"))
-                        .font(.system(size: 13))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 11)
-                .frame(height: 34)
-                .background(Capsule().fill(Color.primary.opacity(0.05)))
+                if DocumentAttachmentReader.supports(attachment), let sourceMessageID {
+                    DocumentAttachmentButton(attachment: attachment, messageID: sourceMessageID) {
+                        fileLabel(attachment)
+                    }
+                } else { fileLabel(attachment) }
             }
         }
         .fullScreenCover(item: $imagePreview) { presentation in
@@ -869,6 +870,16 @@ struct MessageAttachmentsView: View {
             guard collapsesImages, oldIDs != newIDs else { return }
             imagesExpanded = false
         }
+    }
+
+    private func fileLabel(_ attachment: MessageAttachment) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "doc.fill").font(.system(size: 14)).foregroundStyle(Color.accentColor)
+            Text(attachment.fileName ?? L10n.lookup("文件")).font(.system(size: 13)).lineLimit(1)
+            if DocumentOptions(metadata: attachment.metadata).textOnly { Image(systemName: "text.alignleft").font(.caption2) }
+        }
+        .padding(.horizontal, 11).frame(height: 34)
+        .background(Capsule().fill(Color.primary.opacity(0.05)))
     }
 
     private func messageImageThumbnail(

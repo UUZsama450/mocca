@@ -201,6 +201,30 @@ private struct SelectedMessageProjectionCache {
     let selectedRawIndices: [Int]
     let projection: [SelectedMessageProjection]
 
+    // Only the canonical single-append operation may use this path. Its
+    // revision proves the cached prefix still describes the exact old array;
+    // edits, imports and appends to an existing reply group use normal rebuilds.
+    func appendingIndependentMessage(
+        _ message: ChatMessage,
+        previousRevision: UInt64,
+        previousCount: Int,
+        revision: UInt64
+    ) -> Self? {
+        guard messageRevision == previousRevision,
+              rawStructure.count == previousCount else { return nil }
+        let groupKey = message.versionGroupKey
+        guard !projection.contains(where: { $0.groupKey == groupKey }) else { return nil }
+        return Self(
+            conversationID: conversationID, messageRevision: revision,
+            versionSelections: versionSelections,
+            rawStructure: rawStructure + [RawStructure(message)],
+            selectedRawIndices: selectedRawIndices + [previousCount],
+            projection: projection + [SelectedMessageProjection(
+                groupKey: groupKey, message: message, firstRawIndex: previousCount
+            )]
+        )
+    }
+
     func refreshingContent(from messages: [ChatMessage], revision: UInt64) -> Self? {
         guard rawStructure.count == messages.count,
               zip(rawStructure, messages).allSatisfy({ $0.matches($1) }) else { return nil }
@@ -859,6 +883,8 @@ final class AppModel {
     @ObservationIgnored private var automaticTitleGenerationConversationIDs = Set<UUID>()
     @ObservationIgnored private var streamDidPublishFirstVisibleTextMessageIDs = Set<UUID>()
     @ObservationIgnored private var streamingTasksByConversation: [UUID: Task<Void, Never>] = [:]
+    var documentReadingProgress: [UUID: String] = [:]
+    var documentReadingReports: [UUID: String] = [:]
     @ObservationIgnored private var streamingRunIDsByConversation: [UUID: UUID] = [:]
     @ObservationIgnored private var pendingImageRequestsByMessageID: [UUID: [ExternalImageGenerationRequest]] = [:]
     @ObservationIgnored private var searchImageCandidatesByMessageID: [UUID: [SearchImageCandidate]] = [:]
@@ -1943,18 +1969,22 @@ final class AppModel {
         to conversationID: UUID,
         afterMessageID: UUID? = nil
     ) {
-        let previousMessages = conversationMessageStore[conversationID] ?? []
-        let previousSelectedMessages = selectedMessages(for: conversationID)
+        let previousEntry = conversationMessageStore.versionedMessages(for: conversationID)
+        let previousMessages = previousEntry.messages ?? []
+        // Reuse the projection directly; window/count lookup need not copy
+        // every historical message before and after the append.
+        let previousSelectedProjection = selectedMessageProjection(for: conversationID)
         let previousWindow = messageWindow(
             for: conversationID,
-            messages: previousSelectedMessages
+            projection: previousSelectedProjection
         )
+        let cachedProjection = selectedMessageProjectionCache
         var updatedMessages = previousMessages
         let insertionLogicalIndex = afterMessageID.flatMap { id in
-            previousSelectedMessages.firstIndex(where: { $0.id == id }).map { $0 + 1 }
+            previousSelectedProjection.firstIndex(where: { $0.message.id == id }).map { $0 + 1 }
         }
         if let insertionLogicalIndex {
-            let groupKey = previousSelectedMessages[insertionLogicalIndex - 1].versionGroupKey
+            let groupKey = previousSelectedProjection[insertionLogicalIndex - 1].groupKey
             let insertionIndex = previousMessages.firstIndex(where: { $0.versionGroupKey == groupKey })! + 1
             updatedMessages.insert(message, at: insertionIndex)
             if let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }),
@@ -1965,8 +1995,20 @@ final class AppModel {
             updatedMessages.append(message)
         }
         conversationMessageStore[conversationID] = updatedMessages
-        let updatedSelectedMessages = selectedMessages(for: conversationID)
-        let logicalGrowth = max(0, updatedSelectedMessages.count - previousSelectedMessages.count)
+        // Historical insertion changes the prefix and must rebuild normally.
+        if insertionLogicalIndex == nil, let cachedProjection,
+           cachedProjection.conversationID == conversationID,
+           cachedProjection.versionSelections == (conversation(for: conversationID)?.versionSelections ?? [:]),
+           let appended = cachedProjection.appendingIndependentMessage(
+                message,
+                previousRevision: previousEntry.revision,
+                previousCount: previousMessages.count,
+                revision: conversationMessageStore.revision(for: conversationID)
+           ) {
+            selectedMessageProjectionCache = appended
+        }
+        let updatedSelectedProjection = selectedMessageProjection(for: conversationID)
+        let logicalGrowth = max(0, updatedSelectedProjection.count - previousSelectedProjection.count)
 
         // A regenerated answer is appended in raw storage but replaces one
         // logical row. Keep the current historical window anchored on that row
@@ -1990,10 +2032,10 @@ final class AppModel {
                 startIndex: start,
                 count: count
             )
-        } else if previousWindow.endIndex == previousSelectedMessages.count {
+        } else if previousWindow.endIndex == previousSelectedProjection.count {
             let nextCount = min(Self.messageWindowLoadedMax, previousWindow.count + logicalGrowth)
             messageWindowsByConversation[conversationID] = MessageWindowState(
-                startIndex: updatedSelectedMessages.count - nextCount,
+                startIndex: updatedSelectedProjection.count - nextCount,
                 count: nextCount
             )
         } else {
@@ -7384,6 +7426,28 @@ final class AppModel {
         return attachment
     }
 
+    @discardableResult
+    func updateDocumentOptions(_ options: DocumentOptions, attachmentID: UUID, messageID: UUID?, conversationID: UUID?) -> Bool {
+        if let messageID {
+            guard let location = messageLocation(for: messageID), !isConversationStreaming(location.conversationID),
+                  var rows = conversationMessageStore[location.conversationID], rows.indices.contains(location.index),
+                  let index = rows[location.index].attachments.firstIndex(where: { $0.id == attachmentID }) else { return false }
+            let previous = rows
+            rows[location.index].attachments[index].metadata = options.applying(to: rows[location.index].attachments[index].metadata)
+            rows[location.index].updatedAt = .now
+            conversationMessageStore[location.conversationID] = rows
+            guard saveImmediately() else { conversationMessageStore[location.conversationID] = previous; return false }
+        } else {
+            guard let conversationID, conversations.contains(where: { $0.id == conversationID }) else { return false }
+            var attachments = composerPendingAttachments(for: conversationID)
+            guard let index = attachments.firstIndex(where: { $0.id == attachmentID }) else { return false }
+            attachments[index].metadata = options.applying(to: attachments[index].metadata)
+            setComposerPendingAttachments(attachments, for: conversationID)
+        }
+        documentReadingReports.removeValue(forKey: attachmentID)
+        return true
+    }
+
     func removePendingAttachment(_ id: UUID) {
         let removedAttachment = pendingAttachments.first(where: { $0.id == id })
         updateComposerPacket(for: selectedConversationID) {
@@ -8645,6 +8709,7 @@ final class AppModel {
         if assistant.limitContextMessages && contextMessages.count > assistant.contextMessageSize {
             contextMessages = Array(contextMessages.suffix(assistant.contextMessageSize))
         }
+        defer { if documentReadingProgress[assistantMessage.id] != nil { documentReadingProgress.removeValue(forKey: assistantMessage.id) } }
         let ocrContext: (provider: ProviderConfiguration, modelID: String)? = {
             guard preferences.ocrEnabled,
                   let providerID = preferences.ocrProviderID,
@@ -8661,6 +8726,7 @@ final class AppModel {
             return (provider, modelID)
         }()
 
+        let attachmentSourceVersions = contextMessages.filter { !$0.attachments.isEmpty }.map { ($0.id, $0.updatedAt) }
         var wireMessages = try await ChatRequestPreparation.messages(
             from: contextMessages,
             assistant: assistant,
@@ -8668,8 +8734,25 @@ final class AppModel {
             preferences: preferences,
             conversation: conversation,
             assistants: assistants,
-            ocrContext: ocrContext
+            ocrContext: ocrContext,
+            modelID: selection.modelID,
+            progress: { self.documentReadingProgress[assistantMessage.id] = $0 },
+            report: { id, summary in
+                if self.documentReadingReports.count >= 128 { self.documentReadingReports.removeAll(keepingCapacity: true) }
+                self.documentReadingReports[id] = summary
+            }
         )
+        if !attachmentSourceVersions.isEmpty {
+            try Task.checkCancellation()
+            guard activeStreamingMessageIDsByConversation[conversationID] == assistantMessage.id else { throw CancellationError() }
+            var expected = Dictionary(uniqueKeysWithValues: attachmentSourceVersions)
+            for row in conversationMessageStore[conversationID, default: []].reversed() {
+                if expected.isEmpty { break }
+                if let version = expected.removeValue(forKey: row.id), row.updatedAt != version { throw CancellationError() }
+            }
+            guard expected.isEmpty else { throw CancellationError() }
+        }
+        if documentReadingProgress[assistantMessage.id] != nil { documentReadingProgress.removeValue(forKey: assistantMessage.id) }
         try Task.checkCancellation()
 
         let groupConversation = conversation.flatMap {

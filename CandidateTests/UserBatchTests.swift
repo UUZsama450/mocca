@@ -268,7 +268,7 @@ import XCTest
         enqueue("not yet submitted", model, chat)
         let wire = try await ChatRequestPreparation.messages(from: model.messagesByConversation[chat]!, assistant: model.currentAssistant,
             provider: model.providers[0], preferences: model.preferences, conversation: model.conversations[0],
-            assistants: model.assistants, ocrContext: nil)
+            assistants: model.assistants, ocrContext: nil, modelID: model.selectedModel?.modelID ?? "")
         XCTAssertTrue(wire.isEmpty)
     }
 
@@ -286,9 +286,10 @@ import XCTest
         model.preferences.resendHistoricalImages = false
         for type: ProviderType in [.openAI, .claude, .google] {
             var provider = model.providers[0]; provider.type = type
+            provider.models = [ModelConfiguration(id: "batch-vision", capabilityOverride: ModelCapabilities(input: [.text, .image]))]
             let wire = try await ChatRequestPreparation.messages(from: rows, assistant: model.currentAssistant,
                 provider: provider, preferences: model.preferences, conversation: model.conversations[0],
-                assistants: model.assistants, ocrContext: nil)
+                assistants: model.assistants, ocrContext: nil, modelID: "batch-vision")
             XCTAssertTrue(wire[0].images.isEmpty)
             XCTAssertEqual(wire[2].images.first?.base64Data, bytes.base64EncodedString())
             XCTAssertTrue(wire[3].images.isEmpty)
