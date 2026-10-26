@@ -3,16 +3,12 @@ import ZIPFoundation
 
 /// Reads only the parts needed for a chat request, never unpacks to disk.
 enum DOCXDocumentReader {
-    private static let entryLimit = 16 * 1024 * 1024
-    private static let expandedLimit = 64 * 1024 * 1024
-
     static func read(url: URL) throws -> [ReadDocument.Block] {
         let archive = try Archive(url: url, accessMode: .read)
-        var expanded = 0
-        let body = try entry("word/document.xml", archive: archive, expanded: &expanded)
+        let body = try entry("word/document.xml", archive: archive)
         var relationships: [String: String] = [:]
         if archive["word/_rels/document.xml.rels"] != nil {
-            let data = try entry("word/_rels/document.xml.rels", archive: archive, expanded: &expanded)
+            let data = try entry("word/_rels/document.xml.rels", archive: archive)
             let delegate = Relationships()
             try parse(data, delegate: delegate)
             relationships = delegate.images
@@ -21,15 +17,6 @@ enum DOCXDocumentReader {
         try parse(body, delegate: delegate)
         delegate.flush()
         var blocks = delegate.blocks
-        // Account for distinct referenced image entries before any decompression.
-        var paths = Set<String>()
-        for block in blocks {
-            if case .visual(let visual) = block, case .docx(let path) = visual.source, paths.insert(path).inserted {
-                guard let item = archive[path], item.type == .file, item.uncompressedSize <= entryLimit else { throw DocumentReadError.unreadable }
-                expanded += Int(item.uncompressedSize)
-                guard expanded <= expandedLimit else { throw DocumentReadError.limit("文档解压内容过大，请拆分后添加。") }
-            }
-        }
         if archive.contains(where: { $0.path.hasPrefix("word/header") || $0.path.hasPrefix("word/footer") || $0.path == "word/footnotes.xml" || $0.path == "word/endnotes.xml" }) {
             blocks.append(.text("[Reading scope: headers, footers, footnotes and endnotes are not included in this version.]"))
         }
@@ -38,22 +25,18 @@ enum DOCXDocumentReader {
 
     static func image(path: String, url: URL) throws -> Data {
         let archive = try Archive(url: url, accessMode: .read)
-        var expanded = 0
-        return try entry(path, archive: archive, expanded: &expanded)
+        return try entry(path, archive: archive)
     }
 
-    private static func entry(_ path: String, archive: Archive, expanded: inout Int) throws -> Data {
+    private static func entry(_ path: String, archive: Archive) throws -> Data {
         try Task.checkCancellation()
         guard let entry = archive[path], entry.type == .file else { throw DocumentReadError.unreadable }
-        guard entry.uncompressedSize <= entryLimit else { throw DocumentReadError.limit("文档解压内容过大，请拆分后添加。") }
         var data = Data()
         let checksum = try archive.extract(entry, bufferSize: 64 * 1024) { chunk in
             try Task.checkCancellation()
-            guard data.count + chunk.count <= entryLimit else { throw DocumentReadError.limit("文档解压内容过大，请拆分后添加。") }
             data.append(chunk)
         }
-        expanded += data.count
-        guard expanded <= expandedLimit, checksum == entry.checksum else { throw DocumentReadError.unreadable }
+        guard checksum == entry.checksum else { throw DocumentReadError.unreadable }
         return data
     }
 
@@ -67,7 +50,7 @@ enum DOCXDocumentReader {
         parser.delegate = delegate
         guard parser.parse() else {
             try Task.checkCancellation()
-            throw (delegate as? Body)?.failure ?? DocumentReadError.unreadable
+            throw DocumentReadError.unreadable
         }
     }
 
@@ -92,9 +75,7 @@ enum DOCXDocumentReader {
         var inText = false
         var deletedDepth = 0
         var fallbackDepth = 0
-        var characters = 0
         var imageNumber = 0
-        var failure: DocumentReadError?
         init(relationships: [String: String]) { self.relationships = relationships }
 
         func flush() {
@@ -103,12 +84,7 @@ enum DOCXDocumentReader {
             buffer = ""
         }
         func append(_ text: String, parser: XMLParser) {
-            characters += text.count
-            guard characters <= DocumentLimits.textCharacters else {
-                failure = .limit("附件文字过长，请缩小页码范围或拆分文件。")
-                parser.abortParsing()
-                return
-            }
+            if Task.isCancelled { parser.abortParsing(); return }
             buffer += text
         }
         func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName qName: String?, attributes: [String: String]) {
@@ -125,7 +101,6 @@ enum DOCXDocumentReader {
             case "blip", "imagedata":
                 flush()
                 imageNumber += 1
-                guard imageNumber <= 1000 else { failure = .limit("本次文档图片超过 20 页/张，请缩小范围或选择仅文字。"); parser.abortParsing(); return }
                 let id = attributes.first { $0.key == "embed" || $0.key.hasSuffix(":embed") || (name == "imagedata" && $0.key.hasSuffix(":id")) }?.value
                 if let id, let path = relationships[id], ["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "heic", "webp"].contains((path as NSString).pathExtension.lowercased()) {
                     blocks.append(.visual(DocumentVisual(label: "Image \(imageNumber)", source: .docx(path))))

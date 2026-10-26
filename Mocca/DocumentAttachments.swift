@@ -5,14 +5,9 @@ import ImageIO
 import UniformTypeIdentifiers
 import ZIPFoundation
 
-/// A request boundary, not a background monitor. No parsing runs on MainActor.
-enum DocumentLimits {
-    static let fileBytes = 20 * 1024 * 1024
-    static let textCharacters = 60_000
-    static let pages = 100
-    static let visuals = 20
-    static let imageBytes = 24 * 1024 * 1024
-    static let renderDimension = 2048
+/// Rendering resource policy only; no document-size or page-count rejection.
+enum DocumentRendering {
+    static let dimension = 2048
 }
 
 struct DocumentOptions: Sendable, Equatable {
@@ -31,17 +26,14 @@ struct DocumentOptions: Sendable, Equatable {
     func indices(total: Int) throws -> [Int] {
         let input = pages.trimmingCharacters(in: .whitespacesAndNewlines)
         if input.isEmpty {
-            guard total <= DocumentLimits.pages else { throw DocumentReadError.limit("请选择不超过 100 页的范围。") }
             return Array(0..<total)
         }
         var result = Set<Int>()
         for part in input.split(separator: ",", omittingEmptySubsequences: false) {
             let bounds = part.trimmingCharacters(in: .whitespaces).split(separator: "-", omittingEmptySubsequences: false)
             guard (1...2).contains(bounds.count), let start = Int(bounds[0]),
-                  let end = Int(bounds.last!), start >= 1, end >= start, end <= total,
-                  end - start < DocumentLimits.pages else { throw DocumentReadError.invalidPages }
+                  let end = Int(bounds.last!), start >= 1, end >= start, end <= total else { throw DocumentReadError.invalidPages }
             result.formUnion((start...end).map { $0 - 1 })
-            guard result.count <= DocumentLimits.pages else { throw DocumentReadError.invalidPages }
         }
         guard !result.isEmpty else { throw DocumentReadError.invalidPages }
         return result.sorted()
@@ -50,7 +42,7 @@ struct DocumentOptions: Sendable, Equatable {
 
 enum DocumentReadError: LocalizedError {
     case invalidPages, locked, unreadable, noText, unsupported, changed
-    case limit(String), detail(String)
+    case detail(String)
     var errorDescription: String? {
         switch self {
         case .invalidPages: ErrorLocalization.lookup("页码范围无效，请使用 1-5,8 这样的格式。")
@@ -59,7 +51,6 @@ enum DocumentReadError: LocalizedError {
         case .noText: ErrorLocalization.lookup("没有可读取的文字。请开启 OCR 或选择支持图片的聊天模型。")
         case .unsupported: ErrorLocalization.lookup("暂不支持此文档格式，请转换为 PDF、DOCX 或纯文本。")
         case .changed: ErrorLocalization.lookup("附件在读取期间发生变化，请重新发送。")
-        case .limit(let key): ErrorLocalization.lookup(key)
         case .detail(let detail): detail
         }
     }
@@ -147,7 +138,6 @@ actor DocumentAttachmentReader {
         let values = try FileManager.default.attributesOfItem(atPath: url.path)
         guard values[.type] as? FileAttributeType == .typeRegular,
               let size = (values[.size] as? NSNumber)?.intValue else { throw DocumentReadError.unreadable }
-        guard size <= DocumentLimits.fileBytes else { throw DocumentReadError.limit("文档超过 20 MB，请拆分后添加。") }
         return "\(url.path)|\(size)|\((values[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)|\(values[.systemFileNumber] ?? 0)"
     }
 
@@ -185,7 +175,6 @@ actor DocumentAttachmentReader {
                 guard let page = pdf.page(at: index) else { throw DocumentReadError.unreadable }
                 let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 characterCount += text.count
-                guard characterCount <= DocumentLimits.textCharacters else { throw DocumentReadError.limit("附件文字过长，请缩小页码范围或拆分文件。") }
                 result.append(.text("[Page \(index + 1)]\n\(text)"))
                 result.append(.visual(DocumentVisual(label: "Page \(index + 1)", source: .pdf(index))))
             }
@@ -200,9 +189,19 @@ actor DocumentAttachmentReader {
         }
         guard try stamp(url) == version else { throw DocumentReadError.changed }
         let document = ReadDocument(url: url, stamp: version, fingerprint: fingerprint, name: name, blocks: blocks, summary: summary, hasText: hasText)
-        cache[key] = document
-        order.append(key)
-        while order.count > 4 { cache.removeValue(forKey: order.removeFirst()) }
+        // Large documents are still returned in full; only retained cache size
+        // is bounded so completed requests do not pin several large documents.
+        let cacheCost = blocks.reduce(0) { total, block in
+            switch block {
+            case .text(let text): return total + text.utf8.count
+            case .visual(let visual): return total + visual.label.utf8.count + 128
+            }
+        }
+        if cacheCost <= 2 * 1024 * 1024 {
+            cache[key] = document
+            order.append(key)
+            while order.count > 4 { cache.removeValue(forKey: order.removeFirst()) }
+        }
         return document
     }
 
@@ -222,7 +221,7 @@ actor DocumentAttachmentReader {
                 let width = rotated ? box.height : box.width
                 let height = rotated ? box.width : box.height
                 guard width.isFinite, height.isFinite, width > 0, height > 0 else { throw DocumentReadError.unreadable }
-                let scale = min(CGFloat(DocumentLimits.renderDimension) / max(width, height), 3)
+                let scale = min(CGFloat(DocumentRendering.dimension) / max(width, height), 3)
                 let w = max(1, Int(width * scale)), h = max(1, Int(height * scale))
                 guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
@@ -242,7 +241,7 @@ actor DocumentAttachmentReader {
                       let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                         kCGImageSourceCreateThumbnailFromImageAlways: true,
                         kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: DocumentLimits.renderDimension
+                        kCGImageSourceThumbnailMaxPixelSize: DocumentRendering.dimension
                       ] as CFDictionary) else { throw DocumentReadError.unreadable }
                 return try Self.jpeg(image)
             }
@@ -260,25 +259,6 @@ actor DocumentAttachmentReader {
     }
 }
 
-/// Per-request counters. Enforced before network calls; no repeated history scans.
-struct AttachmentRequestBudget {
-    private(set) var characters = 0
-    private(set) var visuals = 0
-    private(set) var imageBytes = 0
-    mutating func addText(_ text: String) throws {
-        characters += text.count
-        guard characters <= DocumentLimits.textCharacters else { throw DocumentReadError.limit("附件文字过长，请缩小页码范围或拆分文件。") }
-    }
-    mutating func addVisuals(_ count: Int) throws {
-        visuals += count
-        guard visuals <= DocumentLimits.visuals else { throw DocumentReadError.limit("本次文档图片超过 20 页/张，请缩小范围或选择仅文字。") }
-    }
-    mutating func addImage(_ image: ChatRequestImage) throws {
-        imageBytes += image.base64Data.utf8.count
-        guard imageBytes <= DocumentLimits.imageBytes else { throw DocumentReadError.limit("本次图片内容过大，请缩小页码范围或减少附件。") }
-    }
-}
-
 struct PreparedDocumentContent: Sendable {
     let text: String
     let images: [ChatRequestImage]
@@ -290,7 +270,6 @@ enum DocumentAttachmentPreparer {
     static func prepare(
         _ document: ReadDocument, visualIndices: Set<Int>, requireReadable: Bool,
         ocr: (provider: ProviderConfiguration, modelID: String, prompt: String)?,
-        budget: inout AttachmentRequestBudget,
         progress: (String) -> Void
     ) async throws -> PreparedDocumentContent {
         guard !requireReadable || document.hasText || !visualIndices.isEmpty else { throw DocumentReadError.noText }
@@ -301,7 +280,6 @@ enum DocumentAttachmentPreparer {
             try Task.checkCancellation()
             switch block {
             case .text(let text):
-                try budget.addText(text)
                 chunks.append(text)
             case .visual(let visual):
                 defer { index += 1 }
@@ -316,13 +294,11 @@ enum DocumentAttachmentPreparer {
                         let text = try await OCRService.shared.text(source: sourceKey, provider: ocr.provider, modelID: ocr.modelID, prompt: ocr.prompt) {
                             try await DocumentAttachmentReader.shared.image(visual, in: document)
                         }
-                        try budget.addText(text)
-                        chunks.append("[\(visual.label) — OCR transcription and visual notes; may contain recognition errors]\n\(text)")
+                                chunks.append("[\(visual.label) — OCR transcription and visual notes; may contain recognition errors]\n\(text)")
                     } catch is CancellationError { throw CancellationError() }
                     catch { throw DocumentReadError.detail("\(document.name) · \(visual.label): \(error.localizedDescription)") }
                 } else {
                     let image = try await DocumentAttachmentReader.shared.image(visual, in: document)
-                    try budget.addImage(image)
                     images.append(image)
                     chunks.append("[\(visual.label): see attached image \(images.count).]")
                 }

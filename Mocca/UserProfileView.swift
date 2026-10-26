@@ -214,12 +214,15 @@ struct UserProfileView: View {
             Button(L10n.lookup(topicToRename == nil ? "添加" : "保存"), action: commitTopicName)
                 .disabled(topicName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .alert(L10n.lookup("保存对个人资料的修改？"), isPresented: $isLeaveConfirmationPresented) {
-            Button(L10n.lookup("保存并离开"), action: saveAndLeave).disabled(hasEmptyContent)
-            Button(L10n.lookup("不保存"), role: .destructive, action: leave)
-            Button(L10n.lookup("继续编辑"), role: .cancel) {}
-        } message: {
-            Text(L10n.lookup(hasEmptyContent ? "请填写或删除空白条目后保存。" : "你的修改尚未保存。"))
+        .background {
+            DraftExitConfirmation(
+                isPresented: $isLeaveConfirmationPresented,
+                title: L10n.lookup("保存对个人资料的修改？"),
+                onSave: saveAndLeave,
+                onDiscard: leave,
+                message: L10n.lookup(hasEmptyContent ? "请填写或删除空白条目后保存。" : "你的修改尚未保存。"),
+                saveEnabled: !hasEmptyContent
+            )
         }
         .alert(L10n.lookup("便签已在其他地方更新"), isPresented: $isConflictPresented) {
             Button(L10n.lookup("继续编辑"), role: .cancel) {}

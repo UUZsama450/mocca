@@ -2444,7 +2444,6 @@ final class OCRService {
         let output = try await recognizer(image, provider, modelID, prompt).trimmingCharacters(in: .whitespacesAndNewlines)
         try Task.checkCancellation()
         guard !output.isEmpty else { throw DocumentReadError.detail(ErrorLocalization.lookup("OCR 没有返回识别内容，请重试。")) }
-        guard output.count <= DocumentLimits.textCharacters else { throw DocumentReadError.limit("附件文字过长，请缩小页码范围或拆分文件。") }
         if epoch == cacheEpoch {
             cache[key] = output
             order.append(key)
@@ -2490,7 +2489,6 @@ final class OCRService {
         ) {
             try Task.checkCancellation()
             if case .text(let chunk) = event { result += chunk }
-            if result.utf8.count > DocumentLimits.textCharacters * 4 { throw DocumentReadError.limit("附件文字过长，请缩小页码范围或拆分文件。") }
         }
         try Task.checkCancellation()
         return result

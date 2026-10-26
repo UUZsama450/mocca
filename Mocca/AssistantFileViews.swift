@@ -421,12 +421,17 @@ private struct AssistantFileEditorView: View {
         ) { result in
             if case .failure(let error) = result { errorMessage = error.localizedDescription }
         }
-        .alert(L10n.lookup("文件尚未保存"), isPresented: $unsavedChangesPresented) {
-            if canSave { Button(L10n.lookup("保存"), action: saveAndDismiss) }
-            Button(L10n.lookup("不保留修改"), role: .destructive) { dismiss() }
-            Button(L10n.lookup("继续编辑"), role: .cancel) {}
-        } message: {
-            Text(L10n.lookup("关闭后，尚未保存的文件修改会丢失。"))
+        .background {
+            DraftExitConfirmation(
+                isPresented: $unsavedChangesPresented,
+                title: L10n.lookup("文件尚未保存"),
+                onSave: saveAndDismiss,
+                onDiscard: { dismiss() },
+                message: L10n.lookup("关闭后，尚未保存的文件修改会丢失。"),
+                saveTitle: L10n.lookup("保存"),
+                discardTitle: L10n.lookup("不保留修改"),
+                showsSave: canSave
+            )
         }
         .alert(L10n.lookup("删除文件？"), isPresented: $deletePresented) {
             Button(L10n.lookup("取消"), role: .cancel) {}

@@ -155,31 +155,31 @@ final class DocumentAttachmentTests: XCTestCase {
     func testScannedPDFRequiresVisionAndRendersWithoutText() async throws {
         let doc = try await DocumentAttachmentReader().read(pdf(scan: true))
         XCTAssertFalse(doc.hasText)
-        var budget = AttachmentRequestBudget()
-        do { _ = try await DocumentAttachmentPreparer.prepare(doc, visualIndices: [], requireReadable: true, ocr: nil, budget: &budget, progress: { _ in }); XCTFail("must reject empty text") }
+        do { _ = try await DocumentAttachmentPreparer.prepare(doc, visualIndices: [], requireReadable: true, ocr: nil, progress: { _ in }); XCTFail("must reject empty text") }
         catch DocumentReadError.noText {}
-        let prepared = try await DocumentAttachmentPreparer.prepare(doc, visualIndices: [0,1], requireReadable: true, ocr: nil, budget: &budget, progress: { _ in })
+        let prepared = try await DocumentAttachmentPreparer.prepare(doc, visualIndices: [0,1], requireReadable: true, ocr: nil, progress: { _ in })
         XCTAssertEqual(prepared.images.count, 2)
     }
 
     func testTextOnlyPreservesOmissionAndNoImagePayload() async throws {
         let doc = try await DocumentAttachmentReader().read(pdf())
-        var budget = AttachmentRequestBudget()
-        let result = try await DocumentAttachmentPreparer.prepare(doc, visualIndices: [], requireReadable: true, ocr: nil, budget: &budget, progress: { _ in })
+        let result = try await DocumentAttachmentPreparer.prepare(doc, visualIndices: [], requireReadable: true, ocr: nil, progress: { _ in })
         XCTAssertEqual(result.images.count, 0); XCTAssertTrue(result.text.contains("not analyzed")); XCTAssertTrue(result.text.contains("正文"))
     }
 
-    func testPageRangesRejectEmptyOutOfBoundsReversedAndOversized() throws {
+    func testPageRangesValidateSyntaxWithoutPageCap() throws {
         for input in ["0", "3-1", "1,", "-1", "101", "1-101", "1;2", "a", "1-2-3"] {
             var options = DocumentOptions(); options.pages = input
             XCTAssertThrowsError(try options.indices(total: 100), input)
         }
         var options = DocumentOptions(); options.pages = "3,1-2,2"
         XCTAssertEqual(try options.indices(total: 5), [0,1,2])
-        XCTAssertThrowsError(try DocumentOptions().indices(total: 101))
+        XCTAssertEqual(try DocumentOptions().indices(total: 101).count, 101)
+        options.pages = "1-350"
+        XCTAssertEqual(try options.indices(total: 350).last, 349)
     }
 
-    func testLockedCorruptMissingAndOversizedFiles() async throws {
+    func testLockedCorruptMissingAndLargeValidFiles() async throws {
         let original = try pdf()
         let doc = PDFDocument(data: try Data(contentsOf: original.localURL!))!
         let lockedURL = try folder().appendingPathComponent("locked.pdf")
@@ -191,8 +191,14 @@ final class DocumentAttachmentTests: XCTestCase {
         do { _ = try await DocumentAttachmentReader().read(attachment(bad)); XCTFail() } catch {}
         try FileManager.default.removeItem(at: bad)
         do { _ = try await DocumentAttachmentReader().read(attachment(bad)); XCTFail() } catch {}
-        try Data(repeating: 0, count: DocumentLimits.fileBytes + 1).write(to: bad)
-        do { _ = try await DocumentAttachmentReader().read(attachment(bad)); XCTFail() } catch DocumentReadError.limit {}
+        var large = try Data(contentsOf: original.localURL!)
+        let trailer = try XCTUnwrap(large.range(of: Data("startxref".utf8), options: .backwards))
+        let finalTrailer = Data(large[trailer.lowerBound...])
+        large.append(Data(repeating: 32, count: 21 * 1024 * 1024))
+        large.append(Data("\n".utf8)); large.append(finalTrailer)
+        try large.write(to: bad)
+        let read = try await DocumentAttachmentReader().read(attachment(bad))
+        XCTAssertTrue(text(read).contains("正文"))
     }
 
     func testDOCXParagraphTablesImagesAndNoExternalFetch() async throws {
@@ -210,11 +216,12 @@ final class DocumentAttachmentTests: XCTestCase {
         XCTAssertTrue(text(doc).contains("Unsupported embedded object")); XCTAssertTrue(text(doc).contains("footnotes"))
     }
 
-    func testDOCXRejectsDTDAndExpandedEntryLimit() async throws {
+    func testDOCXRejectsDTDButReadsLargeExpandedEntry() async throws {
         let file = try docx(body: "<!DOCTYPE bad><w:p/>")
         do { _ = try await DocumentAttachmentReader().read(file); XCTFail() } catch {}
-        let huge = try docx(body: String(repeating: " ", count: 16 * 1024 * 1024 + 1))
-        do { _ = try await DocumentAttachmentReader().read(huge); XCTFail() } catch {}
+        let huge = try docx(body: String(repeating: " ", count: 16 * 1024 * 1024 + 1) + "<w:p><w:r><w:t>FULL END</w:t></w:r></w:p>")
+        let expanded = try await DocumentAttachmentReader().read(huge)
+        XCTAssertTrue(text(expanded).contains("FULL END"))
     }
 
     func testFileReplacementInvalidatesDocumentCache() async throws {
@@ -227,9 +234,7 @@ final class DocumentAttachmentTests: XCTestCase {
         do { _ = try await reader.image(old.visuals[0], in: old); XCTFail() } catch DocumentReadError.changed {}
     }
 
-    func testAggregateBudgetsAndMetadataRoundTrip() throws {
-        var b = AttachmentRequestBudget(); try b.addVisuals(12); XCTAssertThrowsError(try b.addVisuals(9))
-        b = AttachmentRequestBudget(); try b.addText(String(repeating: "a", count: 40000)); XCTAssertThrowsError(try b.addText(String(repeating: "b", count: 20001)))
+    func testDocumentMetadataRoundTrip() throws {
         var options = DocumentOptions(); options.pages = "2-5"; options.textOnly = true
         let values = options.applying(to: ["content_sha256": "keep"])
         XCTAssertEqual(values["content_sha256"], "keep"); XCTAssertEqual(DocumentOptions(metadata: values), options)
@@ -404,7 +409,7 @@ final class DocumentAttachmentTests: XCTestCase {
         }
     }
 
-    func testEndToEndDOCXAndOversizedVisualCount() async throws {
+    func testEndToEndDOCXAndMoreThanTwentyPages() async throws {
         let (m,id) = try model(ocr: true, vision: false)
         let file = try docx(body: "<w:p><w:r><w:t>Word body</w:t></w:r><a:blip r:embed=\"r1\"/></w:p>", relationships: "<Relationship Id=\"r1\" Type=\"x/image\" Target=\"media/image.png\"/>", image: true)
         m.setComposerPendingAttachments([file], for: id)
@@ -414,8 +419,9 @@ final class DocumentAttachmentTests: XCTestCase {
         let (tooMany,chat) = try model(ocr: true, vision: true)
         tooMany.setComposerPendingAttachments([try pdf(pages: 21)], for: chat)
         XCTAssertTrue(tooMany.sendDraft(for: chat)); try await wait(tooMany,chat)
-        XCTAssertTrue(DocumentMockURLProtocol.state.snapshot().isEmpty)
-        XCTAssertFalse(tooMany.errorMessage.isEmpty)
+        XCTAssertEqual(DocumentMockURLProtocol.state.snapshot().filter { $0["model"] as? String == "fixture-ocr" }.count, 21)
+        XCTAssertEqual(mainBodies().count, 1)
+        XCTAssertTrue(tooMany.errorMessage.isEmpty, tooMany.errorMessage)
     }
 
     func testEndToEndGroupSharesOCRCacheAndBothModelsReceiveText() async throws {
@@ -564,14 +570,13 @@ final class DocumentAttachmentTests: XCTestCase {
         let reader = DocumentAttachmentReader(); let document = try await reader.read(file)
         let before = residentBytes(); var peak = before; var outputs: [ChatRequestImage] = []
         let start = CFAbsoluteTimeGetCurrent()
-        var budget = AttachmentRequestBudget()
         for visual in document.visuals {
             let image = try await reader.image(visual, in: document)
-            try budget.addImage(image); outputs.append(image)
+            outputs.append(image)
             peak = max(peak, residentBytes())
         }
         XCTAssertEqual(outputs.count, 20)
-        print("DOCUMENT_RENDER_PERF pages=20 elapsed_ms=\((CFAbsoluteTimeGetCurrent()-start)*1000) resident_before=\(before) sampled_peak=\(peak) sampled_delta=\(peak-before) base64_bytes=\(budget.imageBytes)")
+        print("DOCUMENT_RENDER_PERF pages=20 elapsed_ms=\((CFAbsoluteTimeGetCurrent()-start)*1000) resident_before=\(before) sampled_peak=\(peak) sampled_delta=\(peak-before) base64_bytes=\(outputs.reduce(0) { $0 + $1.base64Data.utf8.count })")
         var rendered = 0
         let operation = Task { @MainActor in
             for visual in document.visuals {
@@ -629,5 +634,40 @@ extension DocumentAttachmentTests {
             progress: { _ in events += 1 }, report: { _, _ in events += 1 })
         XCTAssertEqual(wire[0].content, "hello\n\n[1970-01-01 00:00]")
         XCTAssertEqual(events, 0); XCTAssertTrue(DocumentMockURLProtocol.state.snapshot().isEmpty)
+    }
+}
+
+extension DocumentAttachmentTests {
+    func testLargeWordTextAndOCRReturnFullContent() async throws {
+        let content = String(repeating: "全文 content ", count: 7000) + "FULL-END"
+        let file = try docx(body: "<w:p><w:r><w:t>" + content + "</w:t></w:r></w:p>")
+        let document = try await DocumentAttachmentReader().read(file)
+        XCTAssertTrue(text(document).contains(content))
+        let prepared = try await DocumentAttachmentPreparer.prepare(document, visualIndices: [], requireReadable: true, ocr: nil, progress: { _ in })
+        XCTAssertTrue(prepared.text.contains(content))
+        let ocr = OCRService { _,_,_,_ in content }
+        let recognized = try await ocr.text(image: ChatRequestImage(mimeType: "image/png", base64Data: "AAAA"), provider: provider(), modelID: "fixture-ocr", prompt: "Read")
+        XCTAssertEqual(recognized, content)
+    }
+
+    func testPDFReadsAllOneHundredAndOnePages() async throws {
+        let document = try await DocumentAttachmentReader().read(pdf(pages: 101))
+        XCTAssertEqual(document.visuals.count, 101)
+        XCTAssertTrue(text(document).contains("[Page 101]"))
+    }
+
+    func testLargeFileReminderLayoutAtSmallWidthAndAccessibilitySize() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        for (width, size): (CGFloat, DynamicTypeSize) in [(320, .large), (393, .accessibility2)] {
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: width, height: 852)
+            let request = LargeFileConfirmation.Request(id: UUID(), names: ["较长的文档名称.pdf"], assistantFile: false, includesLargeFile: true)
+            let view = LargeFileConfirmationSheet(request: request) { _,_ in }.environment(\.dynamicTypeSize, size)
+            let host = UIHostingController(rootView: view); window.rootViewController = host; window.makeKeyAndVisible()
+            host.view.layoutIfNeeded(); try await Task.sleep(for: .milliseconds(300))
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+            let attachment = XCTAttachment(image: image); attachment.name = "Large file reminder \(width) \(size)"; attachment.lifetime = .keepAlways; add(attachment)
+            window.isHidden = true; window.rootViewController = nil
+        }
     }
 }

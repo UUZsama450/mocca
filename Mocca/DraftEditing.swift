@@ -8,11 +8,23 @@ struct DraftExitConfirmation: UIViewControllerRepresentable {
     let title: String
     let onSave: () -> Void
     let onDiscard: () -> Void
+    var message: String? = nil
+    var saveTitle: String? = nil
+    var discardTitle: String? = nil
+    var keepEditingTitle: String? = nil
+    var showsSave = true
+    var saveEnabled = true
 
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {
         controller.requested = isPresented
         controller.alertTitle = title
+        controller.alertMessage = message ?? L10n.lookup("你的修改尚未保存。")
+        controller.saveTitle = saveTitle ?? L10n.lookup("保存并离开")
+        controller.discardTitle = discardTitle ?? L10n.lookup("不保存")
+        controller.keepEditingTitle = keepEditingTitle ?? L10n.lookup("继续编辑")
+        controller.showsSave = showsSave
+        controller.saveEnabled = saveEnabled
         controller.onClose = { isPresented = false }
         controller.onSave = onSave
         controller.onDiscard = onDiscard
@@ -26,6 +38,12 @@ struct DraftExitConfirmation: UIViewControllerRepresentable {
     final class Controller: UIViewController {
         var requested = false
         var alertTitle = ""
+        var alertMessage = ""
+        var saveTitle = ""
+        var discardTitle = ""
+        var keepEditingTitle = ""
+        var showsSave = true
+        var saveEnabled = true
         var onClose: () -> Void = {}
         var onSave: () -> Void = {}
         var onDiscard: () -> Void = {}
@@ -47,14 +65,18 @@ struct DraftExitConfirmation: UIViewControllerRepresentable {
             }
             guard viewIfLoaded?.window != nil, ownedAlert == nil,
                   presentedViewController == nil else { return }
-            let alert = UIAlertController(title: alertTitle, message: L10n.lookup("你的修改尚未保存。"), preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: L10n.lookup("保存并离开"), style: .default) { [weak self] _ in
-                self?.finish(.save)
-            })
-            alert.addAction(UIAlertAction(title: L10n.lookup("继续编辑"), style: .default) { [weak self] _ in
+            let alert = UIAlertController(title: alertTitle, message: alertMessage, preferredStyle: .alert)
+            if showsSave {
+                let save = UIAlertAction(title: saveTitle, style: .default) { [weak self] _ in
+                    self?.finish(.save)
+                }
+                save.isEnabled = saveEnabled
+                alert.addAction(save)
+            }
+            alert.addAction(UIAlertAction(title: keepEditingTitle, style: .default) { [weak self] _ in
                 self?.finish(.keepEditing)
             })
-            alert.addAction(UIAlertAction(title: L10n.lookup("不保存"), style: .destructive) { [weak self] _ in
+            alert.addAction(UIAlertAction(title: discardTitle, style: .destructive) { [weak self] _ in
                 self?.finish(.discard)
             })
             ownedAlert = alert

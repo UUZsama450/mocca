@@ -539,13 +539,18 @@ struct AssistantEditorView: View {
             }
         }
         .interactiveDismissDisabled(hasUnsavedChanges)
-        .alert(L10n.lookup("有修改尚未保存"), isPresented: $unsavedChangesAlertPresented) {
-            if !profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button(L10n.lookup("保存")) { save() }
-            }
-            Button(L10n.lookup("不保存"), role: .destructive) { discardChangesAndDismiss() }
-        } message: {
-            Text(L10n.lookup("提示词、记忆设置、工具开关或其他修改还没有保存。要先保存再离开吗？"))
+        .background {
+            DraftExitConfirmation(
+                isPresented: $unsavedChangesAlertPresented,
+                title: L10n.lookup("有修改尚未保存"),
+                onSave: save,
+                onDiscard: discardChangesAndDismiss,
+                message: L10n.lookup("提示词、记忆设置、工具开关或其他修改还没有保存。要先保存再离开吗？"),
+                saveTitle: L10n.lookup("保存"),
+                discardTitle: L10n.lookup("不保存"),
+                keepEditingTitle: L10n.lookup("取消"),
+                showsSave: !profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
         .onAppear { editorIsActive = true }
         .onDisappear {
@@ -1949,11 +1954,17 @@ private struct ExpandedTextEditorSheet: View {
             }
         }
         .interactiveDismissDisabled(draft != originalText)
-        .alert(L10n.lookup("这段文字还没有完成"), isPresented: $unsavedChangesAlertPresented) {
-            Button(L10n.lookup("保存")) { saveAndDismiss() }
-            Button(L10n.lookup("不保留修改"), role: .destructive) { dismiss() }
-        } message: {
-            Text(L10n.format("返回后，刚刚输入但尚未点“%@”的内容会丢失。", [String(describing: confirmationTitle)]))
+        .background {
+            DraftExitConfirmation(
+                isPresented: $unsavedChangesAlertPresented,
+                title: L10n.lookup("这段文字还没有完成"),
+                onSave: saveAndDismiss,
+                onDiscard: { dismiss() },
+                message: L10n.format("返回后，刚刚输入但尚未点“%@”的内容会丢失。", [String(describing: confirmationTitle)]),
+                saveTitle: L10n.lookup("保存"),
+                discardTitle: L10n.lookup("不保留修改"),
+                keepEditingTitle: L10n.lookup("取消")
+            )
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)
@@ -3620,13 +3631,18 @@ private struct AssistantMemoryEditor: View {
             }
         }
         .interactiveDismissDisabled(memory.content != originalContent)
-        .alert(L10n.lookup("记忆尚未保存"), isPresented: $unsavedChangesAlertPresented) {
-            if !memory.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button(L10n.lookup("保存")) { saveAndDismiss() }
-            }
-            Button(L10n.lookup("不保留修改"), role: .destructive) { dismiss() }
-        } message: {
-            Text(L10n.lookup("返回后，刚刚修改的记忆内容会丢失。"))
+        .background {
+            DraftExitConfirmation(
+                isPresented: $unsavedChangesAlertPresented,
+                title: L10n.lookup("记忆尚未保存"),
+                onSave: saveAndDismiss,
+                onDiscard: { dismiss() },
+                message: L10n.lookup("返回后，刚刚修改的记忆内容会丢失。"),
+                saveTitle: L10n.lookup("保存"),
+                discardTitle: L10n.lookup("不保留修改"),
+                keepEditingTitle: L10n.lookup("取消"),
+                showsSave: !memory.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
     }
 

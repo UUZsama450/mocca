@@ -11,7 +11,7 @@ s=(ROOT/'CandidateTests/make_entry_ui_project.py').read_text().replace('work/nat
 exec(compile(s,'generate_composer_ui','exec'),{'__file__':str(ROOT/'CandidateTests/make_entry_ui_project.py')})
 def run(cmd,log):
  with (OUT/log).open('w') as f:subprocess.run(cmd,cwd=ROOT,stdout=f,stderr=subprocess.STDOUT,check=True)
-run(['xcodebuild','-project','Mocca.xcodeproj','-scheme','Mocca','-configuration','Debug','-sdk','iphonesimulator','-destination','platform=iOS Simulator,id='+a.simulator,'-derivedDataPath',str(OUT/'DerivedData'),'ONLY_ACTIVE_ARCH=YES','MOCCA_BUNDLE_IDENTIFIER=com.mocca.lab.streamheight5157','CODE_SIGNING_ALLOWED=NO','build'],'build-fixture.log')
+run(['xcodebuild','-jobs','2','-project','Mocca.xcodeproj','-scheme','Mocca','-configuration','Debug','-sdk','iphonesimulator','-destination','platform=iOS Simulator,id='+a.simulator,'-derivedDataPath',str(OUT/'DerivedData'),'-clonedSourcePackagesDirPath','/tmp/mocca-document-packages','-disableAutomaticPackageResolution','-onlyUsePackageVersionsFromResolvedFile','-skipPackageUpdates','ONLY_ACTIVE_ARCH=YES','MOCCA_BUNDLE_IDENTIFIER=com.mocca.lab.streamheight5157','CODE_SIGNING_ALLOWED=NO','build'],'build-fixture.log')
 subprocess.run(['xcrun','simctl','install',a.simulator,str(OUT/'DerivedData/Build/Products/Debug-iphonesimulator/Mocca.app')],check=True)
 result=OUT/'full-app-ui.xcresult'
 if result.exists():

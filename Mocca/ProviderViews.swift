@@ -387,7 +387,7 @@ private struct ProviderTypeMenuLabel: View {
         } icon: {
             Image(type.brandIcon.assetName)
                 .resizable()
-                .renderingMode(type.brandIcon.usesTemplateRendering ? .template : .original)
+                .renderingMode(.original)
                 .scaledToFit()
                 .frame(width: 18, height: 18)
         }
@@ -485,12 +485,15 @@ struct ProviderEditorView: View {
                 AssistantMediaStore.remove(previous)
             }
         }
-        .alert(L10n.lookup("保存对供应商的修改？"), isPresented: $isLeaveConfirmationPresented) {
-            Button(L10n.lookup("保存并离开"), action: save).disabled(!canSave)
-            Button(L10n.lookup("不保存"), role: .destructive, action: discardAndDismiss)
-            Button(L10n.lookup("继续编辑"), role: .cancel) {}
-        } message: {
-            Text(L10n.lookup("配置与模型列表中的修改尚未保存。"))
+        .background {
+            DraftExitConfirmation(
+                isPresented: $isLeaveConfirmationPresented,
+                title: L10n.lookup("保存对供应商的修改？"),
+                onSave: save,
+                onDiscard: discardAndDismiss,
+                message: L10n.lookup("配置与模型列表中的修改尚未保存。"),
+                saveEnabled: canSave
+            )
         }
         .alert(L10n.lookup("无法保存供应商"), isPresented: $isSaveErrorPresented) {
             Button(L10n.lookup("好"), role: .cancel) {}
@@ -1555,7 +1558,78 @@ private struct ProviderModelCatalogGroup: Identifiable {
     }
 }
 
+/// A local tap recognizer rejects resting touches without recognizing a long
+/// press, so the enclosing scroll view can still begin panning at any time.
+private struct ModelCatalogIntentButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .allowsHitTesting(false)
+            .overlay { ModelCatalogTapSurface(action: configuration.trigger) }
+            .accessibilityAction { configuration.trigger() }
+    }
+}
+
+private struct ModelCatalogTapSurface: UIViewRepresentable {
+    var action: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        let tap = ShortTapRecognizer(target: context.coordinator, action: #selector(Coordinator.activate))
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesBegan = false
+        tap.delaysTouchesEnded = false
+        view.addGestureRecognizer(tap)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.action = action
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func activate() { action() }
+    }
+
+    final class ShortTapRecognizer: UITapGestureRecognizer {
+        private var startedAt: TimeInterval = 0
+        private var origin = CGPoint.zero
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            if let touch = touches.first {
+                startedAt = touch.timestamp
+                origin = touch.location(in: view)
+            }
+            super.touchesBegan(touches, with: event)
+        }
+
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+            if let touch = touches.first {
+                let point = touch.location(in: view)
+                let dx = point.x - origin.x, dy = point.y - origin.y
+                if dx * dx + dy * dy > 100 {
+                    state = .failed
+                    return
+                }
+            }
+            super.touchesMoved(touches, with: event)
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+            guard let touch = touches.first, touch.timestamp - startedAt < 0.45 else {
+                state = .failed
+                return
+            }
+            super.touchesEnded(touches, with: event)
+        }
+    }
+}
+
 private struct ProviderModelManagerView: View {
+    @Environment(AppModel.self) private var appModel
     let configuration: ProviderConfiguration
     @Binding var models: [ModelConfiguration]
 
@@ -1590,12 +1664,9 @@ private struct ProviderModelManagerView: View {
     }
 
     private var filteredCatalog: [ModelConfiguration] {
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalizedQuery.isEmpty else { return catalog }
-        return catalog.filter { model in
-            model.id.lowercased().contains(normalizedQuery)
-                || model.displayName.lowercased().contains(normalizedQuery)
-        }
+        let search = ModelSearchQuery(query)
+        guard !search.isEmpty else { return catalog }
+        return catalog.filter { search.matches($0.id, $0.displayName) }
     }
 
     private var groupedCatalog: [ProviderModelCatalogGroup] {
@@ -1695,9 +1766,15 @@ private struct ProviderModelManagerView: View {
             Button {
                 invertFilteredSelection()
             } label: {
-                Image(systemName: "repeat")
-                    .font(.system(size: 20, weight: .medium))
-                    .frame(width: 30, height: 34)
+                Text(L10n.lookup("反选"))
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 10)
+                    .frame(minWidth: 44, minHeight: 34)
+                    .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -1849,44 +1926,49 @@ private struct ProviderModelManagerView: View {
     private func modelSelectionRow(_ model: ModelConfiguration) -> some View {
         let isSelected = selectedIDs.contains(model.id)
 
-        return Button {
-            toggle(model)
-        } label: {
-            HStack(spacing: 13) {
-                ProviderModelCatalogGlyph(model: model, size: 31)
+        return HStack(spacing: 13) {
+            ProviderModelCatalogGlyph(model: model, size: 31)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(model.displayName)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.displayName)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                    if model.displayName != model.id {
-                        Text(model.id)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    ProviderModelCapabilityChips(capabilities: model.capabilities)
+                if model.displayName != model.id {
+                    Text(model.id)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Spacer(minLength: 5)
+                ProviderModelCapabilityChips(capabilities: model.capabilities)
+            }
 
+            Spacer(minLength: 5)
+
+            // Keep browsing and scrolling outside the explicit add/remove control.
+            Button {
+                toggle(model)
+                appModel.performListItemHaptic()
+            } label: {
                 Image(systemName: isSelected ? "minus" : "plus")
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
-            .padding(.leading, 20)
-            .padding(.trailing, 8)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .buttonStyle(ModelCatalogIntentButtonStyle())
+            .accessibilityLabel(model.displayName)
+            .accessibilityValue(isSelected ? L10n.lookup("已选择") : L10n.lookup("未选择"))
+            .accessibilityHint(isSelected ? L10n.lookup("轻点取消选择") : L10n.lookup("轻点选择"))
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(model.displayName)
-        .accessibilityValue(isSelected ? L10n.lookup("已选择") : L10n.lookup("未选择"))
-        .accessibilityHint(isSelected ? L10n.lookup("轻点取消选择") : L10n.lookup("轻点选择"))
+        .padding(.leading, 20)
+        .padding(.trailing, 8)
+        .padding(.vertical, 10)
     }
 
     private func toggle(_ model: ModelConfiguration) {
@@ -2092,7 +2174,10 @@ struct ModelSelectorView: View {
     }
 
     private var filteredFavorites: [ModelSelectorItem] {
-        favoriteItems.filter(matches)
+        let search = ModelSearchQuery(query)
+        let items = favoriteItems
+        guard !search.isEmpty else { return items }
+        return items.filter { search.matches($0.model.id, $0.model.displayName, $0.provider.name) }
     }
 
     var body: some View {
@@ -2284,7 +2369,10 @@ struct ModelSelectorView: View {
                     }
                 }
 
-                if !favoritesOnly && allItems.filter(matches).isEmpty && inheritedChoiceTitle == nil {
+                let search = ModelSearchQuery(query)
+                if !favoritesOnly && !allItems.contains(where: {
+                    search.matches($0.model.id, $0.model.displayName, $0.provider.name)
+                }) && inheritedChoiceTitle == nil {
                     ContentUnavailableView(L10n.lookup("没有找到模型"), systemImage: "magnifyingglass", description: Text(L10n.lookup("换个关键词试试看")))
                         .padding(.vertical, 44)
                 }
@@ -2650,10 +2738,10 @@ struct ModelSelectorView: View {
     }
 
     private func filteredItems(for provider: ProviderConfiguration) -> [ModelSelectorItem] {
-        let providerMatches = normalizedQuery.isEmpty
-            || provider.name.localizedCaseInsensitiveContains(normalizedQuery)
+        let search = ModelSearchQuery(query)
         let items = selectableModels(for: provider).map { ModelSelectorItem(provider: provider, model: $0) }
-        return providerMatches ? items : items.filter(matches)
+        guard !search.isEmpty, !search.matches(provider.name) else { return items }
+        return items.filter { search.matches($0.model.id, $0.model.displayName, provider.name) }
     }
 
     private func selectableModels(for provider: ProviderConfiguration) -> [ModelConfiguration] {
@@ -2667,13 +2755,6 @@ struct ModelSelectorView: View {
             }
             return true
         }
-    }
-
-    private func matches(_ item: ModelSelectorItem) -> Bool {
-        normalizedQuery.isEmpty
-            || item.model.id.localizedCaseInsensitiveContains(normalizedQuery)
-            || item.model.displayName.localizedCaseInsensitiveContains(normalizedQuery)
-            || item.provider.name.localizedCaseInsensitiveContains(normalizedQuery)
     }
 
     private var normalizedQuery: String {
@@ -2868,12 +2949,14 @@ private struct ModelConfigurationEditorSheet: View {
         .background {
             DraftDismissObserver(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
         }
-        .alert(L10n.lookup("保存模型修改？"), isPresented: $isLeaveConfirmationPresented) {
-            Button(L10n.lookup("保存并离开"), action: save)
-            Button(L10n.lookup("不保存"), role: .destructive) { dismiss() }
-            Button(L10n.lookup("继续编辑"), role: .cancel) {}
-        } message: {
-            Text(onSave == nil ? L10n.lookup("模型修改尚未保存。") : L10n.lookup("确认后会保留到供应商草稿，最后请保存供应商。"))
+        .background {
+            DraftExitConfirmation(
+                isPresented: $isLeaveConfirmationPresented,
+                title: L10n.lookup("保存模型修改？"),
+                onSave: save,
+                onDiscard: { dismiss() },
+                message: L10n.lookup(onSave == nil ? "模型修改尚未保存。" : "确认后会保留到供应商草稿，最后请保存供应商。")
+            )
         }
         .alert(L10n.lookup("删除模型？"), isPresented: $isDeleteConfirmationPresented) {
             Button(L10n.lookup("删除模型"), role: .destructive, action: deleteModel)

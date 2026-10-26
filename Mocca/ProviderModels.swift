@@ -1,5 +1,50 @@
 import Foundation
 
+/// Prepared once per filter pass. Empty searches never normalize the catalog.
+struct ModelSearchQuery {
+    private let literal: String
+    private let terms: [[UInt8]]
+    var isEmpty: Bool { literal.isEmpty }
+
+    init(_ query: String) {
+        literal = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        terms = literal.split(whereSeparator: { $0.isWhitespace }).map { Self.compact(String($0)) }
+    }
+
+    func matches(_ fields: String...) -> Bool {
+        guard !isEmpty else { return true }
+        // Punctuation-only terms retain literal matching rather than match all.
+        guard !terms.isEmpty, terms.allSatisfy({ !$0.isEmpty }) else {
+            return fields.contains { $0.localizedCaseInsensitiveContains(literal) }
+        }
+        let candidates = fields.map(Self.compact)
+        return terms.allSatisfy { term in candidates.contains { Self.contains(term, in: $0) } }
+    }
+
+    private static func contains(_ term: [UInt8], in candidate: [UInt8]) -> Bool {
+        guard term.count <= candidate.count else { return false }
+        for start in 0...(candidate.count - term.count) where candidate[start] == term[0] {
+            if candidate[start..<(start + term.count)].elementsEqual(term) { return true }
+        }
+        return false
+    }
+
+    private static func compact(_ value: String) -> [UInt8] {
+        // Model IDs are normally ASCII. Unicode names retain their letters and
+        // digits too; UTF-8 matching avoids repeated Foundation string searches.
+        if value.utf8.allSatisfy({ $0 < 128 }) {
+            return value.utf8.compactMap { byte in
+                switch byte {
+                case 65...90: return byte + 32
+                case 97...122, 48...57: return byte
+                default: return nil
+                }
+            }
+        }
+        return Array(value.lowercased().filter { $0.isLetter || $0.isNumber }.utf8)
+    }
+}
+
 enum ProviderType: String, Codable, CaseIterable, Identifiable, Sendable {
     case openAI = "openai"
     case google

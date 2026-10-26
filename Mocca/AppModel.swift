@@ -1035,7 +1035,7 @@ final class AppModel {
             ProviderPersistence.saveFavoriteProviderIDs(seededFavoriteProviderIDs)
         }
         appearanceMode = AppPreferences.loadAppearanceMode()
-        var loadedPreferences = AppPreferences.loadPreferences()
+        var loadedPreferences = AppPreferences.loadPreferences(isNewInstallation: shouldPresentFirstRunModelSetup)
         if let fileName = loadedPreferences.appFontFileName,
            let registeredFont = try? AppFontStore.registerStoredFont(fileName: fileName) {
             loadedPreferences.appFontPostScriptName = registeredFont.postScriptName

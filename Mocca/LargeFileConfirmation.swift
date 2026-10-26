@@ -134,10 +134,10 @@ struct LargeFileConfirmationSheet: View {
                     .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 26))
 
                     Text(L10n.lookup(request.assistantFile
-                        ? "启用后，全文会随这个助手的每次聊天发送。可能增加用量与等待时间，超出模型容量时请求可能失败。同一份文件确认后不再提醒。"
+                        ? "启用后，全文会随这个助手的每次聊天发送，可能增加用量与等待时间。文件过大可能增加内存占用并导致界面卡顿；超出模型容量时请求可能失败。同一份文件确认后不再提醒。"
                         : request.includesLargeFile
-                            ? "文件较大，导入可能需要更多时间并占用本地空间。较长文本可能增加模型用量；文件能否被模型读取取决于格式，ZIP 等压缩包不会自动解压读取。"
-                            : "全文会发送给你选择的模型，可能增加用量与等待时间，超出模型容量时请求可能失败。确认后，发送时不再提醒。"))
+                            ? "导入和处理大文件可能需要更多时间与本地空间，增加内存占用并导致界面卡顿。较长文本可能增加模型用量；文件能否被模型读取取决于格式，ZIP 等压缩包不会自动解压读取。"
+                            : "全文会发送给你选择的模型，可能增加用量与等待时间。文件过大可能增加内存占用并导致界面卡顿；超出模型容量时请求可能失败。确认后，发送时不再提醒。"))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

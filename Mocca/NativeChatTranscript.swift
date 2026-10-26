@@ -552,7 +552,12 @@ struct NativeChatMutationLanding {
 }
 
 struct NativeChatTranscript: UIViewControllerRepresentable {
-    var rows: [NativeChatRow]
+    // Geometry-only copies retain this identity; every array mutation replaces
+    // it, including subscript edits and append/remove on a copied transcript.
+    var rows: [NativeChatRow] {
+        didSet { rowsSnapshotID = UUID() }
+    }
+    private(set) var rowsSnapshotID = UUID()
     var configuration: NativeChatLayoutConfiguration
     var publicationID: AnyHashable
     var sessionID: AnyHashable
@@ -1210,6 +1215,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     private var input: NativeChatTranscript
     private var rows: [NativeChatRow]
     private var rowByID: [UUID: NativeChatRow]
+    private var installedRowsSnapshotID: UUID
     private var pendingInput: NativeChatTranscript?
     private var batchID: UUID?
     private var visible = false
@@ -1267,6 +1273,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         // A new controller cannot inherit an edit accepted by an old one.
         initial.mutationLanding = nil
         self.input = initial; rows = input.rows
+        installedRowsSnapshotID = input.rowsSnapshotID
         rowByID = Dictionary(input.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         layout = ReadingCollectionLayout(keys: input.rows.map { .init(id: $0.id, revision: $0.revision) }, configuration: input.configuration)
         collection = NativeChatCollectionView(frame: .zero, collectionViewLayout: layout)
@@ -1501,17 +1508,18 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         // A conversation's surface is keyed by its session in RootView. Refuse
         // to apply stale/new-session rows to this outgoing controller.
         guard next.sessionID == input.sessionID else { return }
-        let newIDs = next.rows.map(\.id), newSet = Set(newIDs)
+        let unchangedRows = next.rowsSnapshotID == installedRowsSnapshotID
+        let newIDs = unchangedRows ? [] : next.rows.map(\.id), newSet = Set(newIDs)
         guard newSet.count == newIDs.count else { return }
         if batchID != nil { pendingInput = next; return }
         let oldRows = rows
-        let oldIDs = oldRows.map(\.id)
+        let oldIDs = unchangedRows ? [] : oldRows.map(\.id)
         let oldSet = Set(oldIDs)
         let structural = oldIDs != newIDs
         if structural || next.disclosureOperation != nil {
             stopStreamMotion(reason: "input-owner-change", preserveVisible: false)
         }
-        let changed = Set(next.rows.compactMap { row -> UUID? in
+        let changed: Set<UUID> = unchangedRows ? [] : Set(next.rows.compactMap { row -> UUID? in
             rowByID[row.id]?.revision == row.revision ? nil : row.id
         })
         let contextChanged = next.publicationID != input.publicationID
@@ -1529,7 +1537,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             && !touching && !userGesture && !collection.isTracking
             && !collection.isDragging && !collection.isDecelerating && collection.window != nil
         StreamLayoutWorkProbe.hit(structural || !changed.isEmpty || contextChanged || metricsChanged ? "controller.changedInput" : "controller.unchangedInput")
-        let anchor = layout.viewportAnchor(surviving: newSet)
+        let anchor = layout.viewportAnchor(surviving: unchangedRows ? nil : newSet)
         let mutationLanding = next.mutationLanding.flatMap { landing -> NativeChatMutationLanding? in
             guard structural, landing.isCurrent(), landing.sourcePublicationID == input.publicationID,
                   landing.destinationPublicationID == next.publicationID,
@@ -1600,8 +1608,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         context.structural = structural; context.preservedID = anchor
         context.mutationTarget = mutationLanding?.target
         let applyData = {
+            guard !unchangedRows else { return }
             self.rows = next.rows
             self.rowByID = Dictionary(next.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            self.installedRowsSnapshotID = next.rowsSnapshotID
         }
         if structural {
             let operation = UUID(); batchID = operation

@@ -1407,15 +1407,26 @@ enum AppPreferences {
     private static let proxyKey = "network_proxy_v1"
     private static let preferencesKey = "user_preferences_v1"
 
-    static func loadPreferences() -> UserPreferences {
+    static func loadPreferences(isNewInstallation: Bool = false) -> UserPreferences {
+        let storedData = UserDefaults.standard.data(forKey: preferencesKey)
+        let usesFreshDefaults = isNewInstallation && storedData == nil
         let storedPreferences: UserPreferences
-        if let data = UserDefaults.standard.data(forKey: preferencesKey),
+        if let data = storedData,
            let decoded = try? JSONDecoder().decode(UserPreferences.self, from: data) {
             storedPreferences = decoded
         } else {
-            storedPreferences = UserPreferences()
+            // Only a genuinely fresh installation gets the new default.
+            // Existing settings, legacy backups and missing legacy preferences
+            // retain their previous animation behavior.
+            storedPreferences = UserPreferences(composerHeightAnimationEnabled: !usesFreshDefaults)
         }
 
+        if usesFreshDefaults, let data = try? JSONEncoder().encode(storedPreferences) {
+            // These freshly constructed defaults contain no credentials. Save
+            // them before hydration so an unavailable Keychain cannot prevent
+            // the next launch from retaining the fresh-install choice.
+            UserDefaults.standard.set(data, forKey: preferencesKey)
+        }
         var preferences = storedPreferences
         let legacyTavilyAPIKey = preferences.tavilyAPIKey
             .trimmingCharacters(in: .whitespacesAndNewlines)

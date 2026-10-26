@@ -3022,7 +3022,6 @@ struct RootView: View {
             }
             .onEnded { value in
                 let dx = value.translation.width
-                let dy = value.translation.height
                 let didOwnDrawerGesture = drawerGestureLocked == true
                 defer {
                     if didOwnDrawerGesture {
@@ -3034,9 +3033,11 @@ struct RootView: View {
                     drawerGestureLocked = nil
                     setDrawerGestureActive(false)
                 }
+                // Direction was decided when this touch took ownership. Keep
+                // following that horizontal gesture even if its path later curves.
                 guard drawerGestureLocked == true,
                       drawerDragProgress != nil,
-                      abs(dx) > max(drawerGestureIntentDistance, abs(dy) * drawerGestureAxisRatio) else {
+                      abs(dx) > drawerGestureIntentDistance else {
                     if drawerGestureLocked == true, drawerDragProgress != nil {
                         settleDrawer(open: model.isDrawerPresented)
                     }
@@ -18263,10 +18264,11 @@ private struct MessageEditSheet: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         if allowsSaveAndSend {
-                            Button(L10n.lookup("保存并发送")) {
-                                onSave(true)
+                            Button(L10n.lookup("保存")) {
+                                onSave(false)
                                 dismiss()
                             }
+                            .foregroundStyle(.primary)
                             .disabled(!canSave)
                         } else {
                             Button(L10n.lookup("取消")) {
@@ -18276,11 +18278,11 @@ private struct MessageEditSheet: View {
                         }
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(L10n.lookup("保存")) {
-                            onSave(false)
+                        Button(L10n.lookup(allowsSaveAndSend ? "保存并发送" : "保存")) {
+                            onSave(allowsSaveAndSend)
                             dismiss()
                         }
-                            .foregroundStyle(.primary)
+                        .foregroundStyle(allowsSaveAndSend ? Color.accentColor : Color.primary)
                         .disabled(!canSave)
                     }
                 }

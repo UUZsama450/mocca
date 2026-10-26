@@ -64,7 +64,7 @@ private struct DocumentAttachmentOptionsView: View {
                         TextField(L10n.lookup("全部页，或填写 1-5,8"), text: $options.pages)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                         if let totalPages { Text(L10n.format("共 %@ 页", [String(totalPages)])) }
-                        Text(L10n.lookup("每次最多读取 100 页文字、20 页/张图片。较长文档请选择范围或仅文字。"))
+                        Text(L10n.lookup("默认读取全部页面。可按需选择页码范围或仅提取文字，以减少处理时间和模型用量。"))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
