@@ -16,7 +16,12 @@ enum ChatRequestPreparation {
         progress: (String) -> Void = { _ in },
         report: (UUID, String) -> Void = { _, _ in }
     ) async throws -> [ChatRequestMessage] {
-        let contextMessages = contextMessages.filter { $0.isPendingUserSend != true }
+        let archiveExpansion = try await ZIPAttachmentPreparation.expand(
+            contextMessages.filter { $0.isPendingUserSend != true }, progress: progress
+        )
+        // Hold temporary files until every document, image and OCR read finishes.
+        defer { withExtendedLifetime(archiveExpansion.workspaces) {} }
+        let contextMessages = archiveExpansion.messages
         let groupConversation = conversation.flatMap {
             $0.groupAssistantIDs.count >= 2 ? $0 : nil
         }
@@ -393,10 +398,20 @@ enum ChatRequestAttachments {
                 try Task.checkCancellation()
                 switch attachment.kind {
                 case .image:
-                    if imageIDs.contains(attachment.id),
-                       let url = attachment.localURL,
-                       let data = try? Data(contentsOf: url) {
+                    if imageIDs.contains(attachment.id) {
+                        guard let url = attachment.localURL, let data = try? Data(contentsOf: url) else {
+                            if attachment.metadata["mocca_zip_member"] == "true" {
+                                throw ZIPAttachmentError.unsupportedFile(attachment.fileName ?? "Image")
+                            }
+                            continue
+                        }
                         try Task.checkCancellation()
+                        if attachment.metadata["mocca_zip_member"] == "true" {
+                            guard Int64(data.count) == attachment.byteCount else {
+                                throw ZIPAttachmentError.unsupportedFile(attachment.fileName ?? "Image")
+                            }
+                            result.text += "\n\n[Image file: \(attachment.fileName ?? "Image"); attached image \(result.images.count + 1)]"
+                        }
                         result.images.append(ChatRequestImage(
                             mimeType: attachment.mimeType ?? "image/jpeg",
                             base64Data: data.base64EncodedString()
@@ -405,6 +420,9 @@ enum ChatRequestAttachments {
                 case .file:
                     let name = attachment.fileName ?? "未命名"
                     if let prepared = documents[attachment.id] {
+                        if attachment.metadata["mocca_zip_member"] == "true", !prepared.images.isEmpty {
+                            result.text += "\n\n[\(name): document image 1 starts at attached image \(result.images.count + 1); \(prepared.images.count) images.]"
+                        }
                         result.text += "\n\n" + prepared.text
                         result.images.append(contentsOf: prepared.images)
                     } else if AttachmentStore.isPastedText(attachment) {

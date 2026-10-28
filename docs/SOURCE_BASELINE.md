@@ -1,6 +1,14 @@
 # Source baseline
 
-## Current snapshot 5135
+## Current snapshot 5271
+
+The current `main` source is **1.0.7 (5271)**, synchronized from the frozen inputs used for the installed phone build. All 160 product input files match [the SHA-256 manifest](SOURCE_5271_SHA256.json). This update continues the existing GitHub history and retains configurable signing, sponsorship disabled by default, attribution and assets. Build-time identity and sponsorship overrides used for phone installation are separate from the checked-in defaults.
+
+当前源码对应手机 1.0.7（5271），160 项产品输入均与装机冻结清单一致。保留已有 GitHub 历史和可移植构建配置；手机安装时的签名与赞助参数由构建命令另行提供。同步范围及本次验证见 [5271 源码记录](SOURCE_SYNC_5271.md)。这次源码同步不新建 Release、标签或 IPA，也不改变 App Store 发布。
+
+The sections below retain their original historical context; they are not the current version or validation report.
+
+## Historical snapshot 5135
 
 The current source is **1.0 (5135)**. It derives from local development commit `156e9f05425aa5f52ee8150d448a7f14b13ad2f0`, promoted to the local development mainline after the original favorite-entry issue was reported fixed on the installed device. All 151 frozen build inputs were verified before preparation. The development project now records build 5135 directly instead of relying on the installation command's version override.
 

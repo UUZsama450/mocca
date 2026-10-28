@@ -684,6 +684,7 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var chatInputBackgroundOpacityLight: Double
     var chatInputBackgroundOpacityDark: Double
     var useLiquidGlassComposer: Bool
+    // Legacy backup field; editor geometry is always immediate.
     var composerHeightAnimationEnabled: Bool
     var chatInputPlaceholder: String
     var composerModelEntryStyle: ComposerModelEntryStyle

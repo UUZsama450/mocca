@@ -77,13 +77,19 @@ private extension UIResponder {
     }
 }
 
+/// Read the observable target directly, without registering an animating
+/// Binding on the entire composer. Callbacks also read the live target when
+/// multiple native edits arrive before SwiftUI renders another body.
+struct ComposerInputHeightAccess {
+    let get: () -> (identity: ComposerInputIdentity, height: CGFloat)?
+    let set: ((identity: ComposerInputIdentity, height: CGFloat)?) -> Void
+}
+
 struct ComposerView: View {
-    @Binding var inputHeight: (identity: ComposerInputIdentity, height: CGFloat)?
-    var allowsHeightAnimation = true
-    var onInputHeightChange: (ComposerInputHeightChange) -> Void = { _ in }
+    let inputHeight: ComposerInputHeightAccess
+    var onInputHeightChange: (CGFloat) -> Void = { _ in }
     var onShellHeightChange: (CGFloat) -> Void = { _ in }
     var onMeasuredHeight: (CGFloat) -> Void = { _ in }
-    @Environment(\.composerHeightPresentation) private var heightPresentation
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
     @State private var isFocused = false
@@ -143,12 +149,7 @@ struct ComposerView: View {
             postScriptName: model.preferences.appFontPostScriptName,
             size: 18 * CGFloat(model.preferences.chatFontScale)
         )
-        let targetHeight = inputHeight?.identity == inputIdentity ? inputHeight?.height : nil
-        // The transcript still consumes the interpolated height when the editor
-        // itself is configured to resize immediately.
-        let displayedHeight = model.preferences.composerHeightAnimationEnabled && !reduceMotion
-            && heightPresentation?.identity == inputIdentity
-            ? heightPresentation?.inputHeight : targetHeight
+        let targetHeight = inputHeight.get().flatMap { $0.identity == inputIdentity ? $0.height : nil }
         let draftBinding = Binding(
             get: {
                 model.composerDraftText(for: conversationID)
@@ -215,15 +216,17 @@ struct ComposerView: View {
                 onSubmit: { submitDraft(for: conversationID) },
                 onLongPaste: receiveLongPaste,
                 editorFont: editorFont,
-                animatesHeightChanges: model.preferences.composerHeightAnimationEnabled && !reduceMotion,
-                onMeasuredHeight: { height, fromEdit, compositionEdit in
-                    updateInputHeight(height, fromEdit: fromEdit, compositionEdit: compositionEdit, identity: inputIdentity)
+                onMeasuredHeight: { height in
+                    updateInputHeight(height, identity: inputIdentity)
                 },
                 currentText: { model.composerDraftText(for: conversationID) },
                 sendSource: sendSource
             )
                 .id(inputIdentity)
-                .frame(height: displayedHeight, alignment: .top)
+                // Shell controls may animate independently. Their geometry
+                // must not refresh UIKit text traits or marked-text layout.
+                .environment(\.composerHeightPresentation, nil)
+                .frame(height: targetHeight, alignment: .top)
                 .clipped()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Use the shell's existing inset without changing text wrapping.
@@ -396,9 +399,7 @@ struct ComposerView: View {
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
         .onGeometryChange(for: CGFloat.self) { proxy in
-            // Report the final shell measurement. Its interpolated input height
-            // must not feed back into the parent's target on every frame.
-            proxy.size.height + (targetHeight ?? 0) - (displayedHeight ?? 0)
+            proxy.size.height
         } action: { onMeasuredHeight($0) }
         .onAppear {
             model.isComposerFocused = isFocused
@@ -443,21 +444,16 @@ struct ComposerView: View {
         #endif
     }
 
-    private func updateInputHeight(_ height: CGFloat, fromEdit: Bool, compositionEdit: Bool, identity: ComposerInputIdentity) {
+    private func updateInputHeight(_ height: CGFloat, identity: ComposerInputIdentity) {
         guard identity.conversationID == model.selectedConversationID,
               identity.resetRevision == inputResetID else { return }
-        let previous = inputHeight.flatMap { $0.identity == identity ? $0.height : nil }
+        let previous = inputHeight.get().flatMap { $0.identity == identity ? $0.height : nil }
         guard previous == nil || abs(previous! - height) > 0.5 else { return }
-        let change = previous.flatMap { old in
-            fromEdit && isFocused && allowsHeightAnimation && !reduceMotion
-                ? ComposerInputHeightChange(identity: identity, previous: old, target: height,
-                                            isCompositionEdit: compositionEdit) : nil
-        }
-        var transaction = Transaction(animation: change?.resolvedAnimation)
-        transaction.composerInputHeightChange = change
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
         withTransaction(transaction) {
-            inputHeight = (identity, height)
-            if let change { onInputHeightChange(change) }
+            inputHeight.set((identity, height))
+            if let previous { onInputHeightChange(height - previous) }
         }
     }
 

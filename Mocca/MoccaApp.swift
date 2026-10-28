@@ -58,6 +58,11 @@ struct MoccaApp: App {
                     // `scenePhase` can already be active when the first view is
                     // installed, in which case onChange does not fire.
                     await Task.yield()
+                    // Reclaim only our abandoned temporary ZIP files. If a full
+                    // disk blocked the initial chat load, retry after space is freed.
+                    if await ZIPAttachmentReader.shared.discardAbandonedFiles() {
+                        model.retryConversationStoreLoadIfNeeded()
+                    }
                     if shouldRunStartupServices { model.handleAppBecameActive() }
                 }
                 .task {

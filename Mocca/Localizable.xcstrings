@@ -1,6 +1,94 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "ZIP 文件损坏或内容不完整，请重新压缩后添加。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ZIP is damaged or incomplete. Create a new archive and attach it again."
+          }
+        }
+      }
+    },
+    "暂不支持加密 ZIP，请先解密后重新添加。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encrypted ZIP files are not supported. Decrypt the archive and attach it again."
+          }
+        }
+      }
+    },
+    "暂不支持嵌套压缩包、分卷、ZIP64 或此压缩方式，请使用普通 ZIP。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nested archives, split archives, ZIP64, or this compression method are not supported. Use a standard ZIP."
+          }
+        }
+      }
+    },
+    "ZIP 中没有可发送的文件。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ZIP contains no files to send."
+          }
+        }
+      }
+    },
+    "ZIP 含有不安全、重复的路径或链接，未发送其中的内容。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ZIP contains unsafe or duplicate paths, or links. Its contents were not sent."
+          }
+        }
+      }
+    },
+    "ZIP 中的文件无法完整读取：%@。请转换或移除后重新压缩。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A file in the ZIP could not be read completely: %@. Convert or remove it and create a new archive."
+          }
+        }
+      }
+    },
+    "正在检查 ZIP：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking ZIP: %@"
+          }
+        }
+      }
+    },
+    "正在解压 %@ · %@/%@ 个文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extracting %@ · file %@/%@"
+          }
+        }
+      }
+    },
     "\n\n这个原生备份不完整，已锁定恢复。请重新选择完整 ZIP，或回到旧 App 重新导出。": {
       "extractionState": "manual",
       "localizations": {
@@ -4241,6 +4329,17 @@
         }
       }
     },
+    "其他数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other Data"
+          }
+        }
+      }
+    },
     "其他模型": {
       "extractionState": "manual",
       "localizations": {
@@ -4375,6 +4474,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Share"
+          }
+        }
+      }
+    },
+    "分享 / 另存": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share / Save a Copy"
           }
         }
       }
@@ -4781,6 +4891,28 @@
         }
       }
     },
+    "删除备份不会删除当前聊天。导出临时备份会在下次导出时清理，需要保留请另存。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deleting a backup does not delete current chats. Temporary exports are cleared on the next export; save a copy if you want to keep one."
+          }
+        }
+      }
+    },
+    "删除备份文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Backup File"
+          }
+        }
+      }
+    },
     "删除当前版本": {
       "extractionState": "manual",
       "localizations": {
@@ -4968,6 +5100,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Delete this date?"
+          }
+        }
+      }
+    },
+    "删除这份备份？": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this backup?"
           }
         }
       }
@@ -5706,6 +5849,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Reads only this assistant's selected chats, excluding other assistants and group chats."
+          }
+        }
+      }
+    },
+    "只删除备份文件，不影响当前聊天、图片和设置。删除后无法再从这份文件恢复。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only the backup file will be deleted. Current chats, images, and settings stay intact. You will no longer be able to restore from this file."
           }
         }
       }
@@ -7095,6 +7249,28 @@
         }
       }
     },
+    "备份文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backup Files"
+          }
+        }
+      }
+    },
+    "备份文件已删除，当前聊天未改变。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backup deleted. Current chats are unchanged."
+          }
+        }
+      }
+    },
     "备份文件无效：%@": {
       "extractionState": "manual",
       "localizations": {
@@ -7612,6 +7788,17 @@
         }
       }
     },
+    "完全覆盖会先保留当前数据的安全备份，再用所选备份替换。智能合并会保留当前数据并补入未重复的内容。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overwrite saves a safety backup of your current data before replacing it with the selected backup. Merge keeps current data and adds content that is not already present."
+          }
+        }
+      }
+    },
     "完全覆盖会先自动备份当前 Mocca，再替换同类数据；智能合并只添加不存在的数据。": {
       "extractionState": "manual",
       "localizations": {
@@ -7816,6 +8003,28 @@
         }
       }
     },
+    "导入前安全备份": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Before Import"
+          }
+        }
+      }
+    },
+    "导入前安全备份已保留，可在“备份文件”中管理。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A safety backup was saved before import. Manage it in Backup Files."
+          }
+        }
+      }
+    },
     "导入前安全备份已保留，可通过“分享/保存最近备份”保存到设备之外": {
       "extractionState": "manual",
       "localizations": {
@@ -7827,13 +8036,13 @@
         }
       }
     },
-    "导入和处理大文件可能需要更多时间与本地空间，增加内存占用并导致界面卡顿。较长文本可能增加模型用量；文件能否被模型读取取决于格式，ZIP 等压缩包不会自动解压读取。": {
+    "导入和处理大文件可能需要更多时间与本地空间，增加内存占用并导致界面卡顿。较长文本可能增加模型用量。ZIP 会在发送前检查并解压；格式不受支持、文件损坏或处理失败时会提示。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Importing and processing large files may take longer, use more local storage and memory, and make the interface unresponsive. Long text may increase model usage. Whether a file can be read depends on its format; archives such as ZIP are not automatically extracted for reading."
+            "value": "Importing and processing large files may take longer, use more local storage and memory, and make the interface unresponsive. Long text may increase model usage. ZIP files are checked and extracted before sending; unsupported formats, damaged files, or processing failures will be reported."
           }
         }
       }
@@ -7878,6 +8087,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Export & Restore"
+          }
+        }
+      }
+    },
+    "导出临时备份": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Temporary Export"
           }
         }
       }
@@ -9100,17 +9320,6 @@
         }
       }
     },
-    "开启时，输入区域随换行平滑伸缩；关闭后仅输入框直接到位，聊天消息仍平滑跟随。手动滚动和光标闪烁不受影响。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Smoothly resize the input field as lines change. When off, only the input field resizes immediately; chat messages still follow smoothly. Manual scrolling and cursor blinking stay the same."
-          }
-        }
-      }
-    },
     "开始": {
       "extractionState": "manual",
       "localizations": {
@@ -9773,6 +9982,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Restore adds missing default holidays without overwriting your edits."
+          }
+        }
+      }
+    },
+    "恢复此备份": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore This Backup"
           }
         }
       }
@@ -10578,6 +10798,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "By recent days"
+          }
+        }
+      }
+    },
+    "按本机文件统计，可能与系统显示略有差异。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Based on local files. System storage may show a slightly different total."
           }
         }
       }
@@ -12589,6 +12820,17 @@
         }
       }
     },
+    "旧导入备份": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previous Import"
+          }
+        }
+      }
+    },
     "旧版 ZIP 备份": {
       "extractionState": "manual",
       "localizations": {
@@ -13163,6 +13405,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "No items"
+          }
+        }
+      }
+    },
+    "暂无备份文件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Backup Files"
           }
         }
       }
@@ -20166,6 +20419,17 @@
         }
       }
     },
+    "设置、字体、缓存等": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings, fonts, caches, and more"
+          }
+        }
+      }
+    },
     "设置已保存并完成本地安全处理，不会立即联网；可以手动整理，或恢复自动整理后等待正常时间。": {
       "extractionState": "manual",
       "localizations": {
@@ -21527,17 +21791,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Input"
-          }
-        }
-      }
-    },
-    "输入框伸缩动画": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Input field resize animation"
           }
         }
       }

@@ -29,9 +29,9 @@
 
 - **Your providers and models:** configure AI services and switch models between conversations.
 - **Conversations with context:** streaming replies, assistants, group chats, and assistant history searches by title or message content.
-- **More than text:** PDF text and page images, DOCX text and embedded images, configurable OCR, image replies with supported models, and voice services. See [document support and limits](docs/DOCUMENT_ATTACHMENTS.md).
+- **More than text:** ZIP archives, PDF text and page images, DOCX text and embedded images, configurable OCR, image replies with supported models, and voice services. See [document support and limits](docs/DOCUMENT_ATTACHMENTS.md).
 - **Optional tools:** web search and tool integrations, depending on the services you configure.
-- **Your local library:** on-device chat storage, backup and restore, and compatible imports from older backups.
+- **Your local library:** on-device chat storage, storage usage, local backup management, backup and restore, and compatible imports from older backups.
 - **Make it yours:** appearance, fonts, avatars, and a Chinese or English interface.
 
 Mocca does not include API keys or third-party service credits. Model capabilities, availability, and charges depend on your chosen provider.
@@ -46,7 +46,7 @@ Chats and attachments are stored locally. Requests send the data needed for the 
 
 ## Download
 
-The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The latest source release is **1.0.7 (5253)**; a new IPA is not attached yet. The earlier **1.0.5 (5237)** GitHub IPA preview requires your own signing; see [installation](docs/INSTALLATION.md) and [source verification](docs/RELEASE_1.0.5_5237.md). App Store updates are reviewed separately and released manually after approval.
+The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The current `main` source matches phone build **1.0.7 (5271)**; see [source verification](docs/SOURCE_SYNC_5271.md). This source update does not create a GitHub Release or a new IPA. The existing **1.0.7 (5253)** release and earlier **1.0.5 (5237)** IPA preview remain available; the IPA requires your own signing. See [installation](docs/INSTALLATION.md) and [IPA source verification](docs/RELEASE_1.0.5_5237.md). App Store updates are reviewed separately and released manually after approval.
 
 
 ## Build locally

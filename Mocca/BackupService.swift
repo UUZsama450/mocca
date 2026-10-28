@@ -540,7 +540,8 @@ enum BackupService {
     static func createBackup(
         options: BackupOptions,
         model: AppModel,
-        allowMissingAttachmentReferences: Bool = false
+        allowMissingAttachmentReferences: Bool = false,
+        preservingBackupAt sourceURL: URL? = nil
     ) async throws -> BackupCreationResult {
         if options.includeChats {
             let canExportChats = await MainActor.run {
@@ -552,7 +553,7 @@ enum BackupService {
         }
         let exportedAt = Date()
         let timestamp = Self.timestamp(for: exportedAt)
-        let directory = try createWorkDirectory(timestamp: timestamp)
+        let directory = try createWorkDirectory(timestamp: timestamp, preservingBackupAt: sourceURL)
         let outputURL = directory.appendingPathComponent("mocca_backup_\(timestamp).zip")
 
         var writer = ZipArchiveWriter()
@@ -821,27 +822,14 @@ enum BackupService {
         return formatter.string(from: date).replacingOccurrences(of: ":", with: "-")
     }
 
-    private static func createWorkDirectory(timestamp: String) throws -> URL {
+    private static func createWorkDirectory(timestamp: String, preservingBackupAt sourceURL: URL?) throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mocca_backups", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try cleanupPreviousBackups(in: root)
+        LocalBackupStore().cleanupPreviousExports(preserving: sourceURL)
         let directory = root.appendingPathComponent("mocca_backup_\(timestamp)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
-    }
-
-    private static func cleanupPreviousBackups(in root: URL) throws {
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return
-        }
-        for entry in entries where entry.lastPathComponent.hasPrefix("mocca_backup_") {
-            try? FileManager.default.removeItem(at: entry)
-        }
     }
 
     private static func applicationSupportDirectory() throws -> URL {

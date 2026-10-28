@@ -64,11 +64,27 @@ extension RowConfigurationApp {
         var deferred = context
         deferred.rows[0].isMessage = false
         controller.update(deferred)
+        controller.update(deferred)
         expect(controller.installedSnapshotForTest == context.rowsSnapshotID, "no-op does not claim unapplied rows")
         deferred.configuration.bottom += 6
         controller.update(deferred)
         expect(controller.installedSnapshotForTest == deferred.rowsSnapshotID, "later footer installs pending row snapshot")
         expect(controller.lookupForTest(id(1))?.isMessage == false, "later footer refreshes lookup metadata")
+
+        // A validated no-op must stop matching after another snapshot changes
+        // the installed keys, even if the old snapshot is presented again.
+        var replacement = deferred
+        replacement.rows[1] = row(2, height: 160, revision: 3)
+        controller.update(replacement)
+        await wait(); controller.collection.layoutIfNeeded()
+        expect(controller.lookupForTest(id(2))?.revision == replacement.rows[1].revision,
+               "changed revision retires earlier validation")
+        controller.update(deferred)
+        await wait(); controller.collection.layoutIfNeeded()
+        expect(controller.lookupForTest(id(2))?.revision == deferred.rows[1].revision,
+               "earlier validated snapshot can restore its revision")
+        expect(abs(controller.testedLayout.frame(for: id(2))!.height - 140) < 1,
+               "restored revision restores measured content")
 
         var duplicate = deferred
         duplicate.rows = [row(1), row(1)]

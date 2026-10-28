@@ -1019,6 +1019,7 @@ private struct NativeChatRowRevision: Hashable {
 private final class NativeTranscriptGeometryRelay {
     var geometry: NativeChatScrollGeometry?
     var codeFrames: [UUID: CGRect] = [:]
+    var acceptedMessageFrames: [UUID: CGRect] = [:]
 }
 
 /// This small leaf observes native geometry; a pan does not rebuild every
@@ -3598,7 +3599,7 @@ private struct DrawerAwareMessageNavigationPanelVisibility: ViewModifier {
 private struct DrawerAwareQuickReturnToBottom: View {
     @Environment(AppModel.self) private var model
     let baseVisible: Bool
-    let bottomPadding: CGFloat
+    let composerGeometry: ComposerGeometryState
     let onReturnToBottom: () -> Void
 
     var body: some View {
@@ -3606,7 +3607,7 @@ private struct DrawerAwareQuickReturnToBottom: View {
         Group {
             if isVisible {
                 QuickReturnToBottomButton(action: onReturnToBottom)
-                    .padding(.bottom, bottomPadding)
+                    .modifier(ComposerOverlayPadding(geometry: composerGeometry, additional: 8))
                     .transition(
                         .asymmetric(
                             insertion: .opacity
@@ -3642,6 +3643,56 @@ private struct ConversationSwitchFadeModifier: ViewModifier {
             MoveKeyframe(reduceMotion ? 1 : (currentOpacity < 1 ? max(0.25, currentOpacity) : 0.25))
             LinearKeyframe(1, duration: reduceMotion ? 0 : 0.10)
         }
+    }
+}
+
+/// Input geometry changes have their own observation scope. Message content
+/// remains owned by ChatView and does not depend on these changing heights.
+@MainActor @Observable private final class ComposerGeometryState {
+    var shellHeight: CGFloat = 110
+    var inputHeight: (identity: ComposerInputIdentity, height: CGFloat)?
+}
+
+private struct ComposerGeometryInput: View {
+    let geometry: ComposerGeometryState
+    let onInputHeightChange: (CGFloat) -> Void
+    let onShellHeightChange: (CGFloat) -> Void
+    let onMeasuredHeight: (CGFloat) -> Void
+
+    var body: some View {
+        ComposerView(
+            inputHeight: ComposerInputHeightAccess(
+                get: { geometry.inputHeight },
+                set: { geometry.inputHeight = $0 }
+            ),
+            onInputHeightChange: onInputHeightChange,
+            onShellHeightChange: onShellHeightChange,
+            onMeasuredHeight: onMeasuredHeight
+        )
+    }
+}
+
+private struct ComposerGeometryPresentation: ViewModifier {
+    let geometry: ComposerGeometryState
+    let additionalMessageClearance: CGFloat
+
+    func body(content: Content) -> some View {
+        content.modifier(ComposerShellGeometry(
+            identity: geometry.inputHeight?.identity,
+            shellHeight: geometry.shellHeight,
+            targetShellHeight: geometry.shellHeight,
+            additionalMessageClearance: additionalMessageClearance
+        ))
+    }
+}
+
+private struct ComposerOverlayPadding: ViewModifier {
+    let geometry: ComposerGeometryState
+    var additional: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content.padding(.bottom,
+            ComposerHeightPresentation.bottomClearance(for: geometry.shellHeight) + additional)
     }
 }
 
@@ -3688,7 +3739,13 @@ private struct ChatView: View {
     @State private var regenerationViewportTransitionCoordinator =
         RegenerationViewportTransitionCoordinator()
     @State private var activatedCoveredMessageTargetRequestID: UUID?
-    @State private var messageFrames: [UUID: CGRect] = [:]
+    // Navigation and an active send read current geometry when needed. Keep
+    // per-scroll frames out of ChatView's persistent State dependencies after
+    // the send has finished, so editing does not rebuild all message hosts.
+    private var messageFrames: [UUID: CGRect] {
+        get { nativeTranscriptGeometry.acceptedMessageFrames }
+        nonmutating set { nativeTranscriptGeometry.acceptedMessageFrames = newValue }
+    }
     @State private var messageFramesAnchorID: ConversationBottomAnchorID?
     @State private var messageFramesLayoutRequestID: UUID?
     @State private var messageFrameGeneration: UInt64 = 0
@@ -3726,8 +3783,11 @@ private struct ChatView: View {
     @State private var autoFollowEngaged = true
     @State private var offscreenStreamingDisplayState =
         OffscreenStreamingDisplayState()
-    @State private var composerHeight: CGFloat = 110
-    @State private var composerInputHeight: (identity: ComposerInputIdentity, height: CGFloat)?
+    @State private var composerGeometry = ComposerGeometryState()
+    private var composerHeight: CGFloat {
+        get { composerGeometry.shellHeight }
+        nonmutating set { composerGeometry.shellHeight = newValue }
+    }
     @State private var isQuickReturnToBottomVisible = false
     @State private var nativeBottomEdgeRearmRequest = 0
     @State private var nativeSendExactBottomHandoffRequest = 0
@@ -4151,11 +4211,13 @@ private struct ChatView: View {
             rows: rows,
             configuration: NativeChatLayoutConfiguration(
                 top: topContentSpacerHeight + messageListTopPadding,
-                bottom: composerBottomClearance,
+                // Resolved in the viewport below; it must not make this
+                // message-content construction observe input height changes.
+                bottom: 0,
                 gap: conversationMessageSpacing,
                 minimumIncludesTopInset: visibleMessageCount > 0 && !isFreshConversationFirstMessage,
                 alignShortContentToBottom: false,
-                bottomFollowClearance: max(0, composerOverlayBottomClearance - composerHeight)
+                bottomFollowClearance: 0
             ),
             publicationID: AnyHashable(publicationID),
             sessionID: AnyHashable(model.selectedConversationID),
@@ -4211,6 +4273,8 @@ private struct ChatView: View {
         // only copy the transcript value and update its viewport metrics.
         return GeometryReader { viewport in
             var input = transcript
+            input.configuration.bottom = composerBottomClearance
+            input.configuration.bottomFollowClearance = max(0, composerOverlayBottomClearance - composerHeight)
             input.configuration.viewportInsets = UIEdgeInsets(
                 top: viewport.safeAreaInsets.top, left: 0,
                 bottom: viewport.safeAreaInsets.bottom, right: 0
@@ -5211,7 +5275,7 @@ private struct ChatView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 18)
                     .padding(.top, 108)
-                    .padding(.bottom, composerOverlayBottomClearance)
+                    .modifier(ComposerOverlayPadding(geometry: composerGeometry))
                     // The empty artwork keeps its original full-height layout;
                     // only the transcript consumes the registered top bar.
                     .ignoresSafeArea(.container, edges: .top)
@@ -5291,17 +5355,14 @@ private struct ChatView: View {
         .overlay(alignment: .bottom) {
             measuredComposer
         }
-        .modifier(ComposerHeightAnimation(
-            identity: composerInputHeight?.identity,
-            inputHeight: composerInputHeight?.height ?? 0,
-            targetInputHeight: composerInputHeight?.height ?? 0,
-            targetShellHeight: composerHeight,
+        .modifier(ComposerGeometryPresentation(
+            geometry: composerGeometry,
             additionalMessageClearance: composerMessageClearance
         ))
         .overlay(alignment: .bottom) {
             DrawerAwareQuickReturnToBottom(
                 baseVisible: shouldShowQuickReturnToBottomIgnoringDrawer,
-                bottomPadding: composerOverlayBottomClearance + 8,
+                composerGeometry: composerGeometry,
                 onReturnToBottom: requestQuickReturnToBottom
             )
         }
@@ -5316,7 +5377,7 @@ private struct ChatView: View {
                 onBottom: { requestMessageNavigation(.bottom) }
             )
             .padding(.trailing, 8)
-            .padding(.bottom, composerOverlayBottomClearance + 8)
+            .modifier(ComposerOverlayPadding(geometry: composerGeometry, additional: 8))
             // Scope the transition to this small leaf. Applying animation to
             // ChatView itself makes drawer-close and conversation-bottom reset
             // join the same transaction, which was 4472's switch regression.
@@ -5650,7 +5711,7 @@ private struct ChatView: View {
     private var currentConversationBottomAnchorID: ConversationBottomAnchorID {
         ConversationBottomAnchorID(
             positionRequest: currentConversationPositionRequest,
-            messageIDs: model.messages.map(\.id)
+            messageIDs: model.transcriptMessageIDs
         )
     }
 
@@ -6544,18 +6605,13 @@ private struct ChatView: View {
     }
 
     private var measuredComposer: some View {
-        ComposerView(
-            inputHeight: $composerInputHeight,
-            allowsHeightAnimation: !model.selectedConversationIsStreaming && !isUserMessageSendPositioning,
-            onInputHeightChange: { change in
-                guard change.identity.conversationID == model.selectedConversationID else { return }
-                // The shared height animation derives both consumers' geometry
-                // from this one input measurement, including interrupted edits.
-                composerHeight += change.delta
-            },
+        ComposerGeometryInput(
+            geometry: composerGeometry,
+            onInputHeightChange: { composerHeight += $0 },
             onShellHeightChange: { composerHeight += $0 },
             onMeasuredHeight: updateComposerHeight
         )
+            .environment(\.composerHeightPresentation, nil)
             #if DEBUG
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .global)
@@ -6599,7 +6655,7 @@ private struct ChatView: View {
         )
     }
 
-    // Reserve one editor line for immediate growth while messages keep moving.
+    // Preserve the accepted visual gap between the editor and message tail.
     // Cap unusually tall fonts; keep this out of the shell and controls' layout.
     private var composerMessageClearance: CGFloat {
         min(32, ceil(AppFontStore.uiFont(
@@ -6692,9 +6748,10 @@ private struct ChatView: View {
     }
 
     private var isPositioningCurrentConversation: Bool {
-        guard !model.messages.isEmpty else { return false }
-        return positioningConversationID == model.selectedConversationID
-            || model.conversationBottomReturnTargetID == model.selectedConversationID
+        guard positioningConversationID == model.selectedConversationID
+                || model.conversationBottomReturnTargetID == model.selectedConversationID
+        else { return false }
+        return !model.messages.isEmpty
     }
 
     private var isOrdinaryConversationReturn: Bool {
@@ -8445,9 +8502,9 @@ private struct ChatView: View {
     private func finishConversationReturnIfConcreteTailIsAtBottom(
         anchorID: ConversationBottomAnchorID
     ) {
-        guard currentConversationBottomAnchorID == anchorID,
+        guard isPositioningCurrentConversation,
+              currentConversationBottomAnchorID == anchorID,
               nativeConversationContentReadyAnchorID == anchorID,
-              isPositioningCurrentConversation,
               hasConcreteTailFrame(for: anchorID),
               !isNativeScrollMotionInFlight,
               currentUIKitBottomState?.isAtBottom == true else { return }

@@ -34,9 +34,13 @@ enum DOCXDocumentReader {
         var data = Data()
         let checksum = try archive.extract(entry, bufferSize: 64 * 1024) { chunk in
             try Task.checkCancellation()
+            guard UInt64(data.count) <= entry.uncompressedSize,
+                  UInt64(chunk.count) <= entry.uncompressedSize - UInt64(data.count) else {
+                throw DocumentReadError.unreadable
+            }
             data.append(chunk)
         }
-        guard checksum == entry.checksum else { throw DocumentReadError.unreadable }
+        guard UInt64(data.count) == entry.uncompressedSize, checksum == entry.checksum else { throw DocumentReadError.unreadable }
         return data
     }
 

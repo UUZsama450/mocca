@@ -23,7 +23,7 @@ import XCTest
     }
     func launch(_ fixture: String) {
         continueAfterFailure = false
-        app.launchArguments = ["-previewNativeReadingFixture", fixture, "-skipStartupPrompt", "-fullMotionLean",
+        app.launchArguments = ["-previewNativeReadingFixture", fixture, "-skipStartupPrompt", "-fullMotionLean", "-nativeComposerDriver",
             "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
         XCTAssertTrue(input.waitForExistence(timeout: 30), app.debugDescription)
@@ -64,4 +64,26 @@ import XCTest
     func testShortWrapAndShrink() { exercise("short", history: false) }
     func testLongBottomWrapAndShrink() { exercise("window500", history: false) }
     func testLongHistoryWrapAndShrink() { exercise("window500", history: true) }
+    func testEmptyConversationWrapAndShrink() {
+        launch("short")
+        let newChat = app.buttons["新聊天"].firstMatch
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10))
+        newChat.tap()
+        wait("empty conversation") {
+            !self.transcript.exists || (self.state()?["total"] as? Int) == 0
+        }
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        let initialHeight = input.frame.height
+        let text = String(repeating: "Empty composer wraps smoothly. ", count: 5)
+        input.typeText(text)
+        wait("empty composer grew") { self.input.frame.height > initialHeight + 15 }
+        record("empty-grown")
+        XCTAssertTrue((input.value as? String ?? "").contains("Empty composer wraps smoothly."))
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: text.count))
+        wait("empty composer shrank") { self.input.frame.height <= initialHeight + 1 }
+        record("empty-shrunk")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
 }

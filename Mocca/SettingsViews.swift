@@ -100,7 +100,6 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "助手消息行间距", context: "偏好设置", keywords: "行距", systemImage: "arrow.up.and.down.text.horizontal", destination: .preferenceSheet(.assistantLineSpacing)),
         .init(title: "Markdown 列表间距", context: "偏好设置", keywords: "列表 行距", systemImage: "list.bullet", destination: .preferenceSheet(.assistantMarkdownListItemSpacing)),
         .init(title: "Markdown 块间距", context: "偏好设置", keywords: "段落 标题 留白", systemImage: "text.alignleft", destination: .preferenceSheet(.assistantMarkdownBlockSpacing)),
-        .init(title: "输入框伸缩动画", context: "偏好设置 · 输入框", keywords: "输入 动画 换行 光标 高度 animation", systemImage: "arrow.up.and.down", destination: .preferences),
         .init(title: "输入框占位文字", context: "偏好设置", keywords: "输入 placeholder", systemImage: "text.cursor", destination: .preferenceSheet(.inputPlaceholder)),
         .init(title: "模型入口样式", context: "偏好设置 · 输入框", keywords: "模型 名称 气泡 图标 选择", systemImage: "sparkles", destination: .preferenceSheet(.modelEntryStyle)),
         .init(title: "输入框背景透明度", context: "偏好设置", keywords: "输入 透明度 亮 暗", systemImage: "circle.lefthalf.filled", destination: .preferenceSheet(.inputOpacity)),
@@ -474,6 +473,7 @@ struct SettingsView: View {
                 searchDestination(destination)
             }
         }
+        .modifier(SettingsNavigationTintModifier())
     }
 
     private var normalizedSearchText: String {
@@ -1670,6 +1670,20 @@ private struct SettingsOverviewRowBackground: View {
     }
 }
 
+private struct SettingsNavigationTintModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+        } else {
+            // Legacy navigation bars otherwise pick up the green AccentColor
+            // asset. Keep navigation neutral, like Liquid Glass; each settings
+            // page still supplies its own action, switch and slider colors.
+            content.tint(.primary)
+        }
+    }
+}
+
 private struct SettingsSwitchThemeModifier: ViewModifier {
     @Environment(AppModel.self) private var model
 
@@ -2518,14 +2532,7 @@ private struct OCRPromptEditorPage: View {
     }
 }
 
-private struct LocalStorageBucket: Identifiable {
-    enum Kind: String { case images, files, chats, assistants, legacy }
-    let kind: Kind
-    let bytes: Int64
-    let fileCount: Int
-    let urls: [URL]
-    var id: Kind { kind }
-
+private extension LocalStorageBucket {
     @MainActor var title: String {
         switch kind {
         case .images: L10n.lookup("图片")
@@ -2533,6 +2540,8 @@ private struct LocalStorageBucket: Identifiable {
         case .chats: L10n.lookup("聊天记录")
         case .assistants: L10n.lookup("助手")
         case .legacy: L10n.lookup("旧版导入文件")
+        case .backups: L10n.lookup("备份文件")
+        case .other: L10n.lookup("其他数据")
         }
     }
 
@@ -2543,47 +2552,8 @@ private struct LocalStorageBucket: Identifiable {
         case .chats: "bubble.left.and.bubble.right"
         case .assistants: "person.crop.circle"
         case .legacy: "archivebox"
-        }
-    }
-}
-
-private enum LocalStorageInspector {
-    static func scan() -> [LocalStorageBucket] {
-        guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return []
-        }
-        let attachmentFiles = files(in: root.appendingPathComponent("Attachments", isDirectory: true))
-        let imageExtensions = Set(["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"])
-        let images = attachmentFiles.filter { imageExtensions.contains($0.pathExtension.lowercased()) }
-        let regularFiles = attachmentFiles.filter { !imageExtensions.contains($0.pathExtension.lowercased()) }
-        let chats = files(in: root.appendingPathComponent("ConversationStore", isDirectory: true))
-        let assistants = files(in: root.appendingPathComponent("AssistantMedia", isDirectory: true))
-        let legacy = files(in: root.appendingPathComponent("LegacyKelivoFiles", isDirectory: true))
-        return [
-            bucket(.images, images), bucket(.files, regularFiles), bucket(.chats, chats),
-            bucket(.assistants, assistants), bucket(.legacy, legacy)
-        ]
-    }
-
-    static func byteCount(of url: URL) -> Int64 {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .totalFileAllocatedSizeKey])
-        return Int64(values?.totalFileAllocatedSize ?? values?.fileSize ?? 0)
-    }
-
-    private static func bucket(_ kind: LocalStorageBucket.Kind, _ urls: [URL]) -> LocalStorageBucket {
-        LocalStorageBucket(kind: kind, bytes: urls.reduce(0) { $0 + byteCount(of: $1) }, fileCount: urls.count, urls: urls)
-    }
-
-    private static func files(in directory: URL) -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .totalFileAllocatedSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-        return enumerator.compactMap { item in
-            guard let url = item as? URL,
-                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return nil }
-            return url
+        case .backups: "externaldrive"
+        case .other: "folder"
         }
     }
 }
@@ -2593,6 +2563,7 @@ private struct StorageSpacePage: View {
     @State private var buckets: [LocalStorageBucket] = []
     @State private var isLoading = true
     @State private var confirmsDeleteAllChats = false
+    @State private var refreshID = UUID()
 
     private var totalBytes: Int64 { buckets.reduce(0) { $0 + $1.bytes } }
 
@@ -2609,9 +2580,16 @@ private struct StorageSpacePage: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { refresh() } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(isLoading)
             }
         }
-        .task { refresh() }
+        .task(id: refreshID) {
+            isLoading = true
+            let result = await Task.detached(priority: .userInitiated) { LocalStorageInspector.scan() }.value
+            guard !Task.isCancelled else { return }
+            buckets = result
+            isLoading = false
+        }
         .alert(L10n.lookup("删除全部聊天记录？"), isPresented: $confirmsDeleteAllChats) {
             Button(L10n.lookup("取消"), role: .cancel) {}
             Button(L10n.lookup("全部删除"), role: .destructive) {
@@ -2641,10 +2619,14 @@ private struct StorageSpacePage: View {
     }
 
     private var detailSection: some View {
-        Section(L10n.lookup("明细")) {
+        Section {
             ForEach(buckets) { bucket in
                 storageDestination(for: bucket)
             }
+        } header: {
+            Text(L10n.lookup("明细"))
+        } footer: {
+            Text(L10n.lookup("按本机文件统计，可能与系统显示略有差异。"))
         }
     }
 
@@ -2653,6 +2635,12 @@ private struct StorageSpacePage: View {
         if bucket.kind == .chats {
             NavigationLink {
                 StoredConversationsPage { refresh() }
+            } label: {
+                storageRow(bucket)
+            }
+        } else if bucket.kind == .backups {
+            NavigationLink {
+                BackupPage(showsStoredBackups: true, onStorageChanged: refresh)
             } label: {
                 storageRow(bucket)
             }
@@ -2708,7 +2696,8 @@ private struct StorageSpacePage: View {
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.lookup(bucket.title))
-                Text(L10n.format("%@ 个文件", [String(describing: bucket.fileCount)]))
+                Text(bucket.kind == .other ? L10n.lookup("设置、字体、缓存等")
+                    : L10n.format("%@ 个文件", [String(describing: bucket.fileCount)]))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -2717,11 +2706,7 @@ private struct StorageSpacePage: View {
         }
     }
 
-    private func refresh() {
-        isLoading = true
-        buckets = LocalStorageInspector.scan()
-        isLoading = false
-    }
+    private func refresh() { refreshID = UUID() }
 }
 
 private struct StoredConversationsPage: View {
@@ -3823,23 +3808,6 @@ struct PreferencesPage: View {
                 ) {
                     activeSheet = .inputPlaceholder
                 }
-
-                Toggle(
-                    isOn: Binding(
-                        get: { model.preferences.composerHeightAnimationEnabled },
-                        set: { value in
-                            model.performSwitchHaptic()
-                            model.updatePreferences { $0.composerHeightAnimationEnabled = value }
-                        }
-                    )
-                ) {
-                    SettingsRowLabel(title: L10n.lookup("输入框伸缩动画"), systemImage: "arrow.up.and.down")
-                }
-                .accessibilityIdentifier("composerHeightAnimationEnabled")
-
-                Text(L10n.lookup("开启时，输入区域随换行平滑伸缩；关闭后仅输入框直接到位，聊天消息仍平滑跟随。手动滚动和光标闪烁不受影响。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
                 Toggle(
                     isOn: Binding(
@@ -6270,9 +6238,17 @@ private enum BackupImportActivity {
 
 private struct BackupPage: View {
     @Environment(AppModel.self) private var model
+    var showsStoredBackups = false
+    var onStorageChanged: () -> Void = {}
+    @State private var storedBackups: [LocalBackupFile] = []
+    @State private var isLoadingBackups = true
+    @State private var isDeletingBackup = false
+    @State private var selectedBackup: LocalBackupFile?
+    @State private var isBackupActionsPresented = false
+    @State private var backupToDelete: LocalBackupFile?
+    @State private var confirmsDeleteBackup = false
     @State private var options = BackupOptionsPersistence.load()
     @State private var isExporting = false
-    @State private var lastBackupURL: URL? = BackupService.latestSafetyBackupURL()
     @State private var shareItem: BackupShareItem?
     @State private var statusMessage: String?
     @State private var errorMessage: String?
@@ -6287,114 +6263,81 @@ private struct BackupPage: View {
 
     var body: some View {
         List {
-            Section {
-                Toggle(isOn: includeChatsBinding) {
-                    SettingsRowLabel(title: L10n.lookup("聊天记录"), systemImage: "message")
-                }
-                Toggle(isOn: includeFilesBinding) {
-                    SettingsRowLabel(title: L10n.lookup("文件"), systemImage: "doc")
-                }
-            } header: {
-                Text(L10n.lookup("备份管理"))
-            } footer: {
-                Text(L10n.lookup("导出时可选择是否包含聊天记录和附件、头像、背景文件。"))
-            }
-
-            Section {
-                Button {
-                    selectBackup()
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "shippingbox.and.arrow.backward")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(importActivityTitle(defaultTitle: L10n.lookup("导入备份")))
-                                .foregroundStyle(.primary)
-                            Text(L10n.lookup("从兼容的 ZIP 备份导入助手、设置、世界书和聊天"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if isImportBusy { ProgressView() }
+            if showsStoredBackups {
+                storedBackupSection
+            } else {
+                Section {
+                    Toggle(isOn: includeChatsBinding) {
+                        SettingsRowLabel(title: L10n.lookup("聊天记录"), systemImage: "message")
                     }
-                }
-                .buttonStyle(.plain)
-                .disabled(isExporting || isImportBusy)
-
-                Button {
-                    exportBackup()
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(isExporting ? L10n.lookup("正在导出...") : L10n.lookup("导出为文件"))
-                                .foregroundStyle(.primary)
-                            Text(L10n.lookup("打包 APP 数据为 ZIP 备份文件"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if isExporting {
-                            ProgressView()
-                        }
+                    Toggle(isOn: includeFilesBinding) {
+                        SettingsRowLabel(title: L10n.lookup("文件"), systemImage: "doc")
                     }
+                } header: {
+                    Text(L10n.lookup("备份管理"))
+                } footer: {
+                    Text(L10n.lookup("导出时可选择是否包含聊天记录和附件、头像、背景文件。"))
                 }
-                .buttonStyle(.plain)
-                .disabled(isExporting || isImportBusy)
 
-                Button {
-                    selectBackup()
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(importActivityTitle(defaultTitle: L10n.lookup("Mocca 备份恢复")))
-                                .foregroundStyle(.primary)
-                            Text(L10n.lookup("恢复由当前原生版导出的 ZIP 备份"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if isImportBusy {
-                            ProgressView()
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(isExporting || isImportBusy)
-
-                if let lastBackupURL {
+                Section {
                     Button {
-                        shareItem = BackupShareItem(url: lastBackupURL)
+                        selectBackup()
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: "checkmark.circle")
+                            Image(systemName: "shippingbox.and.arrow.backward")
                                 .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(.green)
+                                .foregroundStyle(.secondary)
                                 .frame(width: 28)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(L10n.lookup("分享/保存最近备份"))
+                                Text(importActivityTitle(defaultTitle: L10n.lookup("导入备份")))
                                     .foregroundStyle(.primary)
-                                Text("\(lastBackupURL.lastPathComponent) · \(BackupService.backupDirectorySizeDescription(lastBackupURL))")
+                                Text(L10n.lookup("从兼容的 ZIP 备份导入助手、设置、世界书和聊天"))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            if isImportBusy { ProgressView() }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isExporting || isImportBusy)
+
+                    Button {
+                        exportBackup()
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 28)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(isExporting ? L10n.lookup("正在导出...") : L10n.lookup("导出为文件"))
+                                    .foregroundStyle(.primary)
+                                Text(L10n.lookup("打包 APP 数据为 ZIP 备份文件"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if isExporting {
+                                ProgressView()
                             }
                         }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(isExporting || isImportBusy)
+
+                    NavigationLink {
+                        BackupPage(showsStoredBackups: true)
+                    } label: {
+                        SettingsRowLabel(title: L10n.lookup("备份文件"), systemImage: "externaldrive")
+                    }
+                    .disabled(isExporting || isImportBusy)
+                } header: {
+                    Text(L10n.lookup("本机备份"))
+                } footer: {
+                    Text(L10n.lookup("选择 ZIP 后会自动识别备份格式，并核对聊天与附件数量；完整性检查通过后，才会让你选择导入方式。系统相册、通知等权限需要在新 App 中重新允许。备份可能包含聊天与 API 密钥，请妥善保管。"))
                 }
-            } header: {
-                Text(L10n.lookup("本机备份"))
-            } footer: {
-                Text(L10n.lookup("选择 ZIP 后会自动识别备份格式，并核对聊天与附件数量；完整性检查通过后，才会让你选择导入方式。系统相册、通知等权限需要在新 App 中重新允许。备份可能包含聊天与 API 密钥，请妥善保管。"))
+
             }
 
             if let statusMessage {
@@ -6408,11 +6351,12 @@ private struct BackupPage: View {
                 Section {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
+                        .accessibilityIdentifier("backup-error")
                 }
             }
         }
         .settingsGroupedPageStyle()
-        .disabled(isImportBusy)
+        .disabled(isImportBusy || isDeletingBackup)
         .accessibilityHidden(isImportBusy)
         .overlay {
             if let importActivity {
@@ -6438,10 +6382,39 @@ private struct BackupPage: View {
                 }
             }
         }
-        .navigationTitle(L10n.lookup("备份与还原"))
+        .navigationTitle(L10n.lookup(showsStoredBackups ? "备份文件" : "备份与还原"))
+        .task { if showsStoredBackups { await refreshStoredBackups() } }
+        .toolbar {
+            if showsStoredBackups {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { Task { await refreshStoredBackups() } } label: {
+                        if isLoadingBackups || isDeletingBackup { ProgressView() }
+                        else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .disabled(isLoadingBackups || isDeletingBackup || isImportBusy)
+                }
+            }
+        }
+        .confirmationDialog(L10n.lookup("备份文件"), isPresented: $isBackupActionsPresented,
+                            titleVisibility: .visible, presenting: selectedBackup) { backup in
+            Button(L10n.lookup("恢复此备份")) { inspectBackup(from: backup.url) }
+            Button(L10n.lookup("分享 / 另存")) { shareItem = BackupShareItem(url: backup.url) }
+            Button(L10n.lookup("删除备份文件"), role: .destructive) {
+                backupToDelete = backup
+                confirmsDeleteBackup = true
+            }
+            Button(L10n.lookup("取消"), role: .cancel) {}
+        }
+        .alert(L10n.lookup("删除这份备份？"), isPresented: $confirmsDeleteBackup,
+               presenting: backupToDelete) { backup in
+            Button(L10n.lookup("取消"), role: .cancel) {}
+            Button(L10n.lookup("删除"), role: .destructive) { deleteStoredBackup(backup) }
+        } message: { _ in
+            Text(L10n.lookup("只删除备份文件，不影响当前聊天、图片和设置。删除后无法再从这份文件恢复。"))
+        }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(isImportBusy)
-        .interactiveDismissDisabled(isImportBusy)
+        .navigationBarBackButtonHidden(isImportBusy || isExporting || isDeletingBackup)
+        .interactiveDismissDisabled(isImportBusy || isExporting || isDeletingBackup)
         .sheet(item: $shareItem) { item in
             ActivityShareSheet(items: [item.url])
         }
@@ -6478,7 +6451,7 @@ private struct BackupPage: View {
             }
             Button(L10n.lookup("取消"), role: .cancel) {}
         } message: {
-            Text(L10n.lookup("完全覆盖会先自动备份当前 Mocca，再替换同类数据；智能合并只添加不存在的数据。"))
+            Text(L10n.lookup("完全覆盖会先保留当前数据的安全备份，再用所选备份替换。智能合并会保留当前数据并补入未重复的内容。"))
         }
         .fileImporter(
             isPresented: $isFileImporterPresented,
@@ -6492,6 +6465,77 @@ private struct BackupPage: View {
             case .failure(let error):
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private var storedBackupSection: some View {
+        Section {
+            if storedBackups.isEmpty && !isLoadingBackups {
+                ContentUnavailableView(L10n.lookup("暂无备份文件"), systemImage: "externaldrive")
+                    .listRowBackground(Color.clear)
+            }
+            ForEach(storedBackups) { backup in
+                Button {
+                    selectedBackup = backup
+                    isBackupActionsPresented = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "archivebox")
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(backupTitle(backup.kind)).foregroundStyle(.primary)
+                            Text(backup.modifiedAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(byteString(backup.bytes)).foregroundStyle(.secondary)
+                        Image(systemName: "ellipsis").foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("stored-backup-" + backup.url.lastPathComponent)
+                .swipeActions(allowsFullSwipe: false) {
+                    Button(L10n.lookup("删除"), role: .destructive) {
+                        backupToDelete = backup
+                        confirmsDeleteBackup = true
+                    }
+                }
+            }
+        } footer: {
+            Text(L10n.lookup("删除备份不会删除当前聊天。导出临时备份会在下次导出时清理，需要保留请另存。"))
+        }
+    }
+
+    private func backupTitle(_ kind: LocalBackupFile.Kind) -> String {
+        switch kind {
+        case .safety: L10n.lookup("导入前安全备份")
+        case .exported: L10n.lookup("导出临时备份")
+        case .imported: L10n.lookup("旧导入备份")
+        }
+    }
+
+    private func refreshStoredBackups() async {
+        guard showsStoredBackups else { return }
+        isLoadingBackups = true
+        storedBackups = await Task.detached(priority: .userInitiated) { LocalBackupStore().backups() }.value
+        isLoadingBackups = false
+    }
+
+    private func deleteStoredBackup(_ backup: LocalBackupFile) {
+        isDeletingBackup = true
+        statusMessage = nil
+        errorMessage = nil
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) { try LocalBackupStore().remove(backup) }.value
+                statusMessage = L10n.lookup("备份文件已删除，当前聊天未改变。")
+                onStorageChanged()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            await refreshStoredBackups()
+            isDeletingBackup = false
         }
     }
 
@@ -6577,7 +6621,6 @@ private struct BackupPage: View {
             do {
                 let result = try await BackupService.createBackup(options: options, model: model)
                 await MainActor.run {
-                    lastBackupURL = result.url
                     statusMessage = result.message
                     shareItem = BackupShareItem(url: result.url)
                     isExporting = false
@@ -6602,22 +6645,23 @@ private struct BackupPage: View {
                     let created = try await BackupService.createBackup(
                         options: BackupOptions(includeChats: true, includeFiles: true),
                         model: model,
-                        allowMissingAttachmentReferences: true
+                        allowMissingAttachmentReferences: true,
+                        preservingBackupAt: url
                     )
                     let preserved = try BackupService.preserveSafetyBackup(created)
                     safetyBackup = preserved
                     await MainActor.run {
-                        lastBackupURL = preserved.url
-                        statusMessage = L10n.lookup("导入前安全备份已保留，可通过“分享/保存最近备份”保存到设备之外")
+                        statusMessage = L10n.lookup("导入前安全备份已保留，可在“备份文件”中管理。")
                         importActivity = .restoring
                     }
                 } else {
                     safetyBackup = nil
                 }
                 let summary = try await BackupService.restoreBackup(from: url, mode: mode, model: model)
+                await refreshStoredBackups()
+                onStorageChanged()
                 await MainActor.run {
                     if let safetyBackup {
-                        lastBackupURL = safetyBackup.url
                         statusMessage = summary.message + L10n.lookup("；导入前安全备份已保留")
                         if !safetyBackup.warnings.isEmpty {
                             statusMessage? += "（" + safetyBackup.warnings.joined(separator: "；") + "）"
@@ -6630,6 +6674,8 @@ private struct BackupPage: View {
                     importActivity = nil
                 }
             } catch {
+                await refreshStoredBackups()
+                onStorageChanged()
                 await MainActor.run {
                     errorMessage = error.localizedDescription
                     importActivity = nil

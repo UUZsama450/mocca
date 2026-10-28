@@ -97,17 +97,16 @@ private struct GroupComposerTestRoot: View {
             publicationID: 0, sessionID: AnyHashable(state.model.selectedConversationID), driver: state.driver,
             hasEarlier: false, hasLater: false, initialBottom: false)
         .overlay(alignment: .bottom) {
-            ComposerView(inputHeight: $state.input,
-                onInputHeightChange: { state.shell += $0.delta },
+            ComposerView(inputHeight: .init(get: { state.input }, set: { state.input = $0 }),
+                onInputHeightChange: { state.shell += $0 },
                 onShellHeightChange: state.shellChanged,
                 onMeasuredHeight: { height in
                     if height > 0, abs(state.shell - height) > 0.5 { state.shell = height }
                 })
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { state.presentedShell = $0 }
         }
-        .modifier(ComposerHeightAnimation(identity: state.input?.identity,
-            inputHeight: state.input?.height ?? 0, targetInputHeight: state.input?.height ?? 0,
-            targetShellHeight: state.shell))
+        .modifier(ComposerShellGeometry(identity: state.input?.identity,
+            shellHeight: state.shell, targetShellHeight: state.shell, additionalMessageClearance: 0))
         .overlay(alignment: .top) {
             Text("Motion report").accessibilityIdentifier("groupMotion.report").accessibilityValue(state.report)
         }

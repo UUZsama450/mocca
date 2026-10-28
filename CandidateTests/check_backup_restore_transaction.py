@@ -43,6 +43,15 @@ fields = re.findall(r"let old\w+ = (\w+)\n", rollback)
 assert len(fields) >= 25 and len(fields) == len(set(fields))
 mock = """
 enum ConversationStoreError: Error { case persistenceBlocked, missingApplicationSupport }
+enum ErrorLocalization {
+    static func lookup(_ key: String) -> String { key }
+    static func format(_ key: String, _ values: [CVarArg]) -> String { String(format: key, arguments: values) }
+}
+struct MCPServerRuntimeState {
+    enum Status { case idle, connecting }
+    var status: Status = .idle
+}
+struct StreamingCheckpoints { func cancelPending() {} }
 final class SaveExecutor {
     var resets = 0
     func resetFailureSynchronously() { resets += 1 }
@@ -52,6 +61,8 @@ final class ModelFixture {
     var interactionPersistenceTask: Task<Void, Never>?
     var conversationPersistenceEpoch: UInt64 = 0
     var conversationStoreSaveExecutor: SaveExecutor? = SaveExecutor()
+    var streamingCheckpoints = StreamingCheckpoints()
+    var mcpRefreshRequestIDs: [UUID: UUID] = [:]
     var canRestore = true
     var canSave = true
     var blocks = 0
@@ -62,9 +73,11 @@ final class ModelFixture {
     func saveImmediately() -> Bool { canSave }
     func blockConversationPersistence(_ reason: String) { blocks += 1 }
 """
-mock += "\n".join(f"    var {name} = {i + 1}" for i, name in enumerate(fields))
-mock += "\n    func mutateAll() {\n" + "\n".join(f"        {n} += 1000" for n in fields) + "\n    }\n"
-mock += "    var allValues: [Int] { [" + ", ".join(fields) + "] }\n"
+mock += "\n".join("    var mcpRuntimeStates: [UUID: MCPServerRuntimeState] = [:]" if name == "mcpRuntimeStates"
+                  else f"    var {name} = {i + 1}" for i, name in enumerate(fields))
+mock += "\n    func mutateAll() {\n" + "\n".join("        mcpRuntimeStates[UUID()] = MCPServerRuntimeState()" if n == "mcpRuntimeStates"
+                  else f"        {n} += 1000" for n in fields) + "\n    }\n"
+mock += "    var allValues: [Int] { [" + ", ".join("mcpRuntimeStates.count" if n == "mcpRuntimeStates" else n for n in fields) + "] }\n"
 mock += transaction + "\n" + rollback + "\n}\n"
 
 commit = extract(model, "    private func persistAllRestoredState(")

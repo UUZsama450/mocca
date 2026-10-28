@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C52700000000000000000002 /* ZIPAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = C52700000000000000000001 /* ZIPAttachments.swift */; };
+		C52690000000000000000002 /* LocalBackupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C52690000000000000000001 /* LocalBackupStore.swift */; };
 		C50580000000000000000012 /* LobeIcons-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000011 /* LobeIcons-LICENSE.txt */; };
 		C50580000000000000000002 /* AppBuildConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50580000000000000000001 /* AppBuildConfiguration.swift */; };
         AA2026102000000000000008 /* SwiftMath-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = AA2026102000000000000009; };
@@ -114,6 +116,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C52700000000000000000001 /* ZIPAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZIPAttachments.swift; sourceTree = "<group>"; };
+		C52690000000000000000001 /* LocalBackupStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBackupStore.swift; sourceTree = "<group>"; };
 		C50580000000000000000011 /* LobeIcons-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LobeIcons-LICENSE.txt"; sourceTree = "<group>"; };
 		C50580000000000000000001 /* AppBuildConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuildConfiguration.swift; sourceTree = "<group>"; };
 		C50580000000000000000003 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Configuration/Shared.xcconfig; sourceTree = "<group>"; };
@@ -280,6 +284,7 @@
 				A1C0DE120000000000000001 /* AIMessageReactionCodec.swift */,
 				192B55C4EC44A0993732D51C /* ProviderViews.swift */,
 				1A57A5D201B7C0DEA1140006 /* SettingsViews.swift */,
+				C52690000000000000000001 /* LocalBackupStore.swift */,
 				C48110000000000000000001 /* SponsorStore.swift */,
 				C48110000000000000000003 /* SponsorPage.swift */,
 				C48110000000000000000005 /* Sponsor.storekit */,
@@ -325,6 +330,7 @@
                 AA2026102000000000000009 /* SwiftMath-LICENSE.txt */,
 				C49320000000000000000001 /* ChatContentMutation.swift */,
 				C51810000000000000000001 /* ChatRequestPreparation.swift */,
+				C52700000000000000000001 /* ZIPAttachments.swift */,
 				C52000000000000000000001 /* ConversationContentSearch.swift */,
 				C49510000000000000000001 /* OffscreenStreamingDisplayPolicy.swift */,
 				C52230000000000000000001 /* ReplySegmentation.swift */,
@@ -498,6 +504,7 @@
 				A1C0DE120000000000000002 /* AIMessageReactionCodec.swift in Sources */,
 				F4B616792EABA5C31D47EAC1 /* ProviderViews.swift in Sources */,
 				1A57A5D201B7C0DEA1140005 /* SettingsViews.swift in Sources */,
+				C52690000000000000000002 /* LocalBackupStore.swift in Sources */,
 				C48110000000000000000002 /* SponsorStore.swift in Sources */,
 				C48110000000000000000004 /* SponsorPage.swift in Sources */,
 				1A57A5D201B7C0DEA1140007 /* Attachments.swift in Sources */,
@@ -536,6 +543,7 @@
                 AA2026102000000000000003 /* MarkdownMathRendering.swift in Sources */,
 				C49320000000000000000002 /* ChatContentMutation.swift in Sources */,
 				C51810000000000000000002 /* ChatRequestPreparation.swift in Sources */,
+				C52700000000000000000002 /* ZIPAttachments.swift in Sources */,
 				C52000000000000000000002 /* ConversationContentSearch.swift in Sources */,
 				C49510000000000000000002 /* OffscreenStreamingDisplayPolicy.swift in Sources */,
 				C52230000000000000000002 /* ReplySegmentation.swift in Sources */,
@@ -595,7 +603,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5257;
+				CURRENT_PROJECT_VERSION = 5271;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -624,7 +632,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5257;
+				CURRENT_PROJECT_VERSION = 5271;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GenerationActivityExtension/Info.plist;
@@ -718,7 +726,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5257;
+				CURRENT_PROJECT_VERSION = 5271;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;
@@ -802,7 +810,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5257;
+				CURRENT_PROJECT_VERSION = 5271;
 				DEVELOPMENT_TEAM = "$(MOCCA_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Mocca/Info.plist;

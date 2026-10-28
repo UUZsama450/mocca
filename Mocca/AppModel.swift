@@ -170,6 +170,10 @@ private struct SelectedMessageProjection {
 }
 
 private struct SelectedMessageProjectionCache {
+    // Content-only refreshes keep the same raw row/group structure. Consumers
+    // can reuse indices while still reading current message values/revisions.
+    var structureID = UUID()
+
     struct RawStructure {
         let id: UUID
         let versionGroupID: String?
@@ -229,6 +233,7 @@ private struct SelectedMessageProjectionCache {
         guard rawStructure.count == messages.count,
               zip(rawStructure, messages).allSatisfy({ $0.matches($1) }) else { return nil }
         return Self(
+            structureID: structureID,
             conversationID: conversationID, messageRevision: revision,
             versionSelections: versionSelections, rawStructure: rawStructure,
             selectedRawIndices: selectedRawIndices,
@@ -238,6 +243,43 @@ private struct SelectedMessageProjectionCache {
                                           firstRawIndex: previous.firstRawIndex)
             }
         )
+    }
+}
+
+/// One conversation's structural lookup only; never retains message bodies.
+/// Canonical projection validation owns invalidation for edits/reorder/import.
+private struct MessageVersionLookupCache {
+    let conversationID: UUID
+    let messageRevision: UInt64
+    let structureID: UUID
+    let firstIndexByMessageID: [UUID: Int]
+    let indicesByGroupKey: [String: [Int]]
+
+    init(conversationID: UUID, revision: UInt64, structureID: UUID, messages: [ChatMessage]) {
+        self.conversationID = conversationID
+        messageRevision = revision
+        self.structureID = structureID
+        var firstIndices: [UUID: Int] = [:]
+        var groups: [String: [Int]] = [:]
+        for (index, message) in messages.enumerated() {
+            // Match first(where:) even if an imported snapshot has duplicate IDs.
+            if firstIndices[message.id] == nil { firstIndices[message.id] = index }
+            groups[message.versionGroupKey, default: []].append(index)
+        }
+        firstIndexByMessageID = firstIndices
+        indicesByGroupKey = groups
+    }
+
+    private init(_ previous: Self, revision: UInt64) {
+        conversationID = previous.conversationID
+        messageRevision = revision
+        structureID = previous.structureID
+        firstIndexByMessageID = previous.firstIndexByMessageID
+        indicesByGroupKey = previous.indicesByGroupKey
+    }
+
+    func refreshingRevision(_ revision: UInt64) -> Self {
+        Self(self, revision: revision)
     }
 }
 
@@ -856,6 +898,7 @@ final class AppModel {
     // read fresh message values, without retaining another full raw transcript.
     @ObservationIgnored private var selectedMessageProjectionCache:
         SelectedMessageProjectionCache?
+    @ObservationIgnored private var messageVersionLookupCache: MessageVersionLookupCache?
     // Repeated transcript reads usually ask for the same conversation. Keep
     // only its position; canonical mutations invalidate it, and reads below
     // still observe the array and validate the current identity at that slot.
@@ -1653,6 +1696,18 @@ final class AppModel {
         return transcriptMessagesForSendPresentation(windowMessages)
     }
 
+    /// Position checks need the current row identities, not a copied array of
+    /// complete messages. Read the canonical projection and window every time;
+    /// the staged-send path retains its existing presentation admission rules.
+    var transcriptMessageIDs: [UUID] {
+        if sendPresentationGate != nil { return messages.map(\.id) }
+        let conversationID = selectedConversationID
+        let projection = selectedMessageProjection(for: conversationID)
+        let window = messageWindow(for: conversationID, projection: projection)
+        guard window.count > 0 else { return [] }
+        return projection[window.startIndex..<window.endIndex].map { $0.message.id }
+    }
+
     /// While the canonical assistant row is gated, give RootView an immutable
     /// empty-streaming copy that can reserve the exact eventual row geometry.
     /// Provider updates continue to mutate only the canonical message; the
@@ -1769,13 +1824,39 @@ final class AppModel {
     }
 
     func versions(for messageID: UUID, in conversationID: UUID) -> [ChatMessage] {
-        guard let conversationMessages = conversationMessageStore[conversationID],
-              let message = conversationMessages.first(where: { $0.id == messageID }) else {
+        // Keep the observable canonical read even on a cache hit. Index reuse
+        // must not hide content/status changes from the action bar.
+        let stored = conversationMessageStore.versionedMessages(for: conversationID)
+        guard let conversationMessages = stored.messages, !conversationMessages.isEmpty else {
+            messageVersionLookupCache = nil
             return []
         }
+        let lookup: MessageVersionLookupCache
+        if let cached = messageVersionLookupCache,
+           cached.conversationID == conversationID, cached.messageRevision == stored.revision {
+            lookup = cached
+        } else {
+            _ = selectedMessageProjection(for: conversationID)
+            guard let projection = selectedMessageProjectionCache,
+                  projection.conversationID == conversationID,
+                  projection.messageRevision == stored.revision else { return [] }
+            if let cached = messageVersionLookupCache,
+               cached.conversationID == conversationID, cached.structureID == projection.structureID {
+                lookup = cached.refreshingRevision(stored.revision)
+            } else {
+                lookup = MessageVersionLookupCache(
+                    conversationID: conversationID, revision: stored.revision,
+                    structureID: projection.structureID, messages: conversationMessages
+                )
+            }
+            messageVersionLookupCache = lookup
+        }
+        guard let index = lookup.firstIndexByMessageID[messageID] else { return [] }
+        let groupKey = conversationMessages[index].versionGroupKey
+        guard let indices = lookup.indicesByGroupKey[groupKey] else { return [] }
         return sortedVersions(
-            in: conversationMessages,
-            groupKey: message.versionGroupKey
+            in: indices.map { conversationMessages[$0] },
+            groupKey: groupKey
         )
     }
 
@@ -1834,8 +1915,8 @@ final class AppModel {
     @discardableResult
     func loadEarlierMessages() -> Bool {
         let conversationID = selectedConversationID
-        let allMessages = selectedMessages(for: conversationID)
-        let window = messageWindow(for: conversationID, messages: allMessages)
+        let projection = selectedMessageProjection(for: conversationID)
+        let window = messageWindow(for: conversationID, projection: projection)
         guard window.startIndex > 0 else { return false }
         let newStart = max(0, window.startIndex - Self.messageWindowPageSize)
         let newCount = min(Self.messageWindowLoadedMax, window.endIndex - newStart)
@@ -1849,10 +1930,10 @@ final class AppModel {
     @discardableResult
     func loadLaterMessages() -> Bool {
         let conversationID = selectedConversationID
-        let allMessages = selectedMessages(for: conversationID)
-        let window = messageWindow(for: conversationID, messages: allMessages)
-        guard window.endIndex < allMessages.count else { return false }
-        let newEnd = min(allMessages.count, window.endIndex + Self.messageWindowPageSize)
+        let projection = selectedMessageProjection(for: conversationID)
+        let window = messageWindow(for: conversationID, projection: projection)
+        guard window.endIndex < projection.count else { return false }
+        let newEnd = min(projection.count, window.endIndex + Self.messageWindowPageSize)
         let newStart = max(0, newEnd - Self.messageWindowLoadedMax)
         messageWindowsByConversation[conversationID] = MessageWindowState(
             startIndex: newStart,
@@ -2111,7 +2192,10 @@ final class AppModel {
             ? conversationMessageStore.versionedMessages(for: conversationID) : nil
         let rawMessages = suppliedMessages ?? stored?.messages ?? []
         guard !rawMessages.isEmpty else {
-            if suppliedMessages == nil { selectedMessageProjectionCache = nil }
+            if suppliedMessages == nil {
+                selectedMessageProjectionCache = nil
+                messageVersionLookupCache = nil
+            }
             return []
         }
         let selections = conversation(for: conversationID)?.versionSelections ?? [:]

@@ -551,7 +551,7 @@ struct NativeChatMutationLanding {
     let isCurrent: @MainActor () -> Bool
 }
 
-struct NativeChatTranscript: UIViewControllerRepresentable {
+struct NativeChatTranscript: View {
     // Geometry-only copies retain this identity; every array mutation replaces
     // it, including subscript edits and append/remove on a copied transcript.
     var rows: [NativeChatRow] {
@@ -579,8 +579,30 @@ struct NativeChatTranscript: UIViewControllerRepresentable {
     var onPageEarlier: () -> Bool = { false }
     var onPageLater: () -> Bool = { false }
 
+    var body: some View {
+        NativeChatTranscriptPresentation(input: self)
+    }
+}
+
+private struct NativeChatTranscriptPresentation: View {
+    let input: NativeChatTranscript
+    @Environment(\.composerHeightPresentation) private var presentation
+
+    var body: some View {
+        NativeChatTranscriptBridge(input: input, composerPresentation: presentation)
+            // The controller needs the interpolated footer, but its hosted
+            // message text does not. Bridging the changing environment into
+            // UIKit also refreshes traits and text layout in unchanged cells.
+            .environment(\.composerHeightPresentation, nil)
+    }
+}
+
+private struct NativeChatTranscriptBridge: UIViewControllerRepresentable {
+    let input: NativeChatTranscript
+    let composerPresentation: ComposerHeightPresentation?
+
     func makeUIViewController(context: Context) -> NativeChatTranscriptController {
-        let controller = NativeChatTranscriptController(input: self)
+        let controller = NativeChatTranscriptController(input: input)
         #if DEBUG
         controller.debugLifecycle("make")
         #endif
@@ -588,10 +610,10 @@ struct NativeChatTranscript: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: NativeChatTranscriptController, context: Context) {
-        var next = self
+        var next = input
         next.disclosureOperation = context.transaction.nativeChatDisclosureOperation
-        if let height = context.environment.composerHeightPresentation,
-           AnyHashable(height.identity.conversationID) == sessionID {
+        if let height = composerPresentation,
+           AnyHashable(height.identity.conversationID) == input.sessionID {
             next.composerHeightPresentation = height
             next.configuration.bottom = height.bottomClearance
             next.configuration.bottomFollowClearance = height.bottomFollowClearance
@@ -1216,6 +1238,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     private var rows: [NativeChatRow]
     private var rowByID: [UUID: NativeChatRow]
     private var installedRowsSnapshotID: UUID
+    private var validatedRowsSnapshotID: UUID?
     private var pendingInput: NativeChatTranscript?
     private var batchID: UUID?
     private var visible = false
@@ -1509,6 +1532,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         // to apply stale/new-session rows to this outgoing controller.
         guard next.sessionID == input.sessionID else { return }
         let unchangedRows = next.rowsSnapshotID == installedRowsSnapshotID
+            || next.rowsSnapshotID == validatedRowsSnapshotID
         let newIDs = unchangedRows ? [] : next.rows.map(\.id), newSet = Set(newIDs)
         guard newSet.count == newIDs.count else { return }
         if batchID != nil { pendingInput = next; return }
@@ -1522,6 +1546,11 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         let changed: Set<UUID> = unchangedRows ? [] : Set(next.rows.compactMap { row -> UUID? in
             rowByID[row.id]?.revision == row.revision ? nil : row.id
         })
+        // The first frame of a new height target can still have the old
+        // metrics. Remember its validated keys even when that frame is a no-op;
+        // the next interpolation frame must not compare every message again.
+        // Content adoption below still uses the installed snapshot identity.
+        validatedRowsSnapshotID = !structural && changed.isEmpty ? next.rowsSnapshotID : nil
         let contextChanged = next.publicationID != input.publicationID
         let metricsChanged = next.configuration != input.configuration
         var unchangedConfiguration = next.configuration
@@ -1536,6 +1565,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             && !input.driver.initialBottomPositionPending && !input.driver.hasActiveScrollCommand
             && !touching && !userGesture && !collection.isTracking
             && !collection.isDragging && !collection.isDecelerating && collection.window != nil
+
         StreamLayoutWorkProbe.hit(structural || !changed.isEmpty || contextChanged || metricsChanged ? "controller.changedInput" : "controller.unchangedInput")
         let anchor = layout.viewportAnchor(surviving: unchangedRows ? nil : newSet)
         let mutationLanding = next.mutationLanding.flatMap { landing -> NativeChatMutationLanding? in
@@ -1608,7 +1638,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         context.structural = structural; context.preservedID = anchor
         context.mutationTarget = mutationLanding?.target
         let applyData = {
-            guard !unchangedRows else { return }
+            guard self.installedRowsSnapshotID != next.rowsSnapshotID else { return }
             self.rows = next.rows
             self.rowByID = Dictionary(next.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             self.installedRowsSnapshotID = next.rowsSnapshotID
@@ -1692,9 +1722,8 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             collection.contentInset = input.configuration.viewportInsets
         }
         if followsComposerHeight {
-            // This is already the shared animation's current frame. Apply it
-            // atomically with the footer; a second UIKit animation drifts from
-            // the SwiftUI shell when the full page takes longer to render.
+            // Apply the final editing height atomically with its footer.
+            // Group controls can still supply their own interpolated geometry.
             UIView.performWithoutAnimation {
                 collection.layoutIfNeeded()
                 if let destination = layout.offset(for: .bottom) {

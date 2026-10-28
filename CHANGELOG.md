@@ -1,5 +1,23 @@
 # 更新记录 / Changelog
 
+## 1.0.7 (5271) — 手机版本源码同步
+
+2026-10-29 将手机 5271 的冻结源码同步到 `main`，保留可配置签名与默认关闭赞助的构建配置。未新建或修改 GitHub Release、标签或 IPA；App Store 发布单独管理。见[源码核对与验证](docs/SOURCE_SYNC_5271.md)。
+
+- **本机备份与存储：** 查看备份的大小、类型和日期，恢复、分享或另存备份，并在确认后仅删除备份副本；存储统计在后台扫描，恢复时保护作为来源的临时导出包。
+- **ZIP 聊天附件：** 发送时在后台解包，复用文字、图片、PDF、DOCX 和 OCR 流程，保留内部相对路径；聊天记录保存原 ZIP。支持取消、完整性检查、缓存复用和临时目录清理，不增加文件数量或解包大小硬限。
+- **输入与聊天布局：** 输入框高度和文字编辑引起的聊天上抬直接更新，保留群聊控件的独立动效；复用输入测量和消息查找，减少重复布局，并保留选区拖动的边缘滚动。
+- **设置导航颜色：** iOS 26 之前的设置导航文字随浅色／深色外观使用黑色／白色，各页面控件沿用原有配色。
+
+### English
+
+Synchronize the frozen **1.0.7 (5271)** phone source, preserving portable signing and sponsorship disabled by default. Release pages, tags and IPA downloads are unchanged.
+
+- Manage local backup copies and storage usage, with restore, sharing, saving and confirmed backup-only deletion. Protect the source export during restore.
+- Read ZIP attachments through the existing text, image, PDF, DOCX and OCR pipeline while preserving the original archive in chat history and relative paths in model input. Retain cancellation, integrity checks and temporary-file cleanup without new size or file-count caps.
+- Apply typing-related composer and transcript height changes immediately, retain independent group-control motion, reuse measurement and message lookups, and preserve selection-handle edge scrolling.
+- Use neutral settings navigation text on systems before iOS 26 while retaining page-specific control colors.
+
 ## 1.0.7 (5257) — App Store 等待审核
 
 2026-10-26 已提交审核，审核后手动发布。包含下列 5254–5257 的更新；源码同步至本构建，GitHub Release 页面与标签保持不变。
