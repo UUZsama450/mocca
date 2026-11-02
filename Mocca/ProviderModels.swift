@@ -622,6 +622,9 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
     var customBody: [KeyValueField]
     /// OpenAI Responses API 官方内置工具。
     var builtInTools: [ModelBuiltInTool]
+    /// Provider catalog protocol metadata, independent of editable capabilities.
+    /// Older saved models omit this and use conservative routing fallbacks.
+    var supportedEndpoints: [String]?
 
     init(
         id: String,
@@ -630,7 +633,8 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         capabilityOverride: ModelCapabilities? = nil,
         customHeaders: [KeyValueField] = [],
         customBody: [KeyValueField] = [],
-        builtInTools: [ModelBuiltInTool] = []
+        builtInTools: [ModelBuiltInTool] = [],
+        supportedEndpoints: [String]? = nil
     ) {
         self.id = id
         self.displayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? id
@@ -639,6 +643,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         self.customHeaders = customHeaders
         self.customBody = customBody
         self.builtInTools = builtInTools
+        self.supportedEndpoints = supportedEndpoints
     }
 
     init(from decoder: Decoder) throws {
@@ -650,6 +655,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         customHeaders = try container.decodeIfPresent([KeyValueField].self, forKey: .customHeaders) ?? []
         customBody = try container.decodeIfPresent([KeyValueField].self, forKey: .customBody) ?? []
         builtInTools = try container.decodeIfPresent([ModelBuiltInTool].self, forKey: .builtInTools) ?? []
+        supportedEndpoints = try container.decodeIfPresent([String].self, forKey: .supportedEndpoints)
     }
 
     var capabilities: ModelCapabilities {
@@ -671,6 +677,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         // An automatic/manual entry can acquire newly advertised capabilities;
         // never overwrite an existing explicit on/off configuration.
         if capabilityOverride == nil { result.capabilityOverride = fetched.capabilityOverride }
+        result.supportedEndpoints = fetched.supportedEndpoints ?? supportedEndpoints
         return result
     }
 

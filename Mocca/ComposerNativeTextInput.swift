@@ -326,6 +326,7 @@ final class ComposerInputTextView: UITextView {
     private var pendingHeightMeasurement: CGSize?
     private var heightPublicationRevision = 0
     private var editingHeightPublicationScheduled = false
+    private(set) var isPublishingEditedHeight = false
     private var isUpdatingUnchangedMarkedText = false
     private var keyboardTransitionDeadline: TimeInterval = 0
     private var keyboardScreenFrame: CGRect?
@@ -494,6 +495,8 @@ final class ComposerInputTextView: UITextView {
             }
             self.lastMeasuredWidth = width
             self.lastMeasuredHeight = measured
+            self.isPublishingEditedHeight = !deferred
+            defer { self.isPublishingEditedHeight = false }
             self.onMeasuredHeight?(measured)
         }
         // Layout/external draft reconciliation must not write SwiftUI state

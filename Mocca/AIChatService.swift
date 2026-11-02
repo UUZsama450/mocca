@@ -177,6 +177,7 @@ enum AIChatServiceError: LocalizedError {
     case invalidResponse
     case emptyResponse
     case invalidGeneratedImage
+    case textOutputUnsupported
     case generatedImageSaveFailed
     case providerStreamError(String)
     case imageRequestTimedOut(Int)
@@ -200,6 +201,7 @@ enum AIChatServiceError: LocalizedError {
         case .invalidResponse: ErrorLocalization.lookup("服务商返回了无法识别的数据")
         case .emptyResponse: ErrorLocalization.lookup("服务商没有返回内容")
         case .invalidGeneratedImage: ErrorLocalization.lookup("服务商返回了图片，但图片数据格式无法读取")
+        case .textOutputUnsupported: ErrorLocalization.lookup("所选模型仅支持图片输出，请选择文字模型")
         case .generatedImageSaveFailed: ErrorLocalization.lookup("已收到图片，但无法读取或保存；请重试")
         case .providerStreamError(let message): message
         case .imageRequestTimedOut(let imageCount):
@@ -301,7 +303,10 @@ enum AIChatService {
         messages: [ChatRequestMessage],
         options: ChatRequestOptions = ChatRequestOptions()
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        AsyncThrowingStream { continuation in
+        if usesOpenRouterImageAPI(provider: provider, modelID: modelID) {
+            return openRouterImageStream(provider: provider, modelID: modelID, messages: messages, options: options)
+        }
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     guard !normalizedAPIKey(for: provider).isEmpty else {
@@ -350,6 +355,11 @@ enum AIChatService {
         prompt: String,
         options: ChatRequestOptions = ChatRequestOptions()
     ) async throws -> String {
+        // Titles, summaries and translations must not create a paid image
+        // that this text-only consumer would subsequently discard.
+        guard !usesOpenRouterImageAPI(provider: provider, modelID: modelID) else {
+            throw AIChatServiceError.textOutputUnsupported
+        }
         var result = ""
         for try await event in streamReply(
             provider: provider,
@@ -374,7 +384,10 @@ enum AIChatService {
         options: ChatRequestOptions,
         toolHandler: @escaping ToolCallHandler
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        AsyncThrowingStream { continuation in
+        if usesOpenRouterImageAPI(provider: provider, modelID: modelID) {
+            return openRouterImageStream(provider: provider, modelID: modelID, messages: messages, options: options)
+        }
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     guard !normalizedAPIKey(for: provider).isEmpty else {
@@ -789,8 +802,130 @@ enum AIChatService {
                     inferred.abilities = kind == .embedding ? [] : abilities
                 }
                 return inferred
-            }()
+            }(),
+            supportedEndpoints: entry["endpoints"] as? [String]
         )
+    }
+
+    static func usesOpenRouterImageAPI(provider: ProviderConfiguration, modelID: String) -> Bool {
+        guard provider.type == .openAI, provider.isOpenRouter else { return false }
+        let model = provider.models.first(where: { $0.id == modelID }) ?? ModelConfiguration(id: modelID)
+        if let endpoints = model.supportedEndpoints, !endpoints.isEmpty {
+            return endpoints.contains { $0.hasSuffix("/images") }
+                && !endpoints.contains { $0.hasSuffix("/chat/completions") }
+        }
+        // Existing installations have no endpoint metadata. GPT Image models
+        // require Images even when an old capability record says text+image.
+        // GPT-5 Image and Gemini image chat models must retain their chat route.
+        let name = modelID.lowercased().split(separator: "/").last ?? ""
+        return name.hasPrefix("gpt-image-")
+            || (model.capabilities.output.contains(.image) && !model.capabilities.output.contains(.text))
+    }
+
+    private static func openRouterImageStream(
+        provider: ProviderConfiguration,
+        modelID: String,
+        messages: [ChatRequestMessage],
+        options: ChatRequestOptions
+    ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let key = normalizedAPIKey(for: provider)
+                    guard !key.isEmpty else { throw AIChatServiceError.missingAPIKey }
+                    guard let url = endpoint(baseURL: provider.baseURL, path: "/images") else {
+                        throw AIChatServiceError.invalidURL
+                    }
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.timeoutInterval = 300
+                    request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("application/json", forHTTPHeaderField: "Accept")
+                    applyCustomHeaders(provider, modelID: modelID, to: &request)
+
+                    var body: [String: Any] = [
+                        "model": modelID,
+                        "prompt": imageGenerationPrompt(messages: messages, systemPrompt: options.systemPrompt)
+                    ]
+                    // These images have already passed the conversation's history
+                    // and attachment-selection rules. Preserve them for image edits.
+                    var references: [[String: Any]] = []
+                    var seenReferences = Set<String>()
+                    for image in messages.flatMap(\.images) {
+                        let value = "data:\(image.mimeType);base64,\(image.base64Data)"
+                        if seenReferences.insert(value).inserted {
+                            references.append(["type": "image_url", "image_url": ["url": value]])
+                        }
+                    }
+                    if !references.isEmpty { body["input_references"] = references }
+                    mergeCustomBody(provider, modelID: modelID, into: &body)
+                    // Provider-level chat defaults are not Images API fields.
+                    // Keep image settings and provider routing, including model overrides.
+                    for field in ["messages", "input", "modalities", "stream_options", "tools", "tool_choice",
+                                  "parallel_tool_calls", "temperature", "top_p", "max_tokens", "max_completion_tokens",
+                                  "reasoning", "thinking", "plugins", "response_format", "service_tier"] {
+                        body.removeValue(forKey: field)
+                    }
+                    body["stream"] = false
+                    request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+                    try Task.checkCancellation()
+                    continuation.yield(.imageGenerationProgress("正在生成图片"))
+                    let (data, response) = try await makeSession(for: provider).data(for: request)
+                    try Task.checkCancellation()
+                    try validate(response, body: data)
+                    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        throw AIChatServiceError.invalidResponse
+                    }
+                    if let error = object["error"] as? [String: Any] {
+                        throw AIChatServiceError.providerStreamError(error["message"] as? String
+                            ?? ErrorLocalization.lookup("服务商中断了回复"))
+                    }
+                    guard let rows = object["data"] as? [[String: Any]], !rows.isEmpty else {
+                        throw AIChatServiceError.emptyResponse
+                    }
+                    for row in rows {
+                        try Task.checkCancellation()
+                        guard let encoded = row["b64_json"] as? String,
+                              let image = Data(base64Encoded: encoded), !image.isEmpty else {
+                            throw AIChatServiceError.invalidGeneratedImage
+                        }
+                        let mime = row["media_type"] as? String ?? "image/png"
+                        continuation.yield(.generatedImage(image, mimeType: mime))
+                    }
+                    if let usage = object["usage"] as? [String: Any] {
+                        continuation.yield(.usage(StreamUsage(
+                            promptTokens: integerValue(usage["prompt_tokens"]),
+                            completionTokens: integerValue(usage["completion_tokens"]),
+                            cachedTokens: cachedPromptTokens(in: usage),
+                            totalTokens: integerValue(usage["total_tokens"])
+                        )))
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: userFacingStreamError(error, messages: messages))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private static func imageGenerationPrompt(messages: [ChatRequestMessage], systemPrompt: String?) -> String {
+        var parts: [String] = []
+        if let instructions = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !instructions.isEmpty {
+            parts.append("Instructions:\n\(instructions)")
+        }
+        let context = messages.filter {
+            ["system", "user", "assistant"].contains($0.role)
+                && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if parts.isEmpty, context.count == 1, let message = context.first, message.role == "user" {
+            return message.content
+        }
+        parts.append(contentsOf: context.map { "\($0.role):\n\($0.content)" })
+        return parts.joined(separator: "\n\n")
     }
 
     private static func usesOpenAIResponses(
@@ -2481,6 +2616,9 @@ final class OCRService {
     }
 
     private nonisolated static func recognize(image: ChatRequestImage, provider: ProviderConfiguration, modelID: String, prompt: String) async throws -> String {
+        guard !AIChatService.usesOpenRouterImageAPI(provider: provider, modelID: modelID) else {
+            throw AIChatServiceError.textOutputUnsupported
+        }
         var result = ""
         for try await event in AIChatService.streamReply(
             provider: provider, modelID: modelID,

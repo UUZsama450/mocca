@@ -55,6 +55,8 @@ private final class SettledMarkdownPreparationCache: NSObject {
     }
 
     private var prose: [(key: ProseKey, text: NSAttributedString, weight: Int)] = []
+    // Keep short quote revisits from evicting existing long-prose entries.
+    private var shortQuotes: [(key: ProseKey, text: NSAttributedString, weight: Int)] = []
     private var tables: [(key: TableKey, widths: [CGFloat], weight: Int)] = []
     private let maximumEntries = 4
     private let maximumTextWeight = 131_072
@@ -69,6 +71,7 @@ private final class SettledMarkdownPreparationCache: NSObject {
 
     @objc func removeAll() {
         prose.removeAll()
+        shortQuotes.removeAll()
         tables.removeAll()
     }
 
@@ -94,6 +97,26 @@ private final class SettledMarkdownPreparationCache: NSObject {
             prose.removeFirst()
         }
         prose.append((key, prepared, weight))
+        return prepared
+    }
+
+    func shortQuote(for key: ProseKey, make: () -> NSAttributedString) -> NSAttributedString {
+        if let entry = shortQuotes.first(where: { $0.key == key }) { return entry.text }
+        let text = make()
+        // Source plus output, in UTF-16 units; never retain native views/layout.
+        let weight = key.source.utf16.count + text.length
+        let budget = 8_192
+        guard key.source.utf16.count < 2_048, weight <= budget else { return text }
+        var containsAttachment = false
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, stop in
+            if value != nil { containsAttachment = true; stop.pointee = true }
+        }
+        guard !containsAttachment else { return text }
+        let prepared = NSAttributedString(attributedString: text)
+        while shortQuotes.count >= maximumEntries || shortQuotes.reduce(weight, { $0 + $1.weight }) > budget {
+            shortQuotes.removeFirst()
+        }
+        shortQuotes.append((key, prepared, weight))
         return prepared
     }
 
@@ -502,6 +525,13 @@ private final class TextSelectionDismissTapController: NSObject, UIGestureRecogn
         )
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // This contact may create a new native selection before its tap ends.
+        // Only a contact that began with an existing selection may dismiss it.
+        guard let scrollView else { return false }
+        return DrawerTextSelectionInteractionGate.hasActiveSelection(in: scrollView)
+    }
+
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let scrollView else { return false }
         return DrawerTextSelectionInteractionGate.hasActiveSelection(in: scrollView)
@@ -738,6 +768,7 @@ struct MessageMarkdownView: View {
         let selectionRoute = nativeSelectionRoute(in: renderedBlocks)
         Group {
             if selectionRoute == .unified {
+                let settledPreparationSource: String? = !isStreaming && text.utf16.count >= 2_048 ? text : nil
                 UnifiedSelectableProseText(
                     makeAttributedText: {
                         unifiedAttributedText(blocks: renderedBlocks)
@@ -749,7 +780,10 @@ struct MessageMarkdownView: View {
                     allowsSelection: allowsTextSelection && !isStreaming,
                     preparesDisclosureContent: preparesDisclosureContent,
                     usesSharedMeasurementCache: !isStreaming,
-                    preparationSource: !isStreaming && text.utf16.count >= 2_048 ? text : nil,
+                    preparationSource: settledPreparationSource,
+                    shortQuotePreparationSource: shortQuotePreparationSource(
+                        renderedBlocks, existingPreparationSource: settledPreparationSource
+                    ),
                     onBlankLongPress: onBlankLongPress,
                     versionFlashContext: versionFlashContext,
                     versionFlashSegmentIndex: versionFlashSegmentIndex,
@@ -783,6 +817,36 @@ struct MessageMarkdownView: View {
         }
     }
 
+    private func shortQuotePreparationSource(
+        _ blocks: [MarkdownRenderBlock], existingPreparationSource: String?
+    ) -> String? {
+        guard !isStreaming, existingPreparationSource == nil, citationSources.isEmpty,
+              blocks.contains(where: { if case .quote = $0.kind { return true }; return false }) else {
+            return nil
+        }
+        return text
+    }
+
+    private func mixedProsePreparationSource(_ blocks: [MarkdownRenderBlock]) -> String? {
+        guard !isStreaming, text.utf16.count >= 2_048 else { return nil }
+        var weight = 0
+        for block in blocks {
+            switch block.kind {
+            case let .text(value), let .quote(value), let .heading(_, value):
+                weight += value.utf16.count
+            case let .list(entries):
+                for entry in entries {
+                    weight += entry.marker.utf16.count + entry.content.utf16.count
+                    for line in entry.nestedQuoteLines { weight += line.utf16.count }
+                }
+            case .horizontalRule, .code, .table:
+                break
+            }
+            if weight >= 2_048 { return text }
+        }
+        return nil
+    }
+
     private func mixedContent(blocks: [MarkdownRenderBlock]) -> some View {
         VStack(alignment: .leading, spacing: resolvedBlockStackSpacing) {
             ForEach(mixedSegments(from: blocks)) { segment in
@@ -813,6 +877,7 @@ struct MessageMarkdownView: View {
                     preparesDisclosureContent: preparesDisclosureContent,
                         usesSharedMeasurementCache: !isStreaming,
                         preparationSource: nil,
+                        cacheOnlyPreparationSource: mixedProsePreparationSource(proseBlocks),
                         onBlankLongPress: onBlankLongPress,
                         versionFlashContext: versionFlashContext,
                         versionFlashSegmentIndex: versionFlashSegmentIndex,
@@ -1415,6 +1480,11 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
     var preparesDisclosureContent = false
     let usesSharedMeasurementCache: Bool
     let preparationSource: String?
+    // Mixed prose reuses immutable preparation without changing its initial
+    // content-deferral or link-style timing.
+    var cacheOnlyPreparationSource: String? = nil
+    // This channel only reuses preparation; it never enables initial deferral.
+    var shortQuotePreparationSource: String? = nil
     let onBlankLongPress: ((CGPoint) -> Void)?
     let versionFlashContext: VersionFlashTextContext?
     let versionFlashSegmentIndex: Int?
@@ -1757,7 +1827,14 @@ private struct UnifiedSelectableProseText: UIViewRepresentable {
         coordinator.onOpenURL = onOpenURL
         let signatureChanged = coordinator.appliedSignature != renderSignature
         let attributedText: NSAttributedString?
-        if signatureChanged, let preparationSource {
+        if signatureChanged, let source = shortQuotePreparationSource {
+            let traits = textView.traitCollection
+            attributedText = SettledMarkdownPreparationCache.shared.shortQuote(
+                for: .init(signature: renderSignature, source: source,
+                           interfaceStyle: traits.userInterfaceStyle, contrast: traits.accessibilityContrast),
+                make: makeAttributedText
+            )
+        } else if signatureChanged, let preparationSource = preparationSource ?? cacheOnlyPreparationSource {
             let traits = textView.traitCollection
             attributedText = SettledMarkdownPreparationCache.shared.prose(
                 for: .init(signature: renderSignature, source: preparationSource,

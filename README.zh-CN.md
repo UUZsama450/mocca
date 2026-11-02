@@ -46,7 +46,7 @@ Mocca 不附带 API Key 或第三方服务额度。模型能力、服务可用�
 
 ## 下载说明
 
-[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)在支持的账号地区提供下载。当前 `main` 源码对应手机 **1.0.7（5271）**，详见[源码核对记录](docs/SOURCE_SYNC_5271.md)。本次仅同步源码，没有新建 GitHub Release 或新版 IPA。现有 **1.0.7（5253）** Release 与此前的 **1.0.5（5237）** IPA 预览包继续保留；IPA 需要自行签名，步骤见[安装说明](docs/INSTALLATION.md)和[IPA 源码验证](docs/RELEASE_1.0.5_5237.md)。App Store 更新单独送审，通过后手动发布。
+[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)在支持的账号地区提供下载。当前 `main` 源码对应手机 **1.0.7（5286）**，详见[源码核对记录](docs/SOURCE_SYNC_5286.md)。本次仅同步源码，没有新建 GitHub Release 或新版 IPA。现有 **1.0.7（5253）** Release 与此前的 **1.0.5（5237）** IPA 预览包继续保留；IPA 需要自行签名，步骤见[安装说明](docs/INSTALLATION.md)和[IPA 源码验证](docs/RELEASE_1.0.5_5237.md)。App Store 更新单独送审，通过后手动发布。
 
 
 ## 本地构建

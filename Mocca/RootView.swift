@@ -303,6 +303,16 @@ enum VersionFlashTrace {
     }
 }
 
+/// Side-by-side feel test against 1.0.2 (5173). Each launch argument restores
+/// one 5173 drawer behavior; a normal launch from the Home Screen uses none.
+enum DrawerFeelComparison {
+    private static let arguments = ProcessInfo.processInfo.arguments
+    private static let all = arguments.contains("-feel5173All")
+    static let releaseAxisCheck = all || arguments.contains("-feel5173ReleaseAxis")
+    static let viewTransform = all || arguments.contains("-feel5173ViewTransform")
+    static let noSelectionObserver = all || arguments.contains("-feel5173NoSelectionObserver")
+}
+
 private enum RegenerationViewportTransitionFeature {
     static let isEnabled = !ProcessInfo.processInfo.arguments.contains(
         "-disableRegenerationViewportTransition"
@@ -2201,6 +2211,7 @@ private final class DrawerLiveMainPanelConfiguration {
     var cornerRadius: CGFloat = 0
     var isInteractionBlocked = false
     var progress: CGFloat = 0
+    @ObservationIgnored let chromeDriver = DrawerPanelChromeDriver()
     @ObservationIgnored var onOpenDrawer: () -> Void = {}
     @ObservationIgnored var onCloseDrawer: () -> Void = {}
     @ObservationIgnored var isConversationDrawerClosePending: (UUID) -> Bool = { _ in false }
@@ -2214,7 +2225,7 @@ private struct DrawerLiveMainPanelChrome: ViewModifier {
         content.modifier(
             MainChatPanelChrome(
                 cornerRadius: configuration.cornerRadius,
-                shadowProgress: configuration.progress
+                configuration: configuration
             )
         )
     }
@@ -2371,13 +2382,24 @@ private final class DrawerLiveMainPanelController: UIViewController, DrawerLiveP
     func applyDrawerProgress(_ progress: CGFloat) {
         self.progress = min(max(progress, 0), 1)
         guard isViewLoaded else { return }
+        let transform = CGAffineTransform(translationX: drawerWidth * self.progress, y: 0)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        host.view.transform = CGAffineTransform(translationX: drawerWidth * self.progress, y: 0)
-        touchShield.transform = host.view.transform
+        // Write the layer, not UIView.transform: the view setter notifies every
+        // descendant geometry observer, which invalidates the long transcript's
+        // collection layout on each frame. The surface only translates here and
+        // returns to identity when closed; layer geometry still drives hit-testing.
+        if DrawerFeelComparison.viewTransform {
+            host.view.transform = transform
+            touchShield.transform = transform
+        } else {
+            host.view.layer.setAffineTransform(transform)
+            touchShield.layer.setAffineTransform(transform)
+        }
         CATransaction.commit()
         // Only the existing lightweight chrome leaf observes this value.
         if configuration.progress != self.progress { configuration.progress = self.progress }
+        configuration.chromeDriver.update(progress: self.progress)
     }
 
     func updateInteractionRouting() {
@@ -2491,7 +2513,7 @@ private struct DrawerLeafProgressConversationDrawer: View {
     let settleProgress: DrawerDetachedMainPanelProgress
     let backgroundTrailingExtension: CGFloat
     let safeAreaInsets: EdgeInsets
-    let isDrawerGestureActive: Bool
+    let gestureActivity: DrawerGestureActivity
     let topReturnCoordinator: DrawerListTopReturnCoordinator
     let onRequestClose: () -> Void
     let onRequestCloseAfterConversationReady: (UUID) -> Void
@@ -2508,7 +2530,7 @@ private struct DrawerLeafProgressConversationDrawer: View {
             settleProgress: settleProgress,
             backgroundTrailingExtension: backgroundTrailingExtension,
             safeAreaInsets: safeAreaInsets,
-            isDrawerGestureActive: isDrawerGestureActive,
+            isDrawerGestureActive: gestureActivity.active,
             topReturnCoordinator: topReturnCoordinator,
             onRequestClose: onRequestClose,
             onRequestCloseAfterConversationReady: onRequestCloseAfterConversationReady
@@ -2532,7 +2554,11 @@ struct RootView: View {
     @State private var drawerSettleSequence: UInt64 = 0
     @State private var drawerSettleDriver = DrawerSettleDisplayLinkDriver()
     @State private var drawerGestureLocked: Bool?
-    @State private var isDrawerGestureActive = false
+    @State private var drawerGestureActivity = DrawerGestureActivity()
+    private var isDrawerGestureActive: Bool {
+        get { drawerGestureActivity.active }
+        nonmutating set { drawerGestureActivity.active = newValue }
+    }
     @State private var pendingDrawerCloseConversationID: UUID?
     @State private var drawerPresentationProgressTracker = DrawerPresentationProgressTracker()
     @State private var detachedMainPanelProgress = DrawerDetachedMainPanelProgress()
@@ -2571,7 +2597,7 @@ struct RootView: View {
                     settleProgress: detachedMainPanelProgress,
                     backgroundTrailingExtension: chatCornerRadius,
                     safeAreaInsets: safeAreaInsets,
-                    isDrawerGestureActive: isDrawerGestureActive,
+                    gestureActivity: drawerGestureActivity,
                     topReturnCoordinator: drawerListTopReturnCoordinator,
                     onRequestClose: closeDrawerAfterSelection,
                     onRequestCloseAfterConversationReady: requestDrawerCloseAfterConversationReady
@@ -2590,11 +2616,11 @@ struct RootView: View {
                     .zIndex(1)
 
                 Group {
-                    DrawerLiveMainPanelHost(
+                    DrawerInteractionMainPanelHost(
                         model: model,
                         drawerWidth: drawerWidth,
                         cornerRadius: chatCornerRadius,
-                        isInteractionBlocked: model.isDrawerPresented || isDrawerGestureActive,
+                        activity: drawerGestureActivity,
                         tracker: drawerPresentationProgressTracker,
                         onOpenDrawer: openDrawerFromButton,
                         onCloseDrawer: closeDrawerAnimated,
@@ -3023,6 +3049,7 @@ struct RootView: View {
             }
             .onEnded { value in
                 let dx = value.translation.width
+                let dy = value.translation.height
                 let didOwnDrawerGesture = drawerGestureLocked == true
                 defer {
                     if didOwnDrawerGesture {
@@ -3036,9 +3063,12 @@ struct RootView: View {
                 }
                 // Direction was decided when this touch took ownership. Keep
                 // following that horizontal gesture even if its path later curves.
+                let releaseIntent = DrawerFeelComparison.releaseAxisCheck
+                    ? max(drawerGestureIntentDistance, abs(dy) * drawerGestureAxisRatio)
+                    : drawerGestureIntentDistance
                 guard drawerGestureLocked == true,
                       drawerDragProgress != nil,
-                      abs(dx) > drawerGestureIntentDistance else {
+                      abs(dx) > releaseIntent else {
                     if drawerGestureLocked == true, drawerDragProgress != nil {
                         settleDrawer(open: model.isDrawerPresented)
                     }
@@ -3294,7 +3324,7 @@ private struct MainChatContainer: View, @preconcurrency Equatable {
 private struct MainChatPanelChrome: ViewModifier {
     @Environment(AppModel.self) private var model
     let cornerRadius: CGFloat
-    let shadowProgress: CGFloat
+    let configuration: DrawerLiveMainPanelConfiguration
 
     func body(content: Content) -> some View {
         content
@@ -3302,8 +3332,7 @@ private struct MainChatPanelChrome: ViewModifier {
             .overlay {
                 // ChatGPT-style light scrim: one flat color layer rather than
                 // a live blur/material, so the drawer keeps a cheap render path.
-                Color(uiColor: model.themeSurfaceUIColor)
-                    .opacity(0.38 * shadowProgress)
+                DrawerPanelScrim(configuration: configuration)
                     .contentShape(Rectangle())
                     // The native touch shield owns closing the drawer.
                     .allowsHitTesting(false)
@@ -3318,11 +3347,41 @@ private struct MainChatPanelChrome: ViewModifier {
             .background {
                 DrawerPanelShadowLayer(
                     cornerRadius: cornerRadius,
-                    progress: shadowProgress
+                    driver: configuration.chromeDriver
                 )
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
+    }
+}
+
+
+private struct DrawerPanelScrim: View {
+    @Environment(AppModel.self) private var model
+    let configuration: DrawerLiveMainPanelConfiguration
+
+    var body: some View {
+        Color(uiColor: model.themeSurfaceUIColor)
+            .opacity(0.38 * configuration.progress)
+    }
+}
+
+/// This object owns only the native shadow decoration, not SwiftUI layers.
+@MainActor
+private final class DrawerPanelChromeDriver {
+    private weak var shadow: DrawerPanelShadowBackingView?
+    private var cornerRadius: CGFloat = 0
+    private var progress: CGFloat = 0
+
+    func update(progress: CGFloat) {
+        self.progress = min(max(progress, 0), 1)
+        shadow?.update(cornerRadius: cornerRadius, progress: self.progress)
+    }
+
+    func attachShadow(_ view: DrawerPanelShadowBackingView, cornerRadius: CGFloat) {
+        shadow = view
+        self.cornerRadius = cornerRadius
+        view.update(cornerRadius: cornerRadius, progress: progress)
     }
 }
 
@@ -3331,7 +3390,7 @@ private struct MainChatPanelChrome: ViewModifier {
 /// the known panel outline without first rendering the entire subtree offscreen.
 private struct DrawerPanelShadowLayer: UIViewRepresentable {
     let cornerRadius: CGFloat
-    let progress: CGFloat
+    let driver: DrawerPanelChromeDriver
 
     func makeUIView(context: Context) -> DrawerPanelShadowBackingView {
         let view = DrawerPanelShadowBackingView()
@@ -3340,7 +3399,7 @@ private struct DrawerPanelShadowLayer: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: DrawerPanelShadowBackingView, context: Context) {
-        uiView.update(cornerRadius: cornerRadius, progress: progress)
+        driver.attachShadow(uiView, cornerRadius: cornerRadius)
     }
 }
 
@@ -3576,11 +3635,11 @@ private struct ChatDrawerPresentationObserver: View {
 /// drawer open or close updates only this lightweight modifier.
 private struct DrawerAwareMessageNavigationPanelVisibility: ViewModifier {
     @Environment(AppModel.self) private var model
-    let baseVisible: Bool
+    let baseVisibility: @MainActor () -> Bool
     let onHidden: () -> Void
 
     func body(content: Content) -> some View {
-        let isVisible = baseVisible && !model.isDrawerPresented
+        let isVisible = baseVisibility() && !model.isDrawerPresented
         content
             .opacity(isVisible ? 1 : 0)
             .offset(x: isVisible ? 0 : 18)
@@ -3696,6 +3755,15 @@ private struct ComposerOverlayPadding: ViewModifier {
     }
 }
 
+/// Gesture bookkeeping is consumed by event handlers and the small navigation
+/// and follow-position leaves, rather than publishing a new message hierarchy.
+@MainActor @Observable
+private final class ChatScrollInteractionState {
+    var showTransientNavigation = false
+    var isUserScrollActive = false
+    var autoFollowEngaged = true
+}
+
 private struct ChatView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -3707,6 +3775,7 @@ private struct ChatView: View {
     @State private var nativeTranscriptDriver = NativeChatScrollDriver()
     @State private var nativeTranscriptRegistration = ChatScrollViewRegistration()
     @State private var nativeTranscriptGeometry = NativeTranscriptGeometryRelay()
+    @State private var scrollInteraction = ChatScrollInteractionState()
     let topSafeAreaInset: CGFloat
     let onOpenDrawer: () -> Void
     let isConversationDrawerClosePending: (UUID) -> Bool
@@ -3719,7 +3788,10 @@ private struct ChatView: View {
     @State private var conversationReturnTask: Task<Void, Never>?
     @State private var navigationHideTask: Task<Void, Never>?
     @State private var navigationScrollTask: Task<Void, Never>?
-    @State private var showTransientNavigation = false
+    private var showTransientNavigation: Bool {
+        get { scrollInteraction.showTransientNavigation }
+        nonmutating set { scrollInteraction.showTransientNavigation = newValue }
+    }
     @State private var navigationRequestSequence = 0
     @State private var navigationRequest: MessageNavigationRequest?
     @State private var pendingNavigationRequest: MessageNavigationRequest?
@@ -3779,8 +3851,14 @@ private struct ChatView: View {
     @State private var lastMeasuredNearBottom = true
     @State private var lastMeasuredAtBottom = true
     @State private var navigationAnchorMessageID: UUID?
-    @State private var isUserScrollActive = false
-    @State private var autoFollowEngaged = true
+    private var isUserScrollActive: Bool {
+        get { scrollInteraction.isUserScrollActive }
+        nonmutating set { scrollInteraction.isUserScrollActive = newValue }
+    }
+    private var autoFollowEngaged: Bool {
+        get { scrollInteraction.autoFollowEngaged }
+        nonmutating set { scrollInteraction.autoFollowEngaged = newValue }
+    }
     @State private var offscreenStreamingDisplayState =
         OffscreenStreamingDisplayState()
     @State private var composerGeometry = ComposerGeometryState()
@@ -3807,8 +3885,7 @@ private struct ChatView: View {
     @State private var keyboardDismissalViewportPinRequest: Int?
     @State private var keyboardDismissalAnimationDuration: TimeInterval?
     @State private var keyboardDismissalTransitionGeneration = 0
-    @State private var lastKeyboardAnimationDuration: TimeInterval = 0.383
-    @State private var lastKeyboardAnimationCurveRawValue = 7
+    @State private var keyboardAnimationTiming = ChatKeyboardAnimationTiming()
     @State private var isComposerKeyboardPresented = false
     @State private var keyboardUnifiedSendHandoff: KeyboardUnifiedSendHandoff?
     @State private var keyboardScrollActivityIgnoreUntil = Date.distantPast
@@ -3965,7 +4042,9 @@ private struct ChatView: View {
         hasFollowingUserBatch: Bool,
         isGroupConversation: Bool,
         bottomAnchorID: ConversationBottomAnchorID,
-        isConversationTail: Bool
+        isConversationTail: Bool,
+        userSendAnimationRequest: UserBubbleSendAnimationRequest?,
+        userSendAnimationEnabled: Bool
     ) -> some View {
         let versionFlashContext: VersionFlashTextContext?
         if VersionFlashTrace.isEnabled,
@@ -3991,8 +4070,8 @@ private struct ChatView: View {
             versionFlashContext: versionFlashContext,
             allowsTextSelection: true,
             contentMutationBridge: messageContentMutationBridge(for: message),
-            userSendAnimationRequest: userBubbleSendAnimationRequest(for: message),
-            userSendAnimationEnabled: model.preferences.userBubbleSendAnimationEnabled,
+            userSendAnimationRequest: userSendAnimationRequest,
+            userSendAnimationEnabled: userSendAnimationEnabled,
             onUserSendAnimationStarted: { requestID in
                 model.consumeUserBubbleSendAnimation(requestID)
             },
@@ -4063,7 +4142,9 @@ private struct ChatView: View {
         isGroupConversation: Bool,
         visibleTruncateIndex: Int,
         bottomAnchorID: ConversationBottomAnchorID,
-        isConversationTail: Bool
+        isConversationTail: Bool,
+        userSendAnimationRequest: UserBubbleSendAnimationRequest?,
+        userSendAnimationEnabled: Bool
     ) -> some View {
         VStack(spacing: 30) {
             if host.index == visibleTruncateIndex {
@@ -4076,7 +4157,9 @@ private struct ChatView: View {
                 hasFollowingUserBatch: host.hasFollowingUserBatch && host.index + 1 != visibleTruncateIndex,
                 isGroupConversation: isGroupConversation,
                 bottomAnchorID: bottomAnchorID,
-                isConversationTail: isConversationTail
+                isConversationTail: isConversationTail,
+                userSendAnimationRequest: userSendAnimationRequest,
+                userSendAnimationEnabled: userSendAnimationEnabled
             )
         }
         // Reserve the immutable waiting row in the same revision as the user
@@ -4115,23 +4198,41 @@ private struct ChatView: View {
         scrollProxy: ChatTranscriptProxy
     ) -> some View {
         let dividerIndex = model.selectedLogicalTruncateIndex - model.messageWindowStartIndex
+        // Every row belongs to this same window publication. Resolve its tail
+        // once rather than repeating the message projection for each row.
+        let hasLaterMessages = model.hasLaterMessages
         let publicationID = NativeChatPublicationID(
             anchorID: bottomAnchorID,
             layoutRequestID: activeCodeLayoutRequestID
         )
+        // The deferred builder and its revision describe the same publication.
+        // In particular, do not re-read an expiring send request at first layout.
+        let rowModel = model
+        let rowPreferences = model.preferences
+        let rowFontPostScriptName = rowPreferences.appFontPostScriptName
+        let rowSendAnimationEnabled = rowPreferences.userBubbleSendAnimationEnabled
+        let rowLocale = nativeTranscriptLocale
+        let rowColorScheme = colorScheme
+        let rowDynamicTypeSize = nativeTranscriptDynamicTypeSize
+        let rowLayoutDirection = nativeTranscriptLayoutDirection
+        let rowActionColor = Color(uiColor: model.themeActionUIColor)
+        let rowSwitchColor = Color(uiColor: model.themeSwitchUIColor)
+        let rowSpacing = conversationMessageSpacing
+        let isCompressing = model.isCompressingContext
         let presentationSnapshot = NativeChatPresentationRevision(
-            preferences: model.preferences, locale: nativeTranscriptLocale,
-            colorScheme: colorScheme, dynamicTypeSize: nativeTranscriptDynamicTypeSize,
-            layoutDirection: nativeTranscriptLayoutDirection
+            preferences: rowPreferences, locale: rowLocale,
+            colorScheme: rowColorScheme, dynamicTypeSize: rowDynamicTypeSize,
+            layoutDirection: rowLayoutDirection
         )
         let presentation = nativeTranscriptPresentationCache.token(for: presentationSnapshot)
         var rows = hosts.map { host in
             // The waiting assistant already owns the final-row spacing. Use the
             // same value for rendering and measurement-cache invalidation.
-            let isConversationTail = !model.hasLaterMessages && (
+            let isConversationTail = !hasLaterMessages && (
                 host.isSendPresentationReservation
                     || host.message.id == bottomAnchorID.messageIDs.last
             )
+            let sendAnimation = userBubbleSendAnimationRequest(for: host.message)
             return NativeChatRow(
                 id: host.message.id,
                 revision: AnyHashable(NativeChatRowRevision(
@@ -4144,10 +4245,10 @@ private struct ChatView: View {
                     isConversationTail: isConversationTail,
                     hasDivider: host.index == dividerIndex,
                     layoutRequestID: activeCodeLayoutRequestID,
-                    sendAnimationRequestID: userBubbleSendAnimationRequest(for: host.message)?.id,
-                    sendAnimationEnabled: model.preferences.userBubbleSendAnimationEnabled,
+                    sendAnimationRequestID: sendAnimation?.id,
+                    sendAnimationEnabled: rowSendAnimationEnabled,
                     isGroupConversation: isGroupConversation,
-                    isDark: colorScheme == .dark
+                    isDark: rowColorScheme == .dark
                 )),
                 content: AnyView(
                     conversationMessageHost(
@@ -4155,36 +4256,38 @@ private struct ChatView: View {
                         isGroupConversation: isGroupConversation,
                         visibleTruncateIndex: dividerIndex,
                         bottomAnchorID: bottomAnchorID,
-                        isConversationTail: isConversationTail
+                        isConversationTail: isConversationTail,
+                        userSendAnimationRequest: sendAnimation,
+                        userSendAnimationEnabled: rowSendAnimationEnabled
                     )
                     .padding(.horizontal, 18)
-                    .environment(model)
-                    .environment(\.colorScheme, colorScheme)
-                    .environment(\.locale, nativeTranscriptLocale)
-                    .environment(\.dynamicTypeSize, nativeTranscriptDynamicTypeSize)
-                    .environment(\.layoutDirection, nativeTranscriptLayoutDirection)
-                    .appFontEnvironment(model.preferences.appFontPostScriptName)
-                    .tint(Color(uiColor: model.themeActionUIColor))
-                    .accentColor(Color(uiColor: model.themeActionUIColor))
-                    .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
+                    .environment(rowModel)
+                    .environment(\.colorScheme, rowColorScheme)
+                    .environment(\.locale, rowLocale)
+                    .environment(\.dynamicTypeSize, rowDynamicTypeSize)
+                    .environment(\.layoutDirection, rowLayoutDirection)
+                    .appFontEnvironment(rowFontPostScriptName)
+                    .tint(rowActionColor)
+                    .accentColor(rowActionColor)
+                    .toggleStyle(SwitchToggleStyle(tint: rowSwitchColor))
                 ),
                 sendOrigin: host.index == dividerIndex ? nil
-                    : userBubbleSendAnimationRequest(for: host.message)?.origin
+                    : sendAnimation?.origin
             )
         }
         if (visibleMessageCount > 0 && dividerIndex == visibleMessageCount)
-            || model.isCompressingContext {
+            || isCompressing {
             rows.append(NativeChatRow(
                 id: UUID(uuidString: "5EEB9CB8-1FDD-450A-8FB8-F96D5E355E0D")!,
                 revision: AnyHashable(NativeChatAuxiliaryRevision(
                     showsDivider: dividerIndex == visibleMessageCount,
-                    isCompressing: model.isCompressingContext,
+                    isCompressing: isCompressing,
                     presentation: presentation
                 )),
                 content: AnyView(
-                    VStack(spacing: conversationMessageSpacing) {
+                    VStack(spacing: rowSpacing) {
                         if dividerIndex == visibleMessageCount { ContextClearedDivider() }
-                        if model.isCompressingContext {
+                        if isCompressing {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
                                 Text(L10n.lookup("正在压缩上下文…"))
@@ -4194,15 +4297,15 @@ private struct ChatView: View {
                         }
                     }
                     .padding(.horizontal, 18)
-                    .environment(model)
-                    .environment(\.colorScheme, colorScheme)
-                    .environment(\.locale, nativeTranscriptLocale)
-                    .environment(\.dynamicTypeSize, nativeTranscriptDynamicTypeSize)
-                    .environment(\.layoutDirection, nativeTranscriptLayoutDirection)
-                    .appFontEnvironment(model.preferences.appFontPostScriptName)
-                    .tint(Color(uiColor: model.themeActionUIColor))
-                    .accentColor(Color(uiColor: model.themeActionUIColor))
-                    .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
+                    .environment(rowModel)
+                    .environment(\.colorScheme, rowColorScheme)
+                    .environment(\.locale, rowLocale)
+                    .environment(\.dynamicTypeSize, rowDynamicTypeSize)
+                    .environment(\.layoutDirection, rowLayoutDirection)
+                    .appFontEnvironment(rowFontPostScriptName)
+                    .tint(rowActionColor)
+                    .accentColor(rowActionColor)
+                    .toggleStyle(SwitchToggleStyle(tint: rowSwitchColor))
                 ),
                 isMessage: false
             ))
@@ -4223,10 +4326,10 @@ private struct ChatView: View {
             sessionID: AnyHashable(model.selectedConversationID),
             driver: nativeTranscriptDriver,
             hasEarlier: model.hasEarlierMessages,
-            hasLater: model.hasLaterMessages,
+            hasLater: hasLaterMessages,
             initialBottom: visibleMessageCount > 0 && !isFreshConversationFirstMessage,
             holdsAutomaticBottomFollow: isUserMessageSendPositioning,
-            streamingTailID: !model.hasLaterMessages && hosts.last?.message.isStreaming == true ? hosts.last?.message.id : nil,
+            streamingTailID: !hasLaterMessages && hosts.last?.message.isStreaming == true ? hosts.last?.message.id : nil,
             mutationLanding: nativeMutationLanding(for: publicationID),
             debugWindow: nativeTranscriptDebugWindow(
                 start: model.messageWindowStartIndex,
@@ -4350,8 +4453,8 @@ private struct ChatView: View {
     private func nativeBottomPositionModifier(
         bottomAnchorID: ConversationBottomAnchorID,
         scrollProxy: ChatTranscriptProxy
-    ) -> ChatNativeBottomPositionModifier {
-        ChatNativeBottomPositionModifier(
+    ) -> ChatNativeBottomPositionObserver {
+        let modifier = ChatNativeBottomPositionModifier(
             nativeDriver: nativeTranscriptDriver,
             conversationID: model.selectedConversationID,
             request: model.conversationBottomReturnRequest,
@@ -4366,11 +4469,12 @@ private struct ChatView: View {
             pendingSendRequestID: model.pendingUserMessageSendPositionRequest.flatMap {
                 $0.conversationID == model.selectedConversationID ? $0.id : nil
             },
-            keyboardAnimationDuration: lastKeyboardAnimationDuration,
-            keyboardAnimationCurveRawValue: lastKeyboardAnimationCurveRawValue,
+            // The observer supplies current timing in its own dependency scope.
+            keyboardAnimationDuration: 0.383,
+            keyboardAnimationCurveRawValue: 7,
             keyboardMotionSource: composerKeyboardMotionSource,
             scrollViewBox: chatScrollViewBox,
-            shouldPinToBottom: shouldKeepNativeBottomPosition,
+            shouldPinToBottom: false,
             allowsAutomaticBottomFollow: model.preferences.autoScrollEnabled,
             isOrdinaryConversationReturn: isOrdinaryConversationReturn,
             messageReplacementReleaseID: messageReplacementRequest?.didCommit == false
@@ -4380,8 +4484,7 @@ private struct ChatView: View {
                     requestID, sourceAnchorID: anchorID, using: scrollProxy
                 )
             },
-            shouldPauseStreamingFollowOnUserTouch:
-                shouldPauseStreamingFollowOnNativeTouch,
+            shouldPauseStreamingFollowOnUserTouch: false,
             automaticReasoningCollapseOwnerID:
                 automaticReasoningCollapseOwner?.id,
             automaticReasoningCollapseOwnerLifecycle:
@@ -4442,6 +4545,14 @@ private struct ChatView: View {
                     using: scrollProxy
                 )
             }
+        )
+        return ChatNativeBottomPositionObserver(
+            keyboardTiming: keyboardAnimationTiming,
+            scrollInteraction: scrollInteraction,
+            shouldPinToBottomAccess: { shouldKeepNativeBottomPosition },
+            shouldPauseStreamingFollowOnUserTouchAccess:
+                { shouldPauseStreamingFollowOnNativeTouch },
+            modifier: modifier
         )
     }
 
@@ -5383,7 +5494,7 @@ private struct ChatView: View {
             // join the same transaction, which was 4472's switch regression.
             .modifier(
                 DrawerAwareMessageNavigationPanelVisibility(
-                    baseVisible: shouldShowNavigationPanelIgnoringDrawer,
+                    baseVisibility: { shouldShowNavigationPanelIgnoringDrawer },
                     onHidden: cancelPendingMessageNavigation
                 )
             )
@@ -6892,7 +7003,9 @@ private struct ChatView: View {
 
     private var shouldKeepNativeBottomPosition: Bool {
         guard messageReplacementRequest == nil else { return false }
-        guard !model.messages.isEmpty else { return false }
+        // Row identities share the same send-presentation admission as
+        // `messages`; their cached array avoids copying every visible message.
+        guard !model.transcriptMessageIDs.isEmpty else { return false }
         // A tap that dismisses the keyboard briefly tracks the scroll view,
         // but does not transfer its existing keyboard motion to a user drag.
         let isKeyboardFollowTouch = keyboardBottomFollowIntent
@@ -8025,15 +8138,17 @@ private struct ChatView: View {
                 )
             }
         }
-        if isAtBottom && !model.hasLaterMessages {
+        // One geometry event reads one window state.
+        let hasLaterMessages = model.hasLaterMessages
+        if isAtBottom && !hasLaterMessages {
             isQuickReturnToBottomVisible = false
-        } else if model.hasLaterMessages || !isNearBottom {
+        } else if hasLaterMessages || !isNearBottom {
             // Keyboard layout and streaming growth can publish new geometry
             // before bottom-follow motion has landed. That intermediate distance
             // is not a departure while the existing bottom owner still holds it.
             // Native touch, history and navigation revoke this same ownership;
             // an already visible control still waits for exact-bottom geometry.
-            if !model.hasLaterMessages,
+            if !hasLaterMessages,
                shouldKeepNativeBottomPosition {
                 ChatBottomTrace.log(
                     "QUICK_BOTTOM_APPEAR_DEFERRED reason=bottomFollowOwner "
@@ -11582,7 +11697,7 @@ private struct ChatView: View {
         if let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue,
            duration.isFinite,
            duration >= 0 {
-            lastKeyboardAnimationDuration = duration
+            keyboardAnimationTiming.duration = duration
             let removed = composerKeyboardMotionSource.updateTiming(
                 duration: duration, conversationID: model.selectedConversationID,
                 scrollView: nativeTranscriptDriver.scrollView
@@ -11592,7 +11707,7 @@ private struct ChatView: View {
             }
         }
         if let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue {
-            lastKeyboardAnimationCurveRawValue = curve
+            keyboardAnimationTiming.curve = curve
         }
     }
 
@@ -12934,6 +13049,41 @@ private struct ChatNativeScrollGeometrySnapshot: Equatable {
     }
 }
 
+/// Timing changes update the bottom-position observer without invalidating ChatView.
+@MainActor @Observable private final class ChatKeyboardAnimationTiming {
+    var duration: TimeInterval = 0.383
+    var curve = 7
+}
+
+/// Resolve observable policy in this small view's dependency scope. Native
+/// geometry callbacks receive ordinary values, as they did before scroll-state
+/// isolation, rather than repeatedly projecting messages during layout/touch.
+private struct ChatNativeBottomPositionObserver: ViewModifier {
+    let keyboardTiming: ChatKeyboardAnimationTiming
+    let scrollInteraction: ChatScrollInteractionState
+    let shouldPinToBottomAccess: @MainActor () -> Bool
+    let shouldPauseStreamingFollowOnUserTouchAccess: @MainActor () -> Bool
+    let modifier: ChatNativeBottomPositionModifier
+
+    private var resolvedModifier: ChatNativeBottomPositionModifier {
+        // UIKit ownership can return early during a pan. Stay subscribed to
+        // both flags so its completion resolves a fresh policy as well.
+        _ = scrollInteraction.isUserScrollActive
+        _ = scrollInteraction.autoFollowEngaged
+        var resolved = modifier
+        resolved.keyboardAnimationDuration = keyboardTiming.duration
+        resolved.keyboardAnimationCurveRawValue = keyboardTiming.curve
+        resolved.shouldPinToBottom = shouldPinToBottomAccess()
+        resolved.shouldPauseStreamingFollowOnUserTouch =
+            shouldPauseStreamingFollowOnUserTouchAccess()
+        return resolved
+    }
+
+    func body(content: Content) -> some View {
+        content.modifier(resolvedModifier)
+    }
+}
+
 private struct ChatNativeBottomPositionModifier: ViewModifier {
     let nativeDriver: NativeChatScrollDriver
     let conversationID: UUID
@@ -12947,16 +13097,17 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
     let keyboardDismissalRequest: Int?
     let keyboardIsPresented: Bool
     let pendingSendRequestID: UUID?
-    let keyboardAnimationDuration: TimeInterval
-    let keyboardAnimationCurveRawValue: Int
+    var keyboardAnimationDuration: TimeInterval
+    var keyboardAnimationCurveRawValue: Int
     let keyboardMotionSource: ComposerKeyboardMotionSource
     let scrollViewBox: WeakChatScrollViewBox
-    let shouldPinToBottom: Bool
+    // The observer fills these before attaching this stateful modifier.
+    var shouldPinToBottom: Bool
     let allowsAutomaticBottomFollow: Bool
     let isOrdinaryConversationReturn: Bool
     let messageReplacementReleaseID: UUID?
     let onMessageReplacementPositionReleased: (ConversationBottomAnchorID, UUID) -> Void
-    let shouldPauseStreamingFollowOnUserTouch: Bool
+    var shouldPauseStreamingFollowOnUserTouch: Bool
     let automaticReasoningCollapseOwnerID:
         AutomaticReasoningCollapseOwnerID?
     let automaticReasoningCollapseOwnerLifecycle: UInt64
@@ -20105,5 +20256,30 @@ private struct FavoriteMessageCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
+    }
+}
+
+// Only the drawer list and the native panel's interaction wrapper observe
+// gesture ownership. Event handlers keep their existing ordering and gates.
+@MainActor @Observable private final class DrawerGestureActivity {
+    var active = false
+}
+private struct DrawerInteractionMainPanelHost: View {
+    let model: AppModel
+    let drawerWidth: CGFloat
+    let cornerRadius: CGFloat
+    let activity: DrawerGestureActivity
+    let tracker: DrawerPresentationProgressTracker
+    let onOpenDrawer: () -> Void
+    let onCloseDrawer: () -> Void
+    let isConversationDrawerClosePending: (UUID) -> Bool
+    let onConversationContentReady: (UUID) -> Void
+
+    var body: some View {
+        DrawerLiveMainPanelHost(model: model, drawerWidth: drawerWidth,
+            cornerRadius: cornerRadius, isInteractionBlocked: model.isDrawerPresented || activity.active,
+            tracker: tracker, onOpenDrawer: onOpenDrawer, onCloseDrawer: onCloseDrawer,
+            isConversationDrawerClosePending: isConversationDrawerClosePending,
+            onConversationContentReady: onConversationContentReady)
     }
 }

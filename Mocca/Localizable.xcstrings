@@ -13993,6 +13993,17 @@
         }
       }
     },
+    "所选模型仅支持图片输出，请选择文字模型": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model only generates images. Choose a text model."
+          }
+        }
+      }
+    },
     "服务商返回了图片，但图片数据格式无法读取": {
       "extractionState": "manual",
       "localizations": {

@@ -1,6 +1,12 @@
 # Source baseline
 
-## Current snapshot 5271
+## Current snapshot 5286
+
+The current `main` source is **1.0.7 (5286)**, synchronized from the frozen inputs used for the installed phone build. All 160 product files match [the SHA-256 manifest](SOURCE_5286_SHA256.json). Portable signing, sponsorship disabled by default, attribution and resources are retained. See [changes and verification](SOURCE_SYNC_5286.md).
+
+当前源码对应手机 **1.0.7（5286）**，160 项产品文件与装机冻结清单逐一匹配。保留可移植签名配置、默认关闭赞助、署名和资源；详见[源码核对与验证](SOURCE_SYNC_5286.md)。本次仅同步代码，不新建或修改 Release、标签或 IPA。
+
+## Historical snapshot 5271
 
 The current `main` source is **1.0.7 (5271)**, synchronized from the frozen inputs used for the installed phone build. All 160 product input files match [the SHA-256 manifest](SOURCE_5271_SHA256.json). This update continues the existing GitHub history and retains configurable signing, sponsorship disabled by default, attribution and assets. Build-time identity and sponsorship overrides used for phone installation are separate from the checked-in defaults.
 

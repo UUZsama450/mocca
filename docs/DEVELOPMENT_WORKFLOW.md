@@ -42,11 +42,11 @@ From the repository root on macOS with Xcode installed / 在装有 Xcode 的 mac
 ```sh
 python3 CandidateTests/check_sponsorship_build_gate.py
 python3 CandidateTests/check_favorite_publication.py
-python3 CandidateTests/check_prose_viewport_refresh.py
+python3 CandidateTests/check_openrouter_image_api.py
 python3 CandidateTests/check_completion_codecs.py --candidate-only
 python3 CandidateTests/check_stream_display_work.py --candidate-only
 ```
 
-These use current source and synthetic fixtures. Other historical harnesses can depend on their original commits or simulator setup; their presence is not a claim of current support. See [5135 verification](SNAPSHOT_5135.md).
+These use current source and synthetic fixtures. The historical `check_prose_viewport_refresh.py` extraction harness is incompatible with build 5286; see [current verification](SOURCE_SYNC_5286.md). Other historical harnesses can depend on their original commits or simulator setup; their presence is not a claim of current support. See [5135 verification](SNAPSHOT_5135.md).
 
-以上检查使用当前源码与虚构数据。其他历史工具可能依赖原始提交或模拟器配置，保留文件不表示它们已适配当前版本。详见[5135 验证](SNAPSHOT_5135.md)。
+以上检查使用当前源码与虚构数据。历史 `check_prose_viewport_refresh.py` 脚本的源码提取规则不适用于 5286，详见[本次验证](SOURCE_SYNC_5286.md)。其他历史工具可能依赖原始提交或模拟器配置，保留文件不表示它们已适配当前版本。详见[5135 验证](SNAPSHOT_5135.md)。

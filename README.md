@@ -46,7 +46,7 @@ Chats and attachments are stored locally. Requests send the data needed for the 
 
 ## Download
 
-The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The current `main` source matches phone build **1.0.7 (5271)**; see [source verification](docs/SOURCE_SYNC_5271.md). This source update does not create a GitHub Release or a new IPA. The existing **1.0.7 (5253)** release and earlier **1.0.5 (5237)** IPA preview remain available; the IPA requires your own signing. See [installation](docs/INSTALLATION.md) and [IPA source verification](docs/RELEASE_1.0.5_5237.md). App Store updates are reviewed separately and released manually after approval.
+The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) is available in supported regions. The current `main` source matches phone build **1.0.7 (5286)**; see [source verification](docs/SOURCE_SYNC_5286.md). This source update does not create a GitHub Release or a new IPA. The existing **1.0.7 (5253)** release and earlier **1.0.5 (5237)** IPA preview remain available; the IPA requires your own signing. See [installation](docs/INSTALLATION.md) and [IPA source verification](docs/RELEASE_1.0.5_5237.md). App Store updates are reviewed separately and released manually after approval.
 
 
 ## Build locally

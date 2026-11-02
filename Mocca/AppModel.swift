@@ -899,6 +899,15 @@ final class AppModel {
     @ObservationIgnored private var selectedMessageProjectionCache:
         SelectedMessageProjectionCache?
     @ObservationIgnored private var messageVersionLookupCache: MessageVersionLookupCache?
+    // Geometry and position callbacks compare row identities many times per
+    // frame. Content-only revisions keep the projection structure, so the same
+    // identity array (and its storage) is reused until structure or window moves.
+    @ObservationIgnored private var transcriptMessageIDsCache: (
+        conversationID: UUID,
+        structureID: UUID,
+        window: MessageWindowState,
+        ids: [UUID]
+    )?
     // Repeated transcript reads usually ask for the same conversation. Keep
     // only its position; canonical mutations invalidate it, and reads below
     // still observe the array and validate the current identity at that slot.
@@ -1705,7 +1714,22 @@ final class AppModel {
         let projection = selectedMessageProjection(for: conversationID)
         let window = messageWindow(for: conversationID, projection: projection)
         guard window.count > 0 else { return [] }
-        return projection[window.startIndex..<window.endIndex].map { $0.message.id }
+        // The reads above keep every observable input subscribed on a hit.
+        let structureID = selectedMessageProjectionCache.flatMap {
+            $0.conversationID == conversationID ? $0.structureID : nil
+        }
+        if let structureID,
+           let cached = transcriptMessageIDsCache,
+           cached.conversationID == conversationID,
+           cached.structureID == structureID,
+           cached.window == window {
+            return cached.ids
+        }
+        let ids = projection[window.startIndex..<window.endIndex].map { $0.message.id }
+        if let structureID {
+            transcriptMessageIDsCache = (conversationID, structureID, window, ids)
+        }
+        return ids
     }
 
     /// While the canonical assistant row is gated, give RootView an immutable
@@ -10135,7 +10159,8 @@ final class AppModel {
         _ candidates: ModelSelection?...
     ) -> ResolvedChatModelContext? {
         for candidate in candidates {
-            if let context = resolvedChatModel(for: candidate) {
+            if let context = resolvedChatModel(for: candidate),
+               !AIChatService.usesOpenRouterImageAPI(provider: context.provider, modelID: context.model.id) {
                 return context
             }
         }

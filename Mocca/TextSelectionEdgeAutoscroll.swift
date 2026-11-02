@@ -4,8 +4,13 @@ import UIKit
 /// position from the first edge scroll until the native selection gesture is released.
 @MainActor
 protocol TextSelectionAutoscrollHost: AnyObject {
+    var selectionAutoscrollBottomClearance: CGFloat { get }
     func selectionAutoscrollDidBegin()
     func selectionAutoscrollDidEnd()
+}
+
+extension TextSelectionAutoscrollHost {
+    var selectionAutoscrollBottomClearance: CGFloat { 0 }
 }
 
 @MainActor
@@ -40,8 +45,9 @@ final class TextSelectionEdgeAutoscroll: NSObject {
         super.init()
         let observer = SelectionTouchObserver(target: nil, action: nil)
         observer.began = { [weak self] point, isSelectionSurface, textView in
-            self?.begin(at: point, fromSelectionSurface: isSelectionSurface, initialTextView: textView)
+            self?.begin(at: point, fromSelectionSurface: isSelectionSurface, initialTextView: textView) ?? .ignored
         }
+        observer.keepsCandidate = { [weak self] point in self?.keepsInitialCandidate(at: point) ?? false }
         observer.moved = { [weak self] point in self?.move(to: point) }
         observer.released = { [weak self] in self?.finish() }
         observer.ended = { [weak self] in self?.cancel() }
@@ -62,7 +68,8 @@ final class TextSelectionEdgeAutoscroll: NSObject {
         // UIKit can host the selection handles above the transcript's view
         // subtree. Observe their original touch at the window, still admitting
         // only selection gestures in this controller's registered text views.
-        if let window = scrollView?.window, let touchObserver, touchObserver.view !== window {
+        if !DrawerFeelComparison.noSelectionObserver,
+           let window = scrollView?.window, let touchObserver, touchObserver.view !== window {
             touchObserver.view?.removeGestureRecognizer(touchObserver)
             window.addGestureRecognizer(touchObserver)
         }
@@ -78,11 +85,17 @@ final class TextSelectionEdgeAutoscroll: NSObject {
         if selectedView === textView || pendingInitialView === textView { cancel() }
     }
 
+    enum TouchQualification { case ignored, candidate, endpoint }
+
     // Called by the passive observer, never by a competing selection gesture.
-    func begin(at point: CGPoint, fromSelectionSurface: Bool = false, initialTextView: UITextView? = nil) {
+    // An existing selection's endpoint drag begins the observer. A first long
+    // press over text stays possible, without ever beginning, until UIKit's
+    // long press selects; any other touch fails the observer at touch-down.
+    @discardableResult
+    func begin(at point: CGPoint, fromSelectionSurface: Bool = false, initialTextView: UITextView? = nil) -> TouchQualification {
         cancel()
         guard fromSelectionSurface, let scrollView, let window = scrollView.window,
-              scrollView.isScrollEnabled, !scrollView.isDecelerating else { return }
+              scrollView.isScrollEnabled, !scrollView.isDecelerating else { return .ignored }
         for view in textViews.allObjects where view.window === window
             && view.isDescendant(of: scrollView) && view.isSelectable
             && !view.isEditable && view.isFirstResponder && view.selectedRange.length > 0 {
@@ -119,19 +132,33 @@ final class TextSelectionEdgeAutoscroll: NSObject {
             beganPoint = point; finger = point; windowSize = window.bounds.size
             NotificationCenter.default.addObserver(self, selector: #selector(storageChanged(_:)),
                 name: NSTextStorage.didProcessEditingNotification, object: view.textStorage)
-            return
+            return .endpoint
         }
         // The first long press starts before UIKit has created a selection.
         // Keep just this touch as a candidate; an ordinary pan never qualifies.
         guard let view = initialTextView, textViews.contains(view), view.window === window,
               view.isDescendant(of: scrollView), view.isSelectable, !view.isEditable,
-              view.bounds.contains(view.convert(point, from: window)) else { return }
+              view.bounds.contains(view.convert(point, from: window)) else { return .ignored }
         pendingInitialView = view
         selectionAtTouchDown = view.selectedRange
         textLength = view.textStorage.length
         beganPoint = point; finger = point; windowSize = window.bounds.size
         NotificationCenter.default.addObserver(self, selector: #selector(storageChanged(_:)),
             name: NSTextStorage.didProcessEditingNotification, object: view.textStorage)
+        return .candidate
+    }
+
+    // A long press tolerates 10pt of travel before it recognizes. Movement
+    // beyond that without UIKit's long press is a list pan or drawer swipe.
+    func keepsInitialCandidate(at point: CGPoint) -> Bool {
+        guard let view = pendingInitialView else { return selectedView != nil }
+        if hypot(point.x - beganPoint.x, point.y - beganPoint.y) <= 10 { return true }
+        let nativeLongPress = (view.gestureRecognizers ?? [])
+            .compactMap { $0 as? UILongPressGestureRecognizer }
+            .contains { $0.numberOfTouchesRequired == 1 && $0.numberOfTapsRequired == 0
+                && ($0.state == .began || $0.state == .changed) }
+        if !nativeLongPress { cancel() }
+        return nativeLongPress
     }
 
     func move(to point: CGPoint) {
@@ -165,7 +192,7 @@ final class TextSelectionEdgeAutoscroll: NSObject {
             self.pendingInitialView = nil
             initialSelection = range
         }
-        guard validView() != nil else { cancel(); return }
+        guard let view = validView(), let window = view.window else { cancel(); return }
         if !confirmedSelectionDrag {
             // Read-only UITextView can defer its public selectedRange until
             // the handle gesture ends. Endpoint hit testing, movement, and the
@@ -173,8 +200,11 @@ final class TextSelectionEdgeAutoscroll: NSObject {
             guard hypot(finger.x - beganPoint.x, finger.y - beganPoint.y) >= 6 else { return }
             confirmedSelectionDrag = true
         }
-        guard let velocity = currentVelocity(), velocity != 0,
-              nextOffset(velocity: velocity, duration: 1.0 / 60) != nil else {
+        guard let velocity = currentVelocity(), velocity != 0 else {
+            stopDisplayLink(); return
+        }
+        guard nextOffset(velocity: velocity, duration: 1.0 / 60) != nil else {
+            extendSelection(in: view, window: window, onlyAtDocumentBoundary: true)
             stopDisplayLink(); return
         }
         guard displayLink == nil else { return }
@@ -215,12 +245,16 @@ final class TextSelectionEdgeAutoscroll: NSObject {
         let keyboard = window.keyboardLayoutGuide.layoutFrame
         if keyboard.width > rect.width * 0.8, keyboard.minY > rect.minY,
            keyboard.minY < rect.maxY { rect.size.height = keyboard.minY - rect.minY }
+        // The transcript draws beneath the composer. Its existing bottom
+        // clearance is not selectable viewport, even with the keyboard hidden.
+        let bottomClearance = (scrollView as? TextSelectionAutoscrollHost)?.selectionAutoscrollBottomClearance ?? 0
+        rect.size.height = max(0, rect.height - max(0, bottomClearance))
         return rect.isNull || rect.height < 90 ? nil : rect
     }
 
-    static func velocity(at point: CGPoint, viewport: CGRect) -> CGFloat {
+    static func velocity(at point: CGPoint, viewport: CGRect, additionalBottomReach: CGFloat = 0) -> CGFloat {
         guard point.x >= viewport.minX - 30, point.x <= viewport.maxX + 30,
-              point.y >= viewport.minY - 80, point.y <= viewport.maxY + 80 else { return 0 }
+              point.y >= viewport.minY - 80, point.y <= viewport.maxY + 80 + max(0, additionalBottomReach) else { return 0 }
         let band = min(48, viewport.height / 4)
         let top = (viewport.minY + band - point.y) / band
         let bottom = (point.y - (viewport.maxY - band)) / band
@@ -232,7 +266,10 @@ final class TextSelectionEdgeAutoscroll: NSObject {
 
     private func currentVelocity() -> CGFloat? {
         guard let viewport = viewport() else { return nil }
-        return Self.velocity(at: finger, viewport: viewport)
+        // Activate above the composer while preserving the original outer
+        // touch boundary when the same finger continues across that overlay.
+        let bottomClearance = (scrollView as? TextSelectionAutoscrollHost)?.selectionAutoscrollBottomClearance ?? 0
+        return Self.velocity(at: finger, viewport: viewport, additionalBottomReach: bottomClearance)
     }
 
     private func nextOffset(velocity: CGFloat, duration: CFTimeInterval) -> CGFloat? {
@@ -262,14 +299,20 @@ final class TextSelectionEdgeAutoscroll: NSObject {
         guard let velocity = currentVelocity(), velocity != 0 else { stopDisplayLink(); return }
         let duration = lastTimestamp == 0 ? link.targetTimestamp - link.timestamp : link.timestamp - lastTimestamp
         lastTimestamp = link.timestamp
-        guard nextOffset(velocity: velocity, duration: duration) != nil else { stopDisplayLink(); return }
+        guard nextOffset(velocity: velocity, duration: duration) != nil else {
+            extendSelection(in: view, window: window, onlyAtDocumentBoundary: true)
+            stopDisplayLink(); return
+        }
         if !ownsScroll {
             ownsScroll = true
             (scrollView as? TextSelectionAutoscrollHost)?.selectionAutoscrollDidBegin()
         }
         // Releasing an in-flight stream animation may adopt its presentation
         // offset. Compute the step again after that ownership handoff.
-        guard let y = nextOffset(velocity: velocity, duration: duration) else { stopDisplayLink(); return }
+        guard let y = nextOffset(velocity: velocity, duration: duration) else {
+            extendSelection(in: view, window: window, onlyAtDocumentBoundary: true)
+            stopDisplayLink(); return
+        }
         scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y), animated: false)
         // A stationary finger receives no new move events while content rolls
         // underneath it. Extend the same selection using public UITextInput
@@ -277,15 +320,29 @@ final class TextSelectionEdgeAutoscroll: NSObject {
         extendSelection(in: view, window: window)
     }
 
-    private func extendSelection(in view: UITextView, window: UIWindow) {
+    private func extendSelection(in view: UITextView, window: UIWindow, onlyAtDocumentBoundary: Bool = false) {
         guard let visible = viewport() else { cancel(); return }
         // closestPosition rounds to a text line. Leave room for that line and
         // its native grabber so the moving handle remains reachable at an edge.
         let selectionMargin = min(40, visible.height / 4)
-        let point = CGPoint(x: min(max(finger.x, visible.minX), visible.maxX),
-                            y: min(max(finger.y, visible.minY + selectionMargin), visible.maxY - selectionMargin))
-        let local = view.convert(point, from: window)
-        guard let moving = view.closestPosition(to: local) else { cancel(); return }
+        let document = (view as? TextSelectionAutoscrollDocument)?.selectionAutoscrollDocumentRect
+            ?? view.bounds.inset(by: view.textContainerInset)
+        let text = view.convert(document, to: window)
+        let moving: UITextPosition
+        // Once the document edge is revealed, the protective inset must not
+        // strand its first/last line. Resolve the exact text endpoint; while
+        // more document remains offscreen, retain the ordinary inset mapping.
+        if finger.y <= visible.minY + selectionMargin, text.minY >= visible.minY - 0.5 {
+            moving = view.beginningOfDocument
+        } else if finger.y >= visible.maxY - selectionMargin, text.maxY <= visible.maxY + 0.5 {
+            moving = view.endOfDocument
+        } else {
+            guard !onlyAtDocumentBoundary else { return }
+            let point = CGPoint(x: min(max(finger.x, visible.minX), visible.maxX),
+                                y: min(max(finger.y, visible.minY + selectionMargin), visible.maxY - selectionMargin))
+            guard let position = view.closestPosition(to: view.convert(point, from: window)) else { cancel(); return }
+            moving = position
+        }
         let offset = view.offset(from: view.beginningOfDocument, to: moving)
         if let initialSelection {
             // A first long press expands either side of its native word. Keep
@@ -302,7 +359,7 @@ final class TextSelectionEdgeAutoscroll: NSObject {
     }
 
     private func finish() {
-        guard initialSelection != nil, ownsScroll, validView() != nil,
+        guard initialSelection != nil, confirmedSelectionDrag, validView() != nil,
               let velocity = currentVelocity(), velocity != 0 else { cancel(); return }
         stopDisplayLink()
         let expected = generation
@@ -355,11 +412,15 @@ private final class SelectionDisplayLinkTarget: NSObject {
 /// Observe the original finger without delaying, cancelling or preventing
 /// UIKit's text selection, list pan, horizontal code pan, or drawer gestures.
 private final class SelectionTouchObserver: UIGestureRecognizer, UIGestureRecognizerDelegate {
-    var began: (CGPoint, Bool, UITextView?) -> Void = { _, _, _ in }
+    var began: (CGPoint, Bool, UITextView?) -> TextSelectionEdgeAutoscroll.TouchQualification = { _, _, _ in .ignored }
+    var keepsCandidate: (CGPoint) -> Bool = { _ in false }
     var moved: (CGPoint) -> Void = { _ in }
     var released: () -> Void = {}
     var ended: () -> Void = {}
     private weak var finger: UITouch?
+    // A long-press candidate is observed while possible and never begins, so
+    // drawer and list gestures see no recognized observer on that touch.
+    private var isCandidate = false
     override init(target: Any?, action: Selector?) {
         super.init(target: target, action: action)
         cancelsTouchesInView = false; delaysTouchesBegan = false; delaysTouchesEnded = false
@@ -371,28 +432,52 @@ private final class SelectionTouchObserver: UIGestureRecognizer, UIGestureRecogn
             state = state == .possible ? .failed : .cancelled
             return
         }
-        let isSelectionSurface = sequence(first: touch.view, next: { $0?.superview })
-            .contains { $0 is UITextView || $0 is UITextSelectionHandleView }
-        let textView = sequence(first: touch.view, next: { $0?.superview })
-            .compactMap { $0 as? UITextView }.first
-        finger = touch
-        began(touch.location(in: view?.window), isSelectionSurface, textView)
-        state = .began
+        var isSelectionSurface = false
+        var textView: UITextView?
+        var ancestor = touch.view
+        while let current = ancestor {
+            if let text = current as? UITextView {
+                textView = text
+                isSelectionSurface = true
+                break
+            }
+            if current is UITextSelectionHandleView { isSelectionSurface = true }
+            ancestor = current.superview
+        }
+        switch began(touch.location(in: view?.window), isSelectionSurface, textView) {
+        case .ignored:
+            state = .failed
+        case .candidate:
+            finger = touch; isCandidate = true
+        case .endpoint:
+            finger = touch; state = .began
+        }
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
         guard let finger, touches.contains(finger) else { return }
-        moved(finger.location(in: view?.window)); state = .changed
+        let point = finger.location(in: view?.window)
+        guard isCandidate else { moved(point); state = .changed; return }
+        guard keepsCandidate(point) else {
+            self.finger = nil; isCandidate = false; state = .failed
+            return
+        }
+        moved(point)
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         guard let finger, touches.contains(finger) else { return }
-        self.finger = nil; released(); state = .ended
+        self.finger = nil; released()
+        state = isCandidate ? .failed : .ended
+        isCandidate = false
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        ended(); finger = nil; state = .cancelled
+        ended(); finger = nil
+        state = state == .possible ? .failed : .cancelled
+        isCandidate = false
     }
     override func reset() {
         super.reset()
         if finger != nil { ended(); finger = nil }
+        isCandidate = false
     }
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }

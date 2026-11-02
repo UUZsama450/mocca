@@ -449,8 +449,12 @@ struct ComposerView: View {
               identity.resetRevision == inputResetID else { return }
         let previous = inputHeight.get().flatMap { $0.identity == identity ? $0.height : nil }
         guard previous == nil || abs(previous! - height) > 0.5 else { return }
+        let editor = sendSource.input
+        let liftsTranscript = previous != nil && isFocused && !reduceMotion
+            && editor?.identity == identity && editor?.isPublishingEditedHeight == true
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
+        transaction.composerTranscriptLift = liftsTranscript
         withTransaction(transaction) {
             inputHeight.set((identity, height))
             if let previous { onInputHeightChange(height - previous) }

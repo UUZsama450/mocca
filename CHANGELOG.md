@@ -1,5 +1,23 @@
 # 更新记录 / Changelog
 
+## 1.0.7 (5286) — 手机版本源码同步
+
+2026-11-03 将手机 5286 的冻结源码同步到 `main`。160 项产品文件与装机清单一致；GitHub Release 页面、标签和已有 IPA 保持不变。见[源码核对与验证](docs/SOURCE_SYNC_5286.md)。
+
+- **侧栏与聊天布局：** 收窄侧栏手势、装饰、键盘时序和滚动状态的观察范围；侧栏平移直接更新图层，原生消息行按需构建，并复用消息标识和布局查询。
+- **引用文字：** 为已完成的短引用和混合内容中的长文本复用不可变排版准备结果，保留原有缓存限制和内存警告清理。
+- **输入与选字：** 输入框高度变化时平滑补偿聊天文字的位置，触摸时接回当前显示位置；修复命中输入框后临时触摸状态的恢复，并改进选区在文档首尾和输入框上方的边缘滚动。
+- **OpenRouter 生图：** 仅支持图片输出的模型使用 Images 接口，保留模型端点信息、参考图片、用量和错误；标题、摘要及 OCR 等文字任务避免调用纯生图模型。
+
+### English
+
+Synchronize the installed **1.0.7 (5286)** source while retaining portable build settings. Existing Release pages, tags and IPA assets are unchanged.
+
+- Narrow observation for drawer gestures, decoration, keyboard timing and scroll state; translate the drawer panel through its layer, construct native row content on demand, and reuse message identities and layout lookups.
+- Reuse immutable preparation for settled short quotes and long prose in mixed content, retaining cache limits and memory-warning cleanup.
+- Smooth transcript movement during composer height edits, hand motion back on touch, restore temporary hit-test state, and improve text-selection scrolling at document boundaries and above the composer.
+- Route OpenRouter image-only models through Images, preserving endpoint metadata, references, usage and errors while excluding image-only models from text tasks.
+
 ## 1.0.7 (5271) — 手机版本源码同步
 
 2026-10-29 将手机 5271 的冻结源码同步到 `main`，保留可配置签名与默认关闭赞助的构建配置。未新建或修改 GitHub Release、标签或 IPA；App Store 发布单独管理。见[源码核对与验证](docs/SOURCE_SYNC_5271.md)。
