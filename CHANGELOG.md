@@ -1,5 +1,11 @@
 # 更新记录 / Changelog
 
+## 1.0.8 (5298) — 2026-11-04
+
+搜索到的图片现在可以直接在聊天中查看。改进了键盘收起时的过渡和长对话的滚动体验。
+
+View images from web searches directly in chat. This update also improves keyboard dismissal and scrolling in long conversations.
+
 ## 1.0.7 (5286) — 手机版本源码同步
 
 2026-11-03 将手机 5286 的冻结源码同步到 `main`。160 项产品文件与装机清单一致；GitHub Release 页面、标签和已有 IPA 保持不变。见[源码核对与验证](docs/SOURCE_SYNC_5286.md)。

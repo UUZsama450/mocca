@@ -86,7 +86,9 @@ enum ChatRequestPreparation {
         var userMessageTimes: [(index: Int, timestamp: String)] = []
         for (messageIndex, message) in contextMessages.enumerated() {
             try Task.checkCancellation()
-            var content = message.text
+            var content = message.role == .assistant
+                ? ToolHistoryContext.appending(to: message.text, events: message.toolEvents)
+                : message.text
             let imageAttachments = message.attachments.filter { $0.kind == .image }
             let isNewestUserMessage = isNewestUserTurn(message)
             let transmittedImageAttachments = isNewestUserMessage

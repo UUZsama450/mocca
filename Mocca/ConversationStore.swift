@@ -156,6 +156,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         for index in toolEvents.indices
         where toolEvents[index].status == .pending || toolEvents[index].status == .running {
             toolEvents[index].status = .failed
+            ToolHistoryContext.recordInterruption(&toolEvents[index])
         }
     }
 

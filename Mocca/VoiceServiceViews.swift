@@ -286,9 +286,7 @@ private struct VoiceServiceEditorView: View {
                 }
 
                 Section(L10n.lookup("连接")) {
-                    SecureField("API Key", text: $draft.apiKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    APIKeyField(text: $draft.apiKey)
                     TextField(L10n.lookup("服务地址"), text: $draft.endpoint)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()

@@ -576,10 +576,7 @@ struct ProviderEditorView: View {
             Section(L10n.lookup("连接")) {
                 TextField(L10n.lookup("名称"), text: $configuration.name)
                 if !configuration.multiKeyEnabled {
-                    SecureField("API Key", text: $configuration.apiKey)
-                        .textContentType(.password)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    APIKeyField(text: $configuration.apiKey)
                 }
                 TextField("API Base URL", text: $configuration.baseURL)
                     .textContentType(.URL)
@@ -922,6 +919,52 @@ private struct ProviderCustomAvatar: View {
     }
 }
 
+struct APIKeyField: View {
+    var title = "API Key"
+    @Binding var text: String
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isRevealed = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Group {
+                if isRevealed {
+                    TextField(title, text: $text)
+                        .textContentType(nil)
+                        .onAppear { isFocused = true }
+                } else {
+                    SecureField(title, text: $text)
+                        .textContentType(.password)
+                }
+            }
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .focused($isFocused)
+            .accessibilityIdentifier("apiKey.input")
+
+            Button {
+                isRevealed.toggle()
+            } label: {
+                Image(systemName: isRevealed ? "eye.slash" : "eye")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(L10n.lookup(isRevealed ? "隐藏 API Key" : "显示 API Key"))
+            .accessibilityIdentifier("apiKey.reveal")
+
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                isRevealed = false
+            }
+        }
+        .onDisappear {
+            isRevealed = false
+        }
+    }
+}
+
 private struct ProviderMultiKeyView: View {
     @Binding var apiKeys: [ProviderAPIKey]
 
@@ -942,10 +985,7 @@ private struct ProviderMultiKeyView: View {
                             Toggle(L10n.lookup("启用"), isOn: $item.enabled)
                                 .labelsHidden()
                         }
-                        SecureField("API Key", text: $item.key)
-                            .textContentType(.password)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
+                        APIKeyField(text: $item.key)
                     }
                     .padding(.vertical, 4)
                 }

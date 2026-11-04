@@ -456,6 +456,8 @@
 				<string>C49510000000000000000002</string>
 				<string>C52230000000000000000002</string>
 				<string>C5D5CCEFCB37DA980A064457</string>
+				<string>CB5290000000000000000000</string>
+				<string>CB5290000000000000000001</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>
@@ -789,7 +791,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5286</string>
+				<string>5298</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -801,7 +803,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.7</string>
+				<string>1.0.8</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -988,7 +990,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5286</string>
+				<string>5298</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1000,7 +1002,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.7</string>
+				<string>1.0.8</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -1105,6 +1107,8 @@
 				<string>5769666635B0E581D7481780</string>
 				<string>C48290000000000000000002</string>
 				<string>2663753367423BD56C99F038</string>
+				<string>CA5290000000000000000000</string>
+				<string>CA5290000000000000000001</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>
@@ -1566,7 +1570,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5286</string>
+				<string>5298</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1582,7 +1586,7 @@
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.7</string>
+				<string>1.0.8</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension</string>
 				<key>PRODUCT_NAME</key>
@@ -1618,7 +1622,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5286</string>
+				<string>5298</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1634,7 +1638,7 @@
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.7</string>
+				<string>1.0.8</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension</string>
 				<key>PRODUCT_NAME</key>
@@ -2672,6 +2676,42 @@ rm -f "${temporary_icon}"
 			<string>192B55C4EC44A0993732D51C</string>
 			<key>isa</key>
 			<string>PBXBuildFile</string>
+		</dict>
+		<key>CA5290000000000000000000</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>ToolMathExpression.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>CB5290000000000000000000</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>CA5290000000000000000000</string>
+		</dict>
+		<key>CA5290000000000000000001</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>ToolHistoryContext.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>CB5290000000000000000001</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>CA5290000000000000000001</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

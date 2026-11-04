@@ -9887,7 +9887,7 @@ final class AppModel {
         case .toolCalls(let calls):
             mergeBufferedStreamingMetadata(into: &conversationMessages[index])
             for call in calls {
-                let toolEvent = ToolEvent(
+                var toolEvent = ToolEvent(
                     providerEventID: call.id,
                     name: call.name,
                     argumentsJSON: {
@@ -9900,6 +9900,7 @@ final class AppModel {
                     }(),
                     status: .running
                 )
+                ToolHistoryContext.recordCall(&toolEvent)
                 conversationMessages[index].toolEvents.append(toolEvent)
             }
         case .toolResults(let results):
@@ -9909,6 +9910,7 @@ final class AppModel {
                     conversationMessages[index].toolEvents[idx].resultText = result.content
                     conversationMessages[index].toolEvents[idx].status = .complete
                     conversationMessages[index].toolEvents[idx].updatedAt = .now
+                    ToolHistoryContext.recordResult(&conversationMessages[index].toolEvents[idx])
                 }
             }
         case .imageGenerationProgress(let stage):
@@ -9983,7 +9985,8 @@ final class AppModel {
         }
 
         var attachments: [MessageAttachment] = []
-        for (_, candidate, payload) in downloaded {
+        let textDigest = SearchImageLayout.digest(message.text)
+        for (index, candidate, payload) in downloaded {
             guard var attachment = AttachmentStore.saveGeneratedImage(
                 data: payload.data,
                 mimeType: payload.mimeType
@@ -9991,6 +9994,10 @@ final class AppModel {
             attachment.remoteURL = URL(string: candidate.url)
             attachment.metadata["source"] = "web_search_image"
             attachment.metadata["search_image_id"] = candidate.id
+            if let offset = selectedRequests[index].textOffsetUTF8 {
+                attachment.metadata["search_text_offset"] = String(offset)
+                attachment.metadata["search_text_digest"] = textDigest
+            }
             attachment.metadata["remote_url"] = candidate.url
             if !candidate.title.isEmpty {
                 attachment.metadata["title"] = candidate.title

@@ -5,6 +5,70 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+enum SearchImageLayout {
+    enum Block {
+        case text(String)
+        case gallery([MessageAttachment])
+    }
+
+    static func digest(_ text: String) -> String {
+        Data(SHA256.hash(data: Data(text.utf8))).base64EncodedString()
+    }
+
+    static func blocks(text: String, segments: [String], images: [MessageAttachment]) -> [Block] {
+        let original = segments.map(Block.text)
+        guard !images.isEmpty else { return original }
+        guard images.contains(where: { $0.metadata["search_text_offset"] != nil }) else {
+            return original + [.gallery(images)]
+        }
+
+        let signature = digest(text)
+        var groups: [String.Index: [MessageAttachment]] = [:]
+        var footer: [MessageAttachment] = []
+        for image in images {
+            guard image.metadata["search_text_digest"] == signature,
+                  let value = image.metadata["search_text_offset"], let offset = Int(value), offset >= 0,
+                  let byte = text.utf8.index(text.utf8.startIndex, offsetBy: offset, limitedBy: text.utf8.endIndex),
+                  let index = String.Index(byte, within: text) else {
+                footer.append(image)
+                continue
+            }
+            groups[index, default: []].append(image)
+        }
+        guard !groups.isEmpty else { return original + [.gallery(images)] }
+
+        // Segmentation can trim paragraph separators. Locate each visible
+        // segment in order, keeping galleries in those separators in order too.
+        var blocks: [Block] = []
+        var anchors = groups.keys.sorted()[...]
+        var cursor = text.startIndex
+        for segment in segments where !segment.isEmpty {
+            guard let range = text.range(of: segment, options: .literal, range: cursor..<text.endIndex) else {
+                return original + [.gallery(images)]
+            }
+            var start = range.lowerBound
+            while let anchor = anchors.first, anchor <= range.upperBound {
+                if anchor > start { appendText(text[start..<anchor], to: &blocks) }
+                blocks.append(.gallery(groups[anchor] ?? []))
+                start = max(start, anchor)
+                anchors = anchors.dropFirst()
+            }
+            appendText(text[start..<range.upperBound], to: &blocks)
+            cursor = range.upperBound
+        }
+        for anchor in anchors { blocks.append(.gallery(groups[anchor] ?? [])) }
+        if !footer.isEmpty { blocks.append(.gallery(footer)) }
+        return blocks
+    }
+
+    private static func appendText(_ slice: Substring, to blocks: inout [Block]) {
+        var value = slice
+        while value.first?.isNewline == true { value = value.dropFirst() }
+        while value.last?.isNewline == true { value = value.dropLast() }
+        if !value.allSatisfy(\.isWhitespace) { blocks.append(.text(String(value))) }
+    }
+}
+
 enum AttachmentStore {
     struct FileImportInspection: Sendable {
         let sourceURL: URL

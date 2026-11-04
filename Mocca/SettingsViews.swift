@@ -7431,10 +7431,10 @@ private struct SearchServiceEditorView: View {
 
                 if draft.kind.requiresAPIKey || draft.kind == .custom {
                     Section(L10n.lookup("凭据")) {
-                        SecureField(draft.kind == .custom ? L10n.lookup("API Key（可选）") : "API Key", text: $draft.apiKey)
-                            .textContentType(.password)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
+                        APIKeyField(
+                            title: draft.kind == .custom ? L10n.lookup("API Key（可选）") : "API Key",
+                            text: $draft.apiKey
+                        )
                     }
                 }
 

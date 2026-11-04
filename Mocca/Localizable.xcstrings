@@ -24085,6 +24085,28 @@
           }
         }
       }
+    },
+    "显示 API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show API Key"
+          }
+        }
+      }
+    },
+    "隐藏 API Key": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide API Key"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

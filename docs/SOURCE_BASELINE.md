@@ -1,6 +1,12 @@
 # Source baseline
 
-## Current snapshot 5286
+## Current release 1.0.8 (5298)
+
+All 162 product files match the source snapshot used to build the App Store submission. [SHA-256 manifest](SOURCE_5298_SHA256.json) · [Release notes](../CHANGELOG.md).
+
+本次源代码发布对应 App Store 送审的 1.0.8（5298）。162 个产品文件均已与送审源码逐一核对。
+
+## Historical snapshot 5286
 
 The current `main` source is **1.0.7 (5286)**, synchronized from the frozen inputs used for the installed phone build. All 160 product files match [the SHA-256 manifest](SOURCE_5286_SHA256.json). Portable signing, sponsorship disabled by default, attribution and resources are retained. See [changes and verification](SOURCE_SYNC_5286.md).
 

@@ -481,7 +481,7 @@ enum SearchServiceExecutor {
             )
             if includeImages {
                 let imageLimit = min(max(common.resultCount, 1), 6)
-                if result.images.count < imageLimit {
+                if result.allowsPagePreviewImages, result.images.count < imageLimit {
                     let discovered = await pagePreviewImages(
                         from: result.items,
                         limit: imageLimit - result.images.count,
@@ -526,6 +526,7 @@ struct SearchImageCandidate: Hashable, Sendable {
 
 struct SearchImageRequest: Hashable, Sendable {
     let candidate: SearchImageCandidate
+    var textOffsetUTF8: Int? = nil
 }
 
 enum SearchImageSelectionCodec {
@@ -559,28 +560,52 @@ enum SearchImageSelectionCodec {
             uniquingKeysWith: { first, _ in first }
         )
         var seen = Set<String>()
-        let requests = matches.compactMap { match -> SearchImageRequest? in
-            guard match.numberOfRanges > 1,
-                  match.range(at: 1).location != NSNotFound else { return nil }
-            let json = nsText.substring(with: match.range(at: 1))
-            guard let data = json.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let id = object["id"] as? String,
-                  let candidate = candidatesByID[id],
-                  seen.insert(id).inserted else { return nil }
-            return SearchImageRequest(candidate: candidate)
+        var requests: [SearchImageRequest] = []
+        var display = ""
+        var cursor = 0
+        var index = 0
+        while index < matches.count {
+            let first = index
+            let start = matches[index].range.location
+            var end = NSMaxRange(matches[index].range)
+            index += 1
+            // Consecutive selections form one gallery, even across blank lines.
+            while index < matches.count {
+                let gap = NSRange(location: end, length: matches[index].range.location - end)
+                guard nsText.substring(with: gap).allSatisfy(\.isWhitespace) else { break }
+                end = NSMaxRange(matches[index].range)
+                index += 1
+            }
+
+            var before = nsText.substring(with: NSRange(location: cursor, length: start - cursor))
+            // Only normalize whitespace around marker-only lines. Preserve the
+            // next paragraph's indentation (it may be Markdown code or a list).
+            var following = end
+            var afterLastNewline = end
+            while following < nsText.length {
+                let unit = nsText.character(at: following)
+                guard [9, 10, 13, 32].contains(unit) else { break }
+                following += 1
+                if unit == 10 || unit == 13 { afterLastNewline = following }
+            }
+            let leftWhitespace = before.reversed().prefix(while: \.isWhitespace)
+            let standalone = (leftWhitespace.contains(where: \.isNewline) || before.allSatisfy(\.isWhitespace))
+                && (afterLastNewline > end || following == nsText.length)
+            if standalone { before.removeLast(leftWhitespace.count) }
+            display += before
+            let offset = display.utf8.count
+            for match in matches[first..<index] where requests.count < 4 {
+                let json = nsText.substring(with: match.range(at: 1))
+                guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                      let id = object["id"] as? String,
+                      let candidate = candidatesByID[id], seen.insert(id).inserted else { continue }
+                requests.append(SearchImageRequest(candidate: candidate, textOffsetUTF8: offset))
+            }
+            cursor = standalone ? (following == nsText.length ? following : afterLastNewline) : end
+            if standalone, !display.isEmpty, cursor < nsText.length { display += "\n\n" }
         }
-        .prefix(4)
-        .map { $0 }
-        let stripped = fullRegex.stringByReplacingMatches(
-            in: text,
-            range: NSRange(location: 0, length: nsText.length),
-            withTemplate: ""
-        )
-        return Parsed(
-            displayText: stripped,
-            requests: requests
-        )
+        display += nsText.substring(from: cursor)
+        return Parsed(displayText: display, requests: requests)
     }
 
     static func stripForDisplay(_ text: String) -> String {
@@ -688,6 +713,7 @@ private struct SearchExecutionResult {
     var answer: String?
     var items: [SearchExecutionItem]
     var images: [SearchExecutionImage] = []
+    var allowsPagePreviewImages = true
 }
 
 private struct SearchExecutionItem: Sendable {
@@ -750,6 +776,9 @@ private extension SearchServiceExecutor {
         case .bocha:
             return try await bochaSearch(query, configuration, common, session)
         case .duckDuckGo:
+            if includeImages, isDuckDuckGoWebsiteEndpoint(configuration.resolvedEndpoint) {
+                return try await duckDuckGoImageSearch(query, configuration, common, session)
+            }
             return try await duckDuckGoSearch(query, configuration, common, session)
         case .perplexity:
             return try await perplexitySearch(query, configuration, common, session)
@@ -1264,6 +1293,78 @@ private extension SearchServiceExecutor {
             answer: nil,
             items: Array(duckDuckGoItems(html).prefix(common.resultCount))
         )
+    }
+
+    static func isDuckDuckGoWebsiteEndpoint(_ endpoint: String) -> Bool {
+        guard let url = URLComponents(string: endpoint), url.scheme == "https",
+              url.user == nil, url.password == nil, url.query == nil,
+              url.port == nil || url.port == 443 else { return false }
+        return ["duckduckgo.com", "www.duckduckgo.com", "html.duckduckgo.com"].contains(url.host?.lowercased() ?? "")
+            && ["", "/", "/html", "/html/"].contains(url.path)
+    }
+
+    static func duckDuckGoImageSearch(
+        _ query: String,
+        _ configuration: SearchServiceConfiguration,
+        _ common: SearchCommonOptions,
+        _ session: URLSession
+    ) async throws -> SearchExecutionResult {
+        // Image requests use DDG's image results, independently of its HTML
+        // web results. A custom search endpoint keeps its original route.
+        let headers = ["User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"]
+        let seed = try await performGETRequest(
+            endpoint: "https://duckduckgo.com/",
+            queryItems: [.init(name: "q", value: query), .init(name: "ia", value: "images"), .init(name: "iax", value: "images")],
+            headers: headers, timeout: common.timeoutSeconds,
+            provider: configuration.resolvedName, session: session
+        )
+        guard let html = String(data: seed, encoding: .utf8) else {
+            throw SearchExecutionError.invalidResponse(configuration.resolvedName)
+        }
+        let lowercased = html.lowercased()
+        if lowercased.contains("challenge-form") || lowercased.contains("anomaly-modal") {
+            throw SearchExecutionError.provider("\(configuration.resolvedName) 要求完成网页验证，暂时无法搜索。")
+        }
+        // The query digest is issued by the search page. Do not invent one,
+        // evaluate page scripts, or continue when the page asks for verification.
+        guard let digest = firstMatch(#"\bvqd\s*=\s*["']([A-Za-z0-9_-]{1,200})["']"#, in: html)
+                ?? firstMatch(#""vqd"\s*:\s*"([A-Za-z0-9_-]{1,200})""#, in: html) else {
+            throw SearchExecutionError.invalidResponse(configuration.resolvedName)
+        }
+        try Task.checkCancellation()
+        var imageHeaders = headers
+        imageHeaders["Referer"] = "https://duckduckgo.com/"
+        imageHeaders["Accept"] = "application/json"
+        let data = try await performGETRequest(
+            endpoint: "https://duckduckgo.com/i.js",
+            queryItems: [.init(name: "q", value: query), .init(name: "vqd", value: digest),
+                         .init(name: "l", value: option(configuration, "region", default: "us-en")),
+                         .init(name: "o", value: "json")],
+            headers: imageHeaders, timeout: common.timeoutSeconds,
+            provider: configuration.resolvedName, session: session
+        )
+        let object = try jsonObject(data, provider: configuration.resolvedName)
+        guard let entries = object["results"] as? [[String: Any]] else {
+            throw SearchExecutionError.invalidResponse(configuration.resolvedName)
+        }
+        var images: [SearchExecutionImage] = []
+        var items: [SearchExecutionItem] = []
+        var sourceURLs = Set<String>()
+        for entry in entries {
+            let imageURL = normalizeURL(string(entry["image"]) ?? "")
+            guard isHTTPURL(imageURL) else { continue }
+            let title = plainText(string(entry["title"]) ?? "")
+            let pageURL = normalizeURL(string(entry["url"]) ?? "")
+            let sourceURL = isHTTPURL(pageURL) ? pageURL : nil
+            images.append(.init(title: title, url: imageURL, sourceURL: sourceURL))
+            if let sourceURL, sourceURLs.insert(sourceURL).inserted {
+                items.append(.init(title: title, url: sourceURL, text: ""))
+            }
+        }
+        guard entries.isEmpty || !images.isEmpty else {
+            throw SearchExecutionError.invalidResponse(configuration.resolvedName)
+        }
+        return SearchExecutionResult(items: items, images: images, allowsPagePreviewImages: false)
     }
 
     static func perplexitySearch(

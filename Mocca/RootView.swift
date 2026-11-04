@@ -1423,6 +1423,34 @@ private final class ComposerKeyboardMotionSource {
     }
     private var translationMotions: [TranslationMotion] = []
 
+    /// A late geometry correction must not start another text lift after the
+    /// editor has reached its actual displayed destination. Read only during
+    /// an already-owned retarget; first keyboard transitions keep their motion.
+    func inputPositionIsSettled(in scrollView: UIScrollView,
+                                conversationID: UUID) -> Bool {
+        guard let inputView, inputView.identity.conversationID == conversationID,
+              let window = inputView.window, window === scrollView.window,
+              let shown = inputView.layer.presentation(),
+              let shownWindow = window.layer.presentation() else { return false }
+        let modelPoint = inputView.layer.convert(inputView.layer.bounds.origin, to: window.layer)
+        let shownPoint = shown.convert(shown.bounds.origin, to: shownWindow)
+        guard modelPoint.y.isFinite, shownPoint.y.isFinite else { return false }
+        if abs(modelPoint.y - shownPoint.y) <= 0.5 { return true }
+        // A nonanimated height/layout write can precede the next display
+        // commit. Its stale presentation value is not an ongoing transition.
+        var ancestor: UIView? = inputView
+        while let view = ancestor, view !== window {
+            if (view.layer.animationKeys() ?? []).contains(where: { key in
+                guard let motion = view.layer.animation(forKey: key) as? CAPropertyAnimation else {
+                    return false
+                }
+                return motion.keyPath == "position" || motion.keyPath == "bounds.origin"
+            }) { return false }
+            ancestor = view.superview
+        }
+        return true
+    }
+
     func viewportAnimationDuration(synchronousLayout: Bool,
                                    fallback: TimeInterval) -> TimeInterval {
         // UIKit can resize the transcript before our keyboard notification
@@ -4673,33 +4701,12 @@ private struct ChatView: View {
                             scrollDragIsVertical = isVerticalScrollDrag(value)
                         }
                         guard scrollDragIsVertical == true else { return }
-                        if !isVerticalScrollGestureActive {
-                            cancelMessageReplacementLanding()
-                            cancelAutomaticReasoningCollapseOwner(
-                                reason: "userDrag"
-                            )
-                            cancelMessageTargetNavigationForUserInteraction()
-                            invalidateVersionReplacement(reason: "userDrag")
-                            ChatBottomTrace.log(
-                                "DRAG_BEGIN willInvalidate=\(pendingKeyboardDismissalDeadline == nil)"
-                                    + " willCancelKeyboardTask=\(keyboardViewportPinTask != nil) "
-                                    + chatBottomTraceState
-                            )
-                            cancelMessageNavigationForUserInteraction(reason: "userDrag")
-                            navigationAnchorMessageID = nil
-                            cancelUserMessageSendPositioning(consumingPendingRequest: true)
+                        if !isVerticalScrollGestureActive,
+                           !isNativeVerticalScrollMotionArmed {
+                            prepareForChatUserScroll()
                         }
                         isVerticalScrollGestureActive = true
-                        isNativeVerticalScrollMotionArmed = true
-                        if isPositioningCurrentConversation {
-                            cancelConversationReturnPositioning()
-                        }
-                        lastKnownNearBottom = false
-                        updateNavigationVisibility(isScrolling: true)
-                        handleScrollActivity(
-                            isScrolling: true,
-                            isNearBottom: false
-                        )
+                        armChatUserScrollMotion()
                     }
                     .onEnded { value in
                         let didEndVerticalDrag = scrollDragIsVertical == true
@@ -8176,19 +8183,61 @@ private struct ChatView: View {
         isNativeVerticalScrollMotionArmed = true
         updateNativeScrollMotionState(
             anchorID: anchorID,
-            isScrolling: true,
+            phase: .animating,
             isAtBottom: false,
+            isNearBottom: false
+        )
+    }
+
+    /// Shared by SwiftUI intent and UIKit's actual pan ownership. A diagonal
+    /// start may miss the intent gate even though the transcript begins dragging.
+    private func prepareForChatUserScroll() {
+        cancelMessageReplacementLanding()
+        cancelAutomaticReasoningCollapseOwner(
+            reason: "userDrag"
+        )
+        cancelMessageTargetNavigationForUserInteraction()
+        invalidateVersionReplacement(reason: "userDrag")
+        ChatBottomTrace.log(
+            "DRAG_BEGIN willInvalidate=\(pendingKeyboardDismissalDeadline == nil)"
+                + " willCancelKeyboardTask=\(keyboardViewportPinTask != nil) "
+                + chatBottomTraceState
+        )
+        cancelMessageNavigationForUserInteraction(reason: "userDrag")
+        navigationAnchorMessageID = nil
+        cancelUserMessageSendPositioning(consumingPendingRequest: true)
+    }
+
+    private func armChatUserScrollMotion() {
+        isNativeVerticalScrollMotionArmed = true
+        if isPositioningCurrentConversation {
+            cancelConversationReturnPositioning()
+        }
+        lastKnownNearBottom = false
+        updateNavigationVisibility(isScrolling: true)
+        handleScrollActivity(
+            isScrolling: true,
             isNearBottom: false
         )
     }
 
     private func updateNativeScrollMotionState(
         anchorID: ConversationBottomAnchorID,
-        isScrolling: Bool,
+        phase: NativeChatScrollPhase,
         isAtBottom: Bool,
         isNearBottom: Bool
     ) {
         guard currentConversationBottomAnchorID == anchorID else { return }
+        let isScrolling = phase != .idle
+        // Tracking includes taps and long presses. Only an actual native pan
+        // (or its inertia) supplies the missing user-position ownership. Keep
+        // drawer direction arbitration independent from this scroll lease.
+        if (phase == .interacting || phase == .decelerating),
+           !isNativeVerticalScrollMotionArmed {
+            prepareForChatUserScroll()
+            armChatUserScrollMotion()
+            ChatBottomTrace.log("NATIVE_USER_SCROLL_CLAIM phase=\(phase) " + chatBottomTraceState)
+        }
         if isScrolling, !isNearBottom {
             offscreenStreamingDisplayState.didUserDetachFromTail = true
         }
@@ -13127,7 +13176,7 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             -> AutomaticReasoningCollapseGeometryDisposition
     let onAutomaticReasoningCollapseBottomRearmed:
         (AutomaticReasoningCollapseOwnerID) -> Void
-    let onScrollMotionChanged: (ConversationBottomAnchorID, Bool, Bool, Bool) -> Void
+    let onScrollMotionChanged: (ConversationBottomAnchorID, NativeChatScrollPhase, Bool, Bool) -> Void
     let onScrollPhaseActivityChanged: (ConversationBottomAnchorID, Bool, Bool, Bool) -> Void
     let onSystemScrollToTopStarted: (ConversationBottomAnchorID) -> Void
     let onMessageTargetPositionReleased: (ConversationBottomAnchorID, UUID) -> Void
@@ -13153,6 +13202,7 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         var keyboardAnimationDeadline = Date.distantPast
         var keyboardCompletionTask: Task<Void, Never>?
         var keyboardMotionTargetY: CGFloat?
+        var keyboardMotionComposerClearance: CGFloat?
         var keyboardMotionAnimator: UIViewPropertyAnimator?
         weak var keyboardAnimatorScrollView: UIScrollView?
         var preservedSendRequestID: UUID?
@@ -13610,6 +13660,35 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         let targetOffset = preservesSendViewport
             ? min(change.current.bottomOffsetY, max(-change.current.insets.top, change.previous.offset.y))
             : change.current.bottomOffsetY
+        let contentOnlyChange = change.previous.size == change.current.size
+            && change.previous.insets == change.current.insets
+        let previousComposerClearance = bottomDistanceMeasurement.keyboardMotionComposerClearance
+            ?? change.previous.composerBottomClearance
+        if active, pendingSendRequestID == nil, contentOnlyChange,
+           abs(change.current.composerBottomClearance - previousComposerClearance) > 0.5,
+           !keyboardMotionSource.inputPositionIsSettled(
+               in: change.scrollView, conversationID: conversationID
+           ) {
+            // Editing changes the composer's height without animation. Move
+            // the transcript's model base in that same layout, leaving the
+            // existing additive keyboard animation and its completion intact.
+            // Retargeting a new spring here would animate the newline height
+            // and put the transcript behind the still-moving input again.
+            bottomDistanceMeasurement.keyboardMotionTargetY = targetOffset
+            bottomDistanceMeasurement.keyboardMotionComposerClearance = change.current.composerBottomClearance
+            UIView.performWithoutAnimation {
+                change.scrollView.setContentOffset(
+                    CGPoint(x: change.scrollView.contentOffset.x, y: targetOffset), animated: false
+                )
+            }
+            ChatBottomTrace.log(
+                "SCROLL_COMMAND source=native.composerHeightDuringKeyboard"
+                    + " clearanceDelta=\(change.current.composerBottomClearance - previousComposerClearance)"
+                    + " targetY=\(String(format: "%.2f", targetOffset)) "
+                    + chatBottomTracePosition
+            )
+            return
+        }
         // No Root business callback or SwiftUI state write is allowed here.
         // Install the original UIKit animation before this layout is displayed,
         // so its interim content-offset clamp never becomes a separate frame.
@@ -13619,8 +13698,12 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             isRetargeting: !resized && active,
             synchronousLayout: true,
             synchronousPublicationID: change.publicationID,
+            isContentOnlyRetarget: contentOnlyChange,
             preservingSendRequestID: preservesSendViewport ? pendingSendRequestID : nil
         )
+        if handled, bottomDistanceMeasurement.keyboardMotionScrollView === change.scrollView {
+            bottomDistanceMeasurement.keyboardMotionComposerClearance = change.current.composerBottomClearance
+        }
         if handled, resized {
             bottomDistanceMeasurement.synchronousViewportScrollView = change.scrollView
             bottomDistanceMeasurement.synchronousViewportPublication = change.publicationID
@@ -13851,9 +13934,9 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
                 isAtBottom,
                 isNearBottom
             )
-            onScrollMotionChanged(bottomAnchorID, true, isAtBottom, isNearBottom)
+            onScrollMotionChanged(bottomAnchorID, newPhase, isAtBottom, isNearBottom)
         case .idle:
-            onScrollMotionChanged(bottomAnchorID, false, isAtBottom, isNearBottom)
+            onScrollMotionChanged(bottomAnchorID, .idle, isAtBottom, isNearBottom)
             ownsStreamingFollowTouchPause = false
             onScrollPhaseActivityChanged(
                 bottomAnchorID,
@@ -14184,6 +14267,7 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         isRetargeting: Bool = false,
         synchronousLayout: Bool = false,
         synchronousPublicationID: AnyHashable? = nil,
+        isContentOnlyRetarget: Bool = false,
         preservingSendRequestID: UUID? = nil
     ) -> Bool {
         guard let scrollView = scrollViewBox.scrollView,
@@ -14225,11 +14309,23 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         let viewportDuration = keyboardMotionSource.viewportAnimationDuration(
             synchronousLayout: synchronousLayout, fallback: keyboardAnimationDuration
         )
+        // Composer measurement can publish one final, small geometry change
+        // while the keyboard owner's completion is still pending. Keep the
+        // normal opening/reversal animation, but do not launch a second text
+        // animation for a changed destination after the editor has settled.
+        let isLateSettledCorrection = preservingSendRequestID == nil
+            && isContentOnlyRetarget && isRetargeting && wasAnimating
+            && bottomDistanceMeasurement.keyboardMotionTargetY.map {
+                abs($0 - targetOffsetY) > 0.5
+            } == true
+            && keyboardMotionSource.inputPositionIsSettled(
+                in: scrollView, conversationID: conversationID
+            )
         // Keyboard timing can still be zero when a new send first needs a
         // viewport clamp. An admitted send owns its placement duration from
         // this first layout, even before it has an animator to continue.
         // Immediate keyboard changes without a send keep their own timing.
-        if viewportDuration == 0, preservingSendRequestID == nil {
+        if viewportDuration == 0 || isLateSettledCorrection, preservingSendRequestID == nil {
             keyboardViewportCompletionTask?.cancel()
             keyboardViewportCompletionTask = nil
             keyboardViewportAnimationDeadline = .distantPast
@@ -14248,9 +14344,11 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             // A send keeps its own later concrete-row placement authority.
             if preservingSendRequestID == nil { pinSemanticBottom() }
             bottomDistanceMeasurement.keyboardMotionScrollView = nil
+            bottomDistanceMeasurement.keyboardMotionComposerClearance = nil
             nativeDriver.externalViewportMotion = false
             ChatBottomTrace.log(
                 "SCROLL_COMMAND source=native.keyboardViewportImmediate"
+                    + " settledCorrection=\(isLateSettledCorrection)"
                     + " synchronousLayout=\(synchronousLayout)"
                     + " inheritedDuration=\(UIView.inheritedAnimationDuration)"
                     + " targetY=\(String(format: "%.2f", targetOffsetY)) "
@@ -14471,6 +14569,7 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
     private func cancelKeyboardViewportMotion(preservingPresentation: Bool = true) {
         sendPositionAnimationAckID = nil
         bottomDistanceMeasurement.keyboardMotionTargetY = nil
+        bottomDistanceMeasurement.keyboardMotionComposerClearance = nil
         bottomDistanceMeasurement.preservedSendRequestID = nil
         bottomDistanceMeasurement.synchronousViewportScrollView = nil
         bottomDistanceMeasurement.synchronousViewportPublication = nil
@@ -14512,6 +14611,7 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             finishKeyboardMotionAnimator(in: ownedScrollView, at: .end)
             bottomDistanceMeasurement.keyboardMotionScrollView = nil
             bottomDistanceMeasurement.keyboardMotionTargetY = nil
+            bottomDistanceMeasurement.keyboardMotionComposerClearance = nil
             let wasPreservingSend = bottomDistanceMeasurement.preservedSendRequestID != nil
             bottomDistanceMeasurement.preservedSendRequestID = nil
             guard nativeDriver.scrollView === ownedScrollView else { return }
@@ -15688,7 +15788,6 @@ private struct MessageRow: View {
             } else {
                 let assistant = model.displayAssistant(for: message)
                 let attachments = assistantAttachments
-                let segments = assistantTextSegments
                 if assistantUsesWideTextLayout {
                     VStack(alignment: .leading, spacing: 8) {
                         if model.preferences.showModelIcon || hasAssistantMetadata {
@@ -15743,25 +15842,8 @@ private struct MessageRow: View {
                         if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
                             assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
-                            VStack(alignment: .leading, spacing: CGFloat(model.preferences.effectiveChatBubbleSpacing)) {
-                                ForEach(Array(segments.enumerated()), id: \.offset) { segmentIndex, text in
-                                    assistantMessageMarkdown(
-                                        text: text,
-                                        messageFontSize: messageFontSize,
-                                        segmentIndex: segmentIndex,
-                                        segmentCount: segments.count
-                                    )
-                                    .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                        if !attachments.searchImages.isEmpty {
-                            MessageAttachmentsView(
-                                attachments: attachments.searchImages,
-                                alignment: .leading
-                            )
-                            .padding(.top, 2)
+                            assistantReplyBody(searchImages: attachments.searchImages,
+                                               messageFontSize: messageFontSize, wide: true)
                         }
                         if model.preferences.showTokenUsage, !message.isStreaming,
                            let usage = message.tokenUsage, let summary = TokenUsageFormatter.summary(usage) {
@@ -15821,37 +15903,8 @@ private struct MessageRow: View {
                         if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
                             assistantWaitingIndicator
                         } else if !message.text.isEmpty || !message.isStreaming {
-                            VStack(alignment: .leading, spacing: CGFloat(model.preferences.effectiveChatBubbleSpacing)) {
-                                ForEach(Array(segments.enumerated()), id: \.offset) { segmentIndex, text in
-                                    assistantMessageMarkdown(
-                                        text: text,
-                                        messageFontSize: messageFontSize,
-                                        segmentIndex: segmentIndex,
-                                        segmentCount: segments.count
-                                    )
-                                    .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .background(
-                                        ChatBubbleSurface(
-                                            style: assistantBubbleStyle,
-                                            baseColor: assistantBubbleColor,
-                                            opacity: assistantBubbleOpacity,
-                                            liquidGlassOpacity: model.preferences.liquidGlassBubbleOpacity,
-                                            appleGlassOpacity: model.preferences.appleGlassBubbleOpacity,
-                                            cornerRadius: 17
-                                        )
-                                        .allowsHitTesting(false)
-                                    )
-                                }
-                            }
-                        }
-                        if !attachments.searchImages.isEmpty {
-                            MessageAttachmentsView(
-                                attachments: attachments.searchImages,
-                                alignment: .leading
-                            )
-                            .padding(.top, 2)
+                            assistantReplyBody(searchImages: attachments.searchImages,
+                                               messageFontSize: messageFontSize, wide: false)
                         }
                         if model.preferences.showTokenUsage, !message.isStreaming,
                            let usage = message.tokenUsage, let summary = TokenUsageFormatter.summary(usage) {
@@ -15931,6 +15984,43 @@ private struct MessageRow: View {
                 model.upsertAssistant(saved)
             }
         }
+    }
+
+    private func assistantReplyBody(searchImages: [MessageAttachment], messageFontSize: CGFloat, wide: Bool) -> some View {
+        let blocks = SearchImageLayout.blocks(text: message.text, segments: assistantTextSegments, images: searchImages)
+        return VStack(alignment: .leading, spacing: CGFloat(model.preferences.effectiveChatBubbleSpacing)) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                switch block {
+                case .text(let text):
+                    let markdown = assistantMessageMarkdown(
+                        text: text, messageFontSize: messageFontSize,
+                        segmentIndex: index, segmentCount: blocks.count
+                    )
+                    .foregroundStyle(chatTextColor(for: .assistant) ?? Color.primary)
+                    if wide {
+                        markdown
+                    } else {
+                        markdown
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                ChatBubbleSurface(
+                                    style: assistantBubbleStyle, baseColor: assistantBubbleColor,
+                                    opacity: assistantBubbleOpacity,
+                                    liquidGlassOpacity: model.preferences.liquidGlassBubbleOpacity,
+                                    appleGlassOpacity: model.preferences.appleGlassBubbleOpacity,
+                                    cornerRadius: 17
+                                )
+                                .allowsHitTesting(false)
+                            )
+                    }
+                case .gallery(let images):
+                    MessageAttachmentsView(attachments: images, alignment: .leading)
+                        .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(.vertical, wide ? 2 : 0)
     }
 
     private func assistantMessageMarkdown(
