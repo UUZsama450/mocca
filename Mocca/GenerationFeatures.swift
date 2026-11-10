@@ -1,4 +1,4 @@
-import ActivityKit
+@preconcurrency import ActivityKit
 import BackgroundTasks
 import Foundation
 import Intents

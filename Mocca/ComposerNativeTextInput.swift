@@ -97,11 +97,17 @@ final class ComposerLongPasteRequest: Identifiable {
     }
 }
 
+struct ComposerInputHeightEdit: Equatable {
+    let id = UUID()
+    let targetShellHeight: CGFloat
+}
+
 struct ComposerHeightPresentation: Equatable {
     let identity: ComposerInputIdentity
     let targetShellHeight: CGFloat
     let shellHeight: CGFloat
     var additionalMessageClearance: CGFloat = 0
+    var inputEdit: ComposerInputHeightEdit?
 
     var bottomClearance: CGFloat {
         Self.bottomClearance(for: shellHeight, additionalMessageClearance: additionalMessageClearance)
@@ -135,6 +141,7 @@ struct ComposerShellGeometry: AnimatableModifier {
     nonisolated var shellHeight: CGFloat
     let targetShellHeight: CGFloat
     let additionalMessageClearance: CGFloat
+    let inputEdit: ComposerInputHeightEdit?
 
     nonisolated var animatableData: CGFloat {
         get { shellHeight }
@@ -144,7 +151,10 @@ struct ComposerShellGeometry: AnimatableModifier {
     func body(content: Content) -> some View {
         content.environment(\.composerHeightPresentation, identity.map {
             ComposerHeightPresentation(identity: $0, targetShellHeight: targetShellHeight,
-                shellHeight: shellHeight, additionalMessageClearance: additionalMessageClearance)
+                shellHeight: shellHeight, additionalMessageClearance: additionalMessageClearance,
+                inputEdit: inputEdit.flatMap {
+                    abs($0.targetShellHeight - targetShellHeight) <= 0.5 ? $0 : nil
+                })
         })
     }
 }
@@ -219,10 +229,15 @@ struct ComposerNativeTextInput: UIViewRepresentable {
                 view.applyExternalText(current)
             }
         }
-        if isFocused, !view.isFirstResponder {
-            view.becomeFirstResponder()
-        } else if !isFocused, view.isFirstResponder {
-            view.resignFirstResponder()
+        // Native responder changes can synchronously flush a SwiftUI update
+        // before its focus binding catches up. That older value must not
+        // reverse the responder transition currently publishing the new value.
+        if !view.isChangingFirstResponder {
+            if isFocused, !view.isFirstResponder {
+                view.becomeFirstResponder()
+            } else if !isFocused, view.isFirstResponder {
+                view.resignFirstResponder()
+            }
         }
     }
 
@@ -310,8 +325,10 @@ struct ComposerNativeTextInput: UIViewRepresentable {
     }
 }
 
+
 @MainActor
 final class ComposerInputTextView: UITextView {
+    private(set) var isChangingFirstResponder = false
     private(set) var identity: ComposerInputIdentity
     private(set) var isRetired = false
     private(set) var isInsertingPaste = false
@@ -326,6 +343,7 @@ final class ComposerInputTextView: UITextView {
     private var pendingHeightMeasurement: CGSize?
     private var heightPublicationRevision = 0
     private var editingHeightPublicationScheduled = false
+    private(set) var isPublishingEditedHeight = false
     private var isUpdatingUnchangedMarkedText = false
     private var keyboardTransitionDeadline: TimeInterval = 0
     private var keyboardScreenFrame: CGRect?
@@ -415,6 +433,20 @@ final class ComposerInputTextView: UITextView {
         publishMeasuredHeight(deferred: true)
     }
 
+    override func becomeFirstResponder() -> Bool {
+        let previous = isChangingFirstResponder
+        isChangingFirstResponder = true
+        defer { isChangingFirstResponder = previous }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let previous = isChangingFirstResponder
+        isChangingFirstResponder = true
+        defer { isChangingFirstResponder = previous }
+        return super.resignFirstResponder()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         if needsImmediateSelectionLayout, !isApplyingNativeEdit {
@@ -494,6 +526,8 @@ final class ComposerInputTextView: UITextView {
             }
             self.lastMeasuredWidth = width
             self.lastMeasuredHeight = measured
+            self.isPublishingEditedHeight = !deferred
+            defer { self.isPublishingEditedHeight = false }
             self.onMeasuredHeight?(measured)
         }
         // Layout/external draft reconciliation must not write SwiftUI state
@@ -570,20 +604,6 @@ final class ComposerInputTextView: UITextView {
         }
         let maximumHeight = max(lineHeight, floor((heightBudget + 0.01) / lineHeight) * lineHeight)
         return CGSize(width: width, height: ceil(min(max(natural, lineHeight), maximumHeight)))
-    }
-
-    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
-        if isFirstResponder, !isTracking, !isDragging, !isDecelerating,
-           selectedRange.length == 0 || isApplyingNativeEdit {
-            // Keep edit/caret reveal immediate with the editor geometry.
-            // Selection handles do not set the scroll view's tracking/dragging
-            // flags; ranged selection must keep UIKit's animated edge scrolling.
-            UIView.performWithoutAnimation {
-                super.setContentOffset(contentOffset, animated: false)
-            }
-        } else {
-            super.setContentOffset(contentOffset, animated: animated)
-        }
     }
 
     private func performNativeEdit(_ edit: () -> Void) {

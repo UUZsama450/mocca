@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.8">最新版本</a> · <a href="CHANGELOG.md">更新说明</a>
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.9">最新版本</a> · <a href="CHANGELOG.md">更新说明</a>
 </p>
 
 <p align="center">
@@ -46,7 +46,7 @@ Mocca 不附带 API Key 或第三方服务额度。模型能力、服务可用�
 
 ## 下载说明
 
-**1.0.8（5298）** 源码版与 App Store 送审构建使用相同的产品源码。[源码校验清单](docs/SOURCE_5298_SHA256.json) · [编译与安装](docs/INSTALLATION.md)。[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)单独审核和发布。[1.0.5（5237）](docs/RELEASE_1.0.5_5237.md) 提供需要自行签名的旧版 IPA 预览包。
+**1.0.9（5323）** 源码版基于手机 5321，已移除触摸诊断。[源码校验清单](docs/SOURCE_5323_SHA256.json) · [编译与安装](docs/INSTALLATION.md)。[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)单独审核和发布。[1.0.5（5237）](docs/RELEASE_1.0.5_5237.md) 提供需要自行签名的旧版 IPA 预览包。
 
 
 ## 本地构建

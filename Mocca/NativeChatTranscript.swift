@@ -296,6 +296,7 @@ struct NativeChatViewportLayoutChange {
     let previous: NativeChatViewportMetrics
     let current: NativeChatViewportMetrics
     let presentedOffsetBeforeLayout: CGFloat?
+    let composerTranscriptLift: Bool
 }
 
 /// Keep each contact independent: a fresh long press may stop deceleration.
@@ -314,13 +315,56 @@ struct NativeChatViewportLayoutChange {
     }
 }
 
-fileprivate final class NativeChatCollectionView: UICollectionView, TextSelectionAutoscrollHost {
+fileprivate final class NativeChatCollectionView: UICollectionView, TextSelectionAutoscrollHost, UIGestureRecognizerDelegate {
+    fileprivate weak var transcriptTouchObserver: NativeChatTouchObserver?
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        // A dismissal can leave a recognized single tap behind while a fresh
+        // contact starts, including on the same long text view. Use the live
+        // contact's phase to exclude completed contacts. A repeated screen
+        // point can target a different view as the keyboard moves the text;
+        // preserve multi-tap selection when the text target is still the same.
+        guard gestureRecognizer === panGestureRecognizer,
+              let tap = otherGestureRecognizer as? UITapGestureRecognizer,
+              tap.numberOfTapsRequired == 1, tap.numberOfTouchesRequired == 1,
+              tap.state == .ended,
+              let text = tap.view as? UITextView, !text.isEditable,
+              text.isDescendant(of: self),
+              panGestureRecognizer.numberOfTouches == 1,
+              let observer = transcriptTouchObserver,
+              observer.hasLiveSingleContact,
+              let beganView = observer.beganTouchView else { return false }
+        if beganView === text || beganView.isDescendant(of: text) {
+            // An existing selection keeps its handles and selection drags.
+            return observer.beganTapCount == 1 && text.selectedRange.length == 0
+        }
+        return true
+    }
+
     var selectionAutoscrollBottomClearance: CGFloat {
         (collectionViewLayout as? ReadingCollectionLayout)?.configuration.bottom ?? 0
     }
     var onSelectionAutoscrollBegan: (() -> Void)?
     var onSelectionAutoscrollEnded: (() -> Void)?
     private(set) var selectionAutoscrolling = false
+
+    var onAnimatedTouchHitTest: (() -> Void)?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let origin = bounds.origin
+        if isUserInteractionEnabled, !isHidden, alpha >= 0.01, bounds.contains(point),
+           event?.type == .touches {
+            onAnimatedTouchHitTest?()
+        }
+        // UIKit supplied coordinates using the previous model bounds. Preserve
+        // the physical window point if adopting presentation changed that origin.
+        let adjusted = CGPoint(x: point.x + bounds.minX - origin.x,
+                               y: point.y + bounds.minY - origin.y)
+        return super.hitTest(adjusted, with: event)
+    }
 
     func selectionAutoscrollDidBegin() {
         selectionAutoscrolling = true
@@ -390,6 +434,7 @@ final class NativeChatScrollDriver {
     // Only the UIKit animation owner receives this synchronous layout event.
     // Business geometry/phase delivery remains deferred outside layout.
     let viewportLayoutEvents = PassthroughSubject<NativeChatViewportLayoutChange, Never>()
+    let userDragWillBeginEvents = PassthroughSubject<UIScrollView, Never>()
     let phaseEvents = PassthroughSubject<NativeChatScrollPhaseChange, Never>()
     let codeLayoutEvents = PassthroughSubject<[UUID: CGRect], Never>()
     private(set) weak var scrollView: UIScrollView?
@@ -403,6 +448,7 @@ final class NativeChatScrollDriver {
     fileprivate var positionCommandID: UUID?
     var followBottomContentChanges = false
     var externalViewportMotion = false {
+        willSet { if newValue { controller?.cancelComposerTranscriptLift() } }
         didSet { controller?.refreshPhase() }
     }
     var positionIsBottomPinned: Bool { followBottomContentChanges && !externalViewportMotion }
@@ -601,7 +647,19 @@ struct NativeChatMutationLanding {
     let isCurrent: @MainActor () -> Bool
 }
 
+private struct ComposerTranscriptLiftKey: TransactionKey {
+    static let defaultValue = false
+}
+
+extension Transaction {
+    var composerTranscriptLift: Bool {
+        get { self[ComposerTranscriptLiftKey.self] }
+        set { self[ComposerTranscriptLiftKey.self] = newValue }
+    }
+}
+
 struct NativeChatTranscript: View {
+    var composerTranscriptLift = false
     // Geometry-only copies retain this identity; every array mutation replaces
     // it, including subscript edits and append/remove on a copied transcript.
     var rows: [NativeChatRow] {
@@ -661,6 +719,7 @@ private struct NativeChatTranscriptBridge: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: NativeChatTranscriptController, context: Context) {
         var next = input
+        next.composerTranscriptLift = context.transaction.composerTranscriptLift
         next.disclosureOperation = context.transaction.nativeChatDisclosureOperation
         if let height = composerPresentation,
            AnyHashable(height.identity.conversationID) == input.sessionID {
@@ -878,7 +937,10 @@ private final class ReadingCollectionLayout: UICollectionViewLayout {
         value.frame = frame
         return value
     }
+    var composerMotionCoverage: CGRect?
+
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        let rect = composerMotionCoverage.map { rect.union($0) } ?? rect
         guard !keys.isEmpty else { return [] }
         var index = heights.index(containing: max(0, rect.minY - configuration.top - shortTop))
         var result: [UICollectionViewLayoutAttributes] = []
@@ -1222,10 +1284,20 @@ private final class NativeChatCell: UICollectionViewCell {
 
 /// Observe down/up even before UIScrollView starts dragging. This recognizer
 /// never prevents, delays or cancels delivery to the pan, selection or controls.
-private final class NativeChatTouchObserver: UIGestureRecognizer, UIGestureRecognizerDelegate {
+fileprivate final class NativeChatTouchObserver: UIGestureRecognizer, UIGestureRecognizerDelegate {
     var down: () -> Void = {}
     var up: () -> Void = {}
     private var active: Set<UITouch> = []
+    private(set) weak var beganTouchView: UIView?
+    private(set) var beganTapCount = 0
+    var hasLiveSingleContact: Bool {
+        guard active.count == 1, let touch = active.first else { return false }
+        switch touch.phase {
+        case .began, .moved, .stationary: return true
+        case .ended, .cancelled: return false
+        @unknown default: return false
+        }
+    }
     override init(target: Any?, action: Selector?) {
         super.init(target: target, action: action)
         cancelsTouchesInView = false; delaysTouchesBegan = false; delaysTouchesEnded = false
@@ -1233,17 +1305,24 @@ private final class NativeChatTouchObserver: UIGestureRecognizer, UIGestureRecog
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         let first = active.isEmpty; active.formUnion(touches)
+        // Keep the initial target, since UIKit can retarget an animated touch.
+        // Multiple contacts retain UIKit's original arbitration rules.
+        beganTouchView = first && touches.count == 1 ? touches.first?.view : nil
+        beganTapCount = first && touches.count == 1 ? (touches.first?.tapCount ?? 0) : 0
         if first { down(); state = .began } else { state = .changed }
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) { state = .changed }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         active.subtract(touches)
-        if active.isEmpty { up(); state = .ended }
+        if active.isEmpty { beganTouchView = nil; beganTapCount = 0; up(); state = .ended }
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        active.removeAll(); up(); state = .cancelled
+        beganTouchView = nil; beganTapCount = 0; active.removeAll(); up(); state = .cancelled
     }
-    override func reset() { super.reset(); active.removeAll() }
+    override func reset() {
+        beganTouchView = nil; beganTapCount = 0
+        super.reset(); active.removeAll()
+    }
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
@@ -1300,6 +1379,18 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     private var attachmentActivated = false
     private var attachmentReady = false
     private var attachmentTask: Task<Void, Never>?
+    // One visual translation on the displayed message cells. The collection's
+    // bounds, keyboard and system edge effect keep their normal layout.
+    private static let liftKey = "mocca.editTextLift"
+    private struct EditLift {
+        let id = UUID()
+        let begin = CACurrentMediaTime()
+        let distance: CGFloat
+        let frameRateRange: CAFrameRateRange?
+        static let duration = 0.18
+    }
+    private var editLift: EditLift?
+    private var consumedComposerInputEdit: UUID?
     private var touching = false
     private var userGesture = false
     private var previousOffset: CGFloat = 0
@@ -1410,14 +1501,32 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         collection.onViewportLayout = { [weak self] previous, current, presentedOffset in
             guard let self, !self.detached, self.attachmentReady,
                   self.input.driver.controller === self else { return }
+            let presentation = self.input.composerHeightPresentation
+            let edit = presentation?.inputEdit
+            let isEditedHeight = edit != nil && edit?.id != self.consumedComposerInputEdit
+                && abs(current.composerBottomClearance - previous.composerBottomClearance) > 0.5
+                && presentation.map { abs($0.bottomClearance - current.composerBottomClearance) <= 0.5 } == true
+            if isEditedHeight { self.consumedComposerInputEdit = edit?.id }
             self.input.driver.viewportLayoutEvents.send(.init(
                 scrollView: self.collection, publicationID: self.input.publicationID,
                 sessionID: self.input.sessionID, previous: previous, current: current,
-                presentedOffsetBeforeLayout: presentedOffset))
+                presentedOffsetBeforeLayout: presentedOffset,
+                composerTranscriptLift: isEditedHeight))
             self.updateStreamMotion(previous: previous, current: current, presented: presentedOffset)
         }
         collection.register(NativeChatCell.self, forCellWithReuseIdentifier: "native-chat")
         collection.accessibilityIdentifier = "nativeChat.transcript"
+        collection.onAnimatedTouchHitTest = { [weak self] in
+            guard let self, self.editLift != nil,
+                  self.input.driver.controller === self else { return }
+            // Hit testing can visit this surface while a sibling composer
+            // ultimately receives the touch. Only the touch observer owns a
+            // persistent down/up state; this preflight guard is scoped.
+            let wasTouching = self.touching
+            self.touching = true
+            defer { self.touching = wasTouching }
+            self.cancelComposerTranscriptLift()
+        }
         collection.onSelectionAutoscrollBegan = { [weak self] in
             guard let self, !self.detached, self.input.driver.controller === self else { return }
             self.cancelHostedDisclosureMotions()
@@ -1435,6 +1544,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         touch.down = { [weak self] in
             guard let self, self.input.driver.controller === self else { return }
             self.input.mutationLanding = nil
+            self.cancelComposerTranscriptLift()
             self.touching = true
             // A touch cancels an active scroll immediately. A plain tap (such
             // as keyboard dismissal) does not take over the reading position;
@@ -1443,6 +1553,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             self.refreshPhase()
         }
         touch.up = { [weak self] in self?.touching = false; self?.refreshPhase() }
+        collection.transcriptTouchObserver = touch
         collection.addGestureRecognizer(touch)
     }
 
@@ -1554,6 +1665,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         cancelHostedDisclosureMotions()
         collection.onViewportLayout = nil
         collection.onContentLayoutCompleted = nil
+        collection.onAnimatedTouchHitTest = nil
         needsTextCoverageCheck = false
         attachmentTask?.cancel(); attachmentTask = nil; attachmentReady = false
         scheduledPage?.cancel(); scheduledPage = nil; pendingInput = nil
@@ -1618,6 +1730,15 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
             && !touching && !userGesture && !collection.isTracking
             && !collection.isDragging && !collection.isDecelerating && collection.window != nil
 
+        // An edit can retarget this same motion. Other publications and owners
+        // take the current displayed position before changing their geometry.
+        if editLift != nil,
+           structural || !changed.isEmpty || contextChanged || next.disclosureOperation != nil
+            || next.streamingTailID != nil || next.holdsAutomaticBottomFollow
+            || (metricsChanged && (!followsComposerHeight || !next.composerTranscriptLift)) {
+            cancelComposerTranscriptLift()
+        }
+        let liftOrigin = collection.contentOffset.y
         StreamLayoutWorkProbe.hit(structural || !changed.isEmpty || contextChanged || metricsChanged ? "controller.changedInput" : "controller.unchangedInput")
         let anchor = layout.viewportAnchor(surviving: unchangedRows ? nil : newSet)
         let mutationLanding = next.mutationLanding.flatMap { landing -> NativeChatMutationLanding? in
@@ -1782,6 +1903,12 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                     collection.setContentOffset(CGPoint(x: collection.contentOffset.x, y: destination), animated: false)
                 }
             }
+            let distance = collection.contentOffset.y - liftOrigin
+            if next.composerTranscriptLift, abs(distance) > 0.5,
+               !input.driver.externalViewportMotion, !collection.hasPendingAnimatedViewportResize,
+               !nativeStreamMotionActive, pendingStreamDestination == nil {
+                startEditLift(by: distance)
+            }
         }
         scheduleEmission()
     }
@@ -1811,6 +1938,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         cell.isViewportMotionActive = { [weak self] in
             guard let self, !self.detached, self.input.driver.controller === self else { return false }
             return self.input.driver.externalViewportMotion
+                || self.editLift != nil
                 || self.input.composerHeightPresentation?.isAnimating == true
                 || self.collection.hasPendingAnimatedViewportResize
         }
@@ -1949,11 +2077,13 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
         guard let cell = cell as? NativeChatCell, rows.indices.contains(indexPath.item) else { return }
         let row = rows[indexPath.item]
+        if let lift = editLift { attachEditLift(lift, to: cell.layer) }
         if cell.configuredKey != NativeChatRowKey(id: row.id, revision: row.revision) || cell.configuredPublication != input.publicationID { configure(cell, row: row) }
         needsTextCoverageCheck = true
         scheduleEmission()
     }
     func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+        if editLift != nil { cell.layer.removeAnimation(forKey: Self.liftKey) }
         (cell as? NativeChatCell)?.disclosureMotionID = nil
     }
 
@@ -2104,6 +2234,10 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard input.driver.controller === self else { return }
+        // Release an external keyboard motion before UIScrollView establishes
+        // the drag's offset. Deferred phase publication can otherwise replace
+        // the first finger movement with an older presentation position.
+        input.driver.userDragWillBeginEvents.send(scrollView)
         cancelHostedDisclosureMotions()
         input.driver.releasePosition(userOwned: true)
         userGesture = true; previousOffset = scrollView.contentOffset.y
@@ -2315,10 +2449,69 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         #endif
     }
 
+    private var displayedLift: CGFloat {
+        guard let lift = editLift else { return 0 }
+        // The cubic has linear time and quadratic ease-out. This also gives
+        // the exact remaining translation before a presentation layer exists.
+        let left = max(0, min(1, 1 - (CACurrentMediaTime() - lift.begin) / EditLift.duration))
+        return lift.distance * left * left
+    }
+
+    private func startEditLift(by delta: CGFloat) {
+        let preferredRate = min(80, Float(collection.window?.screen.maximumFramesPerSecond ?? 60))
+        let frameRateRange: CAFrameRateRange? = preferredRate > 60
+            ? CAFrameRateRange(minimum: preferredRate, maximum: preferredRate, preferred: preferredRate)
+            : nil
+        let lift = EditLift(distance: displayedLift + delta, frameRateRange: frameRateRange)
+        editLift = lift
+        let bounds = collection.bounds
+        layout.composerMotionCoverage = bounds.union(bounds.offsetBy(dx: 0, dy: -lift.distance))
+        collection.setNeedsLayout()
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.editLift?.id == lift.id else { return }
+                self.editLift = nil
+                self.layout.composerMotionCoverage = nil
+                self.collection.setNeedsLayout()
+            }
+        }
+        for cell in collection.visibleCells { attachEditLift(lift, to: cell.layer) }
+        CATransaction.commit()
+    }
+
+    private func attachEditLift(_ lift: EditLift, to layer: CALayer) {
+        guard CACurrentMediaTime() < lift.begin + EditLift.duration else { return }
+        let animation = CABasicAnimation(keyPath: "transform.translation.y")
+        animation.isAdditive = true
+        animation.fromValue = lift.distance
+        animation.toValue = 0
+        animation.beginTime = layer.convertTime(lift.begin, from: nil)
+        animation.duration = EditLift.duration
+        animation.timingFunction = CAMediaTimingFunction(controlPoints: 1.0/3, 2.0/3, 2.0/3, 1)
+        if let range = lift.frameRateRange { animation.preferredFrameRateRange = range }
+        layer.add(animation, forKey: Self.liftKey)
+    }
+
+    fileprivate func cancelComposerTranscriptLift() {
+        guard editLift != nil else { return }
+        let remaining = displayedLift
+        editLift = nil
+        layout.composerMotionCoverage = nil
+        for cell in collection.visibleCells { cell.layer.removeAnimation(forKey: Self.liftKey) }
+        if !detached, input.driver.controller === self {
+            UIView.performWithoutAnimation {
+                collection.contentOffset.y -= remaining
+                collection.layoutIfNeeded()
+            }
+        }
+    }
+
     fileprivate func cancelCommand(requestID: UUID? = nil, reason: String = "superseded") {
         // An explicit owner release also cancels the uncommanded mutation
         // handoff. A late cancellation for another UUID must not cancel it.
         if requestID == nil {
+            cancelComposerTranscriptLift()
             input.mutationLanding = nil
             stopStreamMotion(reason: reason, preserveVisible: !input.driver.externalViewportMotion)
         }
@@ -2403,6 +2596,14 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         recordEvent("commandBefore", commandID: requestID, target: target,
                     extra: ["targetOffsetY": y, "duration": duration ?? 0, "timing": timing.rawValue])
         #endif
+        // A programmatic command can replace deceleration without delivering
+        // didEndDecelerating. Retire that gesture at the ownership handoff,
+        // while preserving any real contact that can interrupt this command.
+        let pan = collection.panGestureRecognizer
+        if !collection.isTracking, !collection.isDragging, pan.numberOfTouches == 0,
+           pan.state != .began, pan.state != .changed {
+            userGesture = false
+        }
         input.driver.beginCommand(target, id: requestID)
         command = (requestID, target, completion, false)
         let drivenDuration: TimeInterval? = {

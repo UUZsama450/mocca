@@ -82,7 +82,7 @@ private extension UIResponder {
 /// multiple native edits arrive before SwiftUI renders another body.
 struct ComposerInputHeightAccess {
     let get: () -> (identity: ComposerInputIdentity, height: CGFloat)?
-    let set: ((identity: ComposerInputIdentity, height: CGFloat)?) -> Void
+    let set: ((identity: ComposerInputIdentity, height: CGFloat)?, Bool) -> Void
 }
 
 struct ComposerView: View {
@@ -241,7 +241,7 @@ struct ComposerView: View {
                         .padding(.bottom, -8)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            isFocused = true
+                            requestInputFocus(inputIdentity)
                         }
                 )
 
@@ -263,7 +263,7 @@ struct ComposerView: View {
                     Color.clear
                         .frame(height: leadingControlsVerticalOffset)
                         .contentShape(Rectangle())
-                        .onTapGesture { isFocused = true }
+                        .onTapGesture { requestInputFocus(inputIdentity) }
                         .accessibilityHidden(true)
                         .offset(y: -leadingControlsVerticalOffset)
                 }
@@ -275,7 +275,7 @@ struct ComposerView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: controlVisualHeight)
                     .contentShape(Rectangle())
-                    .onTapGesture { isFocused = true }
+                    .onTapGesture { requestInputFocus(inputIdentity) }
                     .accessibilityHidden(true)
 
                 if !model.visibleQuickPhrases.isEmpty {
@@ -386,6 +386,8 @@ struct ComposerView: View {
             .modifier(StableComposerGlassGeometryModifier(
                 enabled: model.preferences.useLiquidGlassComposer
             ))
+            .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+            .onTapGesture { requestInputFocus(inputIdentity) }
         )
         // Keep the shell and its controls in the same render group during a
         // keyboard-driven frame change. Liquid Glass otherwise may settle its
@@ -444,15 +446,30 @@ struct ComposerView: View {
         #endif
     }
 
+    private func requestInputFocus(_ identity: ComposerInputIdentity) {
+        guard identity.conversationID == model.selectedConversationID,
+              identity.resetRevision == inputResetID,
+              let input = sendSource.input, input.identity == identity,
+              !input.isRetired, input.window != nil else { return }
+        // Focus from the touch action, before a SwiftUI render. Deferring the
+        // responder change to updateUIView can lose the keyboard animation
+        // transaction when a closing keyboard is immediately reopened.
+        input.becomeFirstResponder()
+    }
+
     private func updateInputHeight(_ height: CGFloat, identity: ComposerInputIdentity) {
         guard identity.conversationID == model.selectedConversationID,
               identity.resetRevision == inputResetID else { return }
         let previous = inputHeight.get().flatMap { $0.identity == identity ? $0.height : nil }
         guard previous == nil || abs(previous! - height) > 0.5 else { return }
+        let editor = sendSource.input
+        let liftsTranscript = previous != nil && isFocused && !reduceMotion
+            && editor?.isFirstResponder == true && editor?.identity == identity && editor?.isPublishingEditedHeight == true
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
+        transaction.composerTranscriptLift = liftsTranscript
         withTransaction(transaction) {
-            inputHeight.set((identity, height))
+            inputHeight.set((identity, height), liftsTranscript)
             if let previous { onInputHeightChange(height - previous) }
         }
     }

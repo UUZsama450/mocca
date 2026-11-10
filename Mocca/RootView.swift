@@ -1468,13 +1468,35 @@ private final class ComposerKeyboardMotionSource {
     /// keyboard resize. Adopt that motion together with its scroll-edge
     /// compensation instead of rewinding just the scroll view's layer.
     func inheritedViewportDuration(in scrollView: UIScrollView,
-                                   conversationID: UUID, targetY: CGFloat) -> TimeInterval? {
+                                   conversationID: UUID, targetY: CGFloat,
+                                   requiresKeyboardTimingMatch: Bool) -> TimeInterval? {
         guard abs(scrollView.contentOffset.y - targetY) <= 0.5,
               let inputView, inputView.identity.conversationID == conversationID,
               let window = inputView.window, window === scrollView.window else { return nil }
-        let motions = (scrollView.layer.animationKeys() ?? []).compactMap {
-            scrollView.layer.animation(forKey: $0) as? CASpringAnimation
+        let offsetMotions = (scrollView.layer.animationKeys() ?? []).compactMap {
+            scrollView.layer.animation(forKey: $0) as? CABasicAnimation
         }.filter { $0.keyPath == "bounds.origin" }
+        if !requiresKeyboardTimingMatch {
+            // UIKit is already moving to this exact bottom offset. Preserve
+            // that complete motion instead of discarding only its scroll half
+            // because the keyboard's separately installed clock differs.
+            let now = scrollView.layer.convertTime(CACurrentMediaTime(), from: nil)
+            let remaining = offsetMotions.compactMap { motion -> TimeInterval? in
+                guard motion.isAdditive, !motion.autoreverses, motion.repeatCount == 0,
+                      motion.duration.isFinite, motion.duration > 0,
+                      motion.beginTime.isFinite, motion.speed == 1,
+                      let from = (motion.fromValue as? NSValue)?.cgPointValue,
+                      let to = (motion.toValue as? NSValue)?.cgPointValue,
+                      from.y.isFinite, abs(from.y) > 0.5, abs(from.x) <= 0.5,
+                      abs(to.x) <= 0.5, abs(to.y) <= 0.5 else { return nil }
+                let elapsed = motion.beginTime == 0 ? 0 : now - motion.beginTime
+                let remaining = motion.duration - elapsed
+                return remaining.isFinite && remaining > 0 ? remaining : nil
+            }.max()
+            return remaining
+        }
+        // Send placement keeps its original, stricter keyboard handoff.
+        let motions = offsetMotions.compactMap { $0 as? CASpringAnimation }
         guard motions.count == 1, let motion = motions.first,
               motion.isAdditive, motion.duration.isFinite, motion.duration > 0,
               let from = (motion.fromValue as? NSValue)?.cgPointValue,
@@ -1570,50 +1592,41 @@ private final class ComposerKeyboardMotionSource {
         return removed
     }
 
-    func synchronizeSpring(in scrollView: UIScrollView, conversationID: UUID,
-                           duration: TimeInterval) -> Int {
+    func animateViewport(in scrollView: UIScrollView, conversationID: UUID,
+                         duration: TimeInterval, animations: @escaping () -> Void) -> Bool {
         guard let inputView, inputView.identity.conversationID == conversationID,
-              let window = inputView.window, window === scrollView.window else { return 0 }
+              let window = inputView.window, window === scrollView.window else { return false }
         var ancestor: UIView? = inputView
-        var source: CASpringAnimation?
-        while let view = ancestor, view !== window, source == nil {
+        while let view = ancestor, view !== window {
             for key in view.layer.animationKeys() ?? [] {
                 guard let spring = view.layer.animation(forKey: key) as? CASpringAnimation,
                       spring.keyPath == "position" || spring.keyPath == "bounds.origin",
+                      abs(spring.duration - duration) <= 0.02,
                       spring.mass.isFinite, spring.mass > 0,
                       spring.stiffness.isFinite, spring.stiffness > 0,
                       spring.damping.isFinite, spring.damping >= 0,
-                      spring.initialVelocity.isFinite, spring.duration.isFinite,
-                      abs(spring.duration - duration) <= 0.02 else { continue }
-                source = spring
-                break
+                      spring.initialVelocity.isFinite else { continue }
+                // Supply the keyboard's physical curve before UIKit creates
+                // both the viewport motion and its scroll-edge compensation.
+                // SwiftUI's public Spring converts physical parameters into
+                // UIView's perceptual duration without fitting a new curve.
+                let timing = Spring(mass: spring.mass, stiffness: spring.stiffness,
+                                    damping: spring.damping, allowOverDamping: true)
+                guard timing.duration.isFinite, timing.duration > 0,
+                      timing.bounce.isFinite, (-1...1).contains(timing.bounce) else { continue }
+                UIView.animate(springDuration: timing.duration,
+                               bounce: CGFloat(timing.bounce),
+                               initialSpringVelocity: CGFloat(spring.initialVelocity),
+                               delay: 0,
+                               options: [.allowUserInteraction, .overrideInheritedDuration],
+                               animations: animations)
+                return true
             }
             ancestor = view.superview
         }
-        guard let source else { return 0 }
-        var replacements = 0
-        for key in scrollView.layer.animationKeys() ?? [] {
-            guard let spring = scrollView.layer.animation(forKey: key) as? CASpringAnimation,
-                  spring.keyPath == "bounds.origin" || spring.keyPath == "bounds.size",
-                  abs(spring.mass - source.mass) > 0.001
-                    || abs(spring.stiffness - source.stiffness) > 0.001
-                    || abs(spring.damping - source.damping) > 0.001
-                    || abs(spring.initialVelocity - source.initialVelocity) > 0.001
-                    || abs(spring.duration - source.duration) > 0.001,
-                  let aligned = spring.copy() as? CASpringAnimation else { continue }
-            // Retain UIKit's keys, target, additive values and interruption
-            // start. Only the observed spring shape is shared with the input.
-            aligned.mass = source.mass
-            aligned.stiffness = source.stiffness
-            aligned.damping = source.damping
-            aligned.initialVelocity = source.initialVelocity
-            aligned.duration = source.duration
-            aligned.timingFunction = source.timingFunction
-            scrollView.layer.add(aligned, forKey: key)
-            replacements += 1
-        }
-        return replacements
+        return false
     }
+
 }
 
 /// Keeps the already-rendered chat viewport above the real scroll view while
@@ -3738,6 +3751,7 @@ private struct ConversationSwitchFadeModifier: ViewModifier {
 @MainActor @Observable private final class ComposerGeometryState {
     var shellHeight: CGFloat = 110
     var inputHeight: (identity: ComposerInputIdentity, height: CGFloat)?
+    var inputEdit: ComposerInputHeightEdit?
 }
 
 private struct ComposerGeometryInput: View {
@@ -3750,7 +3764,19 @@ private struct ComposerGeometryInput: View {
         ComposerView(
             inputHeight: ComposerInputHeightAccess(
                 get: { geometry.inputHeight },
-                set: { geometry.inputHeight = $0 }
+                set: { value, lifts in
+                    // Keep the edit attached to its concrete height target.
+                    // An unrelated SwiftUI transaction can arrive before the
+                    // viewport lays out without erasing this edit's identity.
+                    if lifts, let value, let previous = geometry.inputHeight,
+                       value.identity == previous.identity {
+                        geometry.inputEdit = ComposerInputHeightEdit(
+                            targetShellHeight: geometry.shellHeight + value.height - previous.height)
+                    } else {
+                        geometry.inputEdit = nil
+                    }
+                    geometry.inputHeight = value
+                }
             ),
             onInputHeightChange: onInputHeightChange,
             onShellHeightChange: onShellHeightChange,
@@ -3768,7 +3794,8 @@ private struct ComposerGeometryPresentation: ViewModifier {
             identity: geometry.inputHeight?.identity,
             shellHeight: geometry.shellHeight,
             targetShellHeight: geometry.shellHeight,
-            additionalMessageClearance: additionalMessageClearance
+            additionalMessageClearance: additionalMessageClearance,
+            inputEdit: geometry.inputEdit
         ))
     }
 }
@@ -4346,7 +4373,9 @@ private struct ChatView: View {
                 // message-content construction observe input height changes.
                 bottom: 0,
                 gap: conversationMessageSpacing,
-                minimumIncludesTopInset: visibleMessageCount > 0 && !isFreshConversationFirstMessage,
+                // Insets already reserve space around the content. Short
+                // transcripts can rest at the same position at both edges.
+                minimumIncludesTopInset: false,
                 alignShortContentToBottom: false,
                 bottomFollowClearance: 0
             ),
@@ -4701,6 +4730,14 @@ private struct ChatView: View {
                             scrollDragIsVertical = isVerticalScrollDrag(value)
                         }
                         guard scrollDragIsVertical == true else { return }
+                        // The outer gesture can finish over an animated viewport
+                        // without the transcript ever receiving a native pan.
+                        // Only the actual scroll view may take keyboard motion.
+                        // Its phase callback also claims late/diagonal pans.
+                        guard isNativeVerticalScrollMotionArmed
+                            || chatScrollViewBox.scrollView.map({
+                                $0 === nativeTranscriptDriver.scrollView && $0.isDragging
+                            }) == true else { return }
                         if !isVerticalScrollGestureActive,
                            !isNativeVerticalScrollMotionArmed {
                             prepareForChatUserScroll()
@@ -6320,7 +6357,7 @@ private struct ChatView: View {
         )
         switch request.action {
         case .top:
-            scrollToTop(using: scrollProxy, request: request)
+            scrollToTop(request: request)
         case .bottom:
             scrollToBottom(using: scrollProxy, request: request)
         default:
@@ -6726,7 +6763,10 @@ private struct ChatView: View {
         ComposerGeometryInput(
             geometry: composerGeometry,
             onInputHeightChange: { composerHeight += $0 },
-            onShellHeightChange: { composerHeight += $0 },
+            onShellHeightChange: {
+                composerGeometry.inputEdit = nil
+                composerHeight += $0
+            },
             onMeasuredHeight: updateComposerHeight
         )
             .environment(\.composerHeightPresentation, nil)
@@ -8991,10 +9031,7 @@ private struct ChatView: View {
             && abs(measuredContentEnd - geometry.contentSize.height) <= 2
     }
 
-    private func scrollToTop(
-        using scrollProxy: ChatTranscriptProxy,
-        request: MessageNavigationRequest
-    ) {
+    private func scrollToTop(request: MessageNavigationRequest) {
         if request.action != .top {
             prepareMessageNavigation(for: request.action)
         }
@@ -9037,12 +9074,11 @@ private struct ChatView: View {
                   !hasConcreteNativeUserScrollOwnership else { return }
             traceScrollCommand(
                 source: "navigation.top",
-                target: "messageHost:\(ChatBottomTrace.shortID(firstID))",
+                target: "topEdge",
                 animation: "edge"
             )
-            let completed = await scrollProxy.navigate(
-                conversationMessageHostID(for: firstID), anchor: .top, timing: .edge
-            )
+            // The transcript's top edge includes the clearance above the first row.
+            let completed = await nativeTranscriptDriver.scrollAndWait(to: .top, timing: .edge)
             guard completed, !Task.isCancelled,
                   !model.hasEarlierMessages,
                   let geometry = nativeNavigationLandingGeometry(request, anchorID: anchorID),
@@ -9845,7 +9881,7 @@ private struct ChatView: View {
         }
         guard !indexedUsers.isEmpty else {
             if direction < 0 {
-                scrollToTop(using: scrollProxy, request: request)
+                scrollToTop(request: request)
             } else {
                 scrollToBottom(using: scrollProxy, request: request)
             }
@@ -9882,7 +9918,7 @@ private struct ChatView: View {
         guard let target else {
             navigationAnchorMessageID = nil
             if direction < 0 {
-                scrollToTop(using: scrollProxy, request: request)
+                scrollToTop(request: request)
             } else {
                 scrollToBottom(using: scrollProxy, request: request)
             }
@@ -13628,13 +13664,11 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
               !change.scrollView.isDragging, !change.scrollView.isDecelerating else { return }
         let active = Date() < keyboardViewportAnimationDeadline
             && bottomDistanceMeasurement.keyboardMotionScrollView === change.scrollView
-        // The deadline can pass while the main actor has not delivered the
-        // completion yet. A new keyboard resize still belongs to this exact
-        // owner; refusing it would let the old completion pin first and start
-        // the reversal from a stale settled offset. Real drag/cancellation and
-        // completion clear the concrete owner and cannot enter this handoff.
-        let hasPendingKeyboardHandoff = keyboardBottomFollowIntent
-            && bottomDistanceMeasurement.keyboardMotionScrollView === change.scrollView
+        // Root's intent and the deadline can expire before this motion's
+        // completion. Hand the next resize to its still-pending native owner
+        // before the old completion pins a stale offset. Real drag/cancellation
+        // and completion clear that owner and cannot enter this handoff.
+        let hasPendingKeyboardHandoff = bottomDistanceMeasurement.keyboardMotionScrollView === change.scrollView
             && keyboardViewportCompletionTask != nil
         // The native viewport extends through safe areas. Keyboard avoidance
         // changes its readable height through insets, not necessarily bounds.
@@ -13664,16 +13698,16 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             && change.previous.insets == change.current.insets
         let previousComposerClearance = bottomDistanceMeasurement.keyboardMotionComposerClearance
             ?? change.previous.composerBottomClearance
-        if active, pendingSendRequestID == nil, contentOnlyChange,
+        if active, pendingSendRequestID == nil, contentOnlyChange, !change.composerTranscriptLift,
            abs(change.current.composerBottomClearance - previousComposerClearance) > 0.5,
            !keyboardMotionSource.inputPositionIsSettled(
                in: change.scrollView, conversationID: conversationID
            ) {
-            // Editing changes the composer's height without animation. Move
-            // the transcript's model base in that same layout, leaving the
-            // existing additive keyboard animation and its completion intact.
-            // Retargeting a new spring here would animate the newline height
-            // and put the transcript behind the still-moving input again.
+            // Non-edit geometry corrections keep the current keyboard base.
+            // A real edited-height publication falls through to the keyboard
+            // owner's retarget below, continuing from its visible position
+            // within the existing deadline. It must not start a separate
+            // per-cell lift while that owner is active.
             bottomDistanceMeasurement.keyboardMotionTargetY = targetOffset
             bottomDistanceMeasurement.keyboardMotionComposerClearance = change.current.composerBottomClearance
             UIView.performWithoutAnimation {
@@ -13879,7 +13913,12 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
     private func addScrollPhaseObserver<ObservedContent: View>(
         to content: ObservedContent
     ) -> some View {
-        content.onReceive(nativeDriver.phaseEvents) { event in
+        content.onReceive(nativeDriver.userDragWillBeginEvents) { scrollView in
+            guard scrollView === nativeDriver.scrollView,
+                  scrollView === scrollViewBox.scrollView else { return }
+            cancelKeyboardViewportMotion()
+        }
+        .onReceive(nativeDriver.phaseEvents) { event in
             guard let geometry = event.geometry,
                   let publication = geometry.publicationID.base as? NativeChatPublicationID,
                   publication.anchorID == bottomAnchorID else { return }
@@ -14281,6 +14320,8 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         // dismissal tap; an actual drag or deceleration still preempts it.
         let wasAnimating = Date() < keyboardViewportAnimationDeadline
             && bottomDistanceMeasurement.keyboardMotionScrollView === scrollView
+        let wasAnimatingSend = wasAnimating
+            && bottomDistanceMeasurement.preservedSendRequestID != nil
         let continuesOwnedSend = wasAnimating
             && preservingSendRequestID != nil
             && preservingSendRequestID == bottomDistanceMeasurement.preservedSendRequestID
@@ -14292,9 +14333,13 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
                   scrollView.contentSize.height - scrollView.bounds.height
                     + scrollView.adjustedContentInset.bottom)
             : bottomOffsetY
-        if synchronousLayout, !wasAnimating,
+        // A deferred geometry publication can arrive after UIKit has already
+        // installed the matching keyboard motion. Adopt it with its edge
+        // compensation just as we do during synchronous layout.
+        if !wasAnimating,
            let duration = keyboardMotionSource.inheritedViewportDuration(
-               in: scrollView, conversationID: conversationID, targetY: targetOffsetY
+               in: scrollView, conversationID: conversationID, targetY: targetOffsetY,
+               requiresKeyboardTimingMatch: preservingSendRequestID != nil
            ) {
             bottomDistanceMeasurement.keyboardMotionScrollView = scrollView
             bottomDistanceMeasurement.preservedSendRequestID = preservingSendRequestID
@@ -14465,7 +14510,7 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             // Ordinary retargets keep the existing ease-out and UIKit edge
             // compensation. Only an additional downward correction in the
             // final 100 ms needs a bounded continuation from the visible frame.
-            if wasAnimating,
+            if wasAnimatingSend,
                bottomDistanceMeasurement.keyboardAnimatorScrollView === scrollView,
                let animator = bottomDistanceMeasurement.keyboardMotionAnimator,
                animator.state == .active {
@@ -14524,17 +14569,14 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             }
         } else {
             finishKeyboardMotionAnimator(in: scrollView)
-            UIView.animate(withDuration: duration, delay: 0, options: options, animations: animations)
-        }
-        if preservingSendRequestID == nil, !isRetargeting, keyboardAnimationCurveRawValue == 7 {
-            // A SwiftUI-owned keyboard resize can give UIKit a different
-            // default spring despite the same notification curve/duration.
-            // Read the actual composer's animation after UIKit installs ours.
-            // Content-growth retargets keep their existing remaining duration.
-            let replacements = keyboardMotionSource.synchronizeSpring(
-                in: scrollView, conversationID: conversationID, duration: duration
-            )
-            ChatBottomTrace.log("KEYBOARD_SPRING_SYNCHRONIZED count=\(replacements)")
+            let sharesKeyboardSpring = !isRetargeting && keyboardAnimationCurveRawValue == 7
+                && keyboardMotionSource.animateViewport(
+                    in: scrollView, conversationID: conversationID,
+                    duration: duration, animations: animations
+                )
+            if !sharesKeyboardSpring {
+                UIView.animate(withDuration: duration, delay: 0, options: options, animations: animations)
+            }
         }
         scheduleKeyboardViewportCompletion(after: duration)
         return true
@@ -14639,7 +14681,20 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
                     + " distance=\(String(format: "%.2f", bottomDistanceMeasurement.signedDistanceFromBottom)) "
                     + chatBottomTracePosition
             )
-            resetToBottom(source: "keyboardViewportCompletion")
+            let bottomY = max(-ownedScrollView.adjustedContentInset.top,
+                ownedScrollView.contentSize.height - ownedScrollView.bounds.height
+                    + ownedScrollView.adjustedContentInset.bottom)
+            let shownY = ownedScrollView.layer.presentation()?.bounds.origin.y
+                ?? ownedScrollView.contentOffset.y
+            if allowsAutomaticBottomFollow,
+               abs(ownedScrollView.contentOffset.y - bottomY) <= 0.5,
+               abs(shownY - bottomY) <= 0.5 {
+                // The motion already landed. Restore following without a new
+                // scroll command that would block the next keyboard layout.
+                nativeDriver.armBottomPin()
+            } else {
+                resetToBottom(source: "keyboardViewportCompletion")
+            }
             keyboardViewportCompletionTask = nil
         }
     }
@@ -15691,13 +15746,20 @@ private struct MessageRow: View {
     }
 
     private var assistantAttachments: (searchImages: [MessageAttachment], other: [MessageAttachment]) {
-        message.attachments.reduce(into: (searchImages: [], other: [])) { result, attachment in
+        var grouped = message.attachments.reduce(into: (searchImages: [MessageAttachment](), other: [MessageAttachment]())) { result, attachment in
             if attachment.kind == .image && attachment.metadata["source"] == "web_search_image" {
                 result.searchImages.append(attachment)
             } else {
                 result.other.append(attachment)
             }
         }
+        if message.isStreaming, let slots = model.streamingSearchImageSlots[message.id] {
+            let downloaded = grouped.searchImages
+            grouped.searchImages = slots.map { slot in
+                downloaded.first { $0.metadata["search_image_id"] == slot.metadata["search_image_id"] } ?? slot
+            }
+        }
+        return grouped
     }
 
     var body: some View {
@@ -15839,9 +15901,9 @@ private struct MessageRow: View {
                                 imagesExpanded: $assistantAttachmentsExpanded
                             )
                         }
-                        if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
+                        if message.text.isEmpty && message.isStreaming && attachments.searchImages.isEmpty && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
                             assistantWaitingIndicator
-                        } else if !message.text.isEmpty || !message.isStreaming {
+                        } else if !message.text.isEmpty || !message.isStreaming || !attachments.searchImages.isEmpty {
                             assistantReplyBody(searchImages: attachments.searchImages,
                                                messageFontSize: messageFontSize, wide: true)
                         }
@@ -15900,9 +15962,9 @@ private struct MessageRow: View {
                                 imagesExpanded: $assistantAttachmentsExpanded
                             )
                         }
-                        if message.text.isEmpty && message.isStreaming && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
+                        if message.text.isEmpty && message.isStreaming && attachments.searchImages.isEmpty && message.reasoningSegments.isEmpty && message.toolEvents.isEmpty {
                             assistantWaitingIndicator
-                        } else if !message.text.isEmpty || !message.isStreaming {
+                        } else if !message.text.isEmpty || !message.isStreaming || !attachments.searchImages.isEmpty {
                             assistantReplyBody(searchImages: attachments.searchImages,
                                                messageFontSize: messageFontSize, wide: false)
                         }
@@ -15987,7 +16049,7 @@ private struct MessageRow: View {
     }
 
     private func assistantReplyBody(searchImages: [MessageAttachment], messageFontSize: CGFloat, wide: Bool) -> some View {
-        let blocks = SearchImageLayout.blocks(text: message.text, segments: assistantTextSegments, images: searchImages)
+        let blocks = SearchImageLayout.blocks(text: message.text, segments: assistantTextSegments, images: searchImages, streaming: message.isStreaming)
         return VStack(alignment: .leading, spacing: CGFloat(model.preferences.effectiveChatBubbleSpacing)) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 switch block {

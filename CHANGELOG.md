@@ -1,5 +1,17 @@
 # 更新记录 / Changelog
 
+## 1.0.9 (5323) — 2026-11-10
+
+- 多行输入超过可见高度后，输入框内的文字跟随系统光标滚动，上方聊天正文继续独立抬升。
+- 改进键盘开合、发送时的布局衔接，以及短对话打开后和回到顶部时的首条消息位置。
+- 改进联网搜索图片在流式回复中的展示和已下载图片的预览。
+- 公共构建移除触摸诊断入口及记录功能。
+
+- Long drafts use system caret scrolling inside the composer, with independent movement of the transcript above it.
+- Refine keyboard and send transitions, and position the first message below the top controls when opening a short conversation or jumping to the top.
+- Refine the display of search images during streaming and preview of downloaded images.
+- Remove touch recording and its controls from the public build.
+
 ## 1.0.8 (5298) — 2026-11-04
 
 搜索到的图片现在可以直接在聊天中查看。改进了键盘收起时的过渡和长对话的滚动体验。

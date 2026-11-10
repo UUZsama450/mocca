@@ -6740,6 +6740,7 @@ private struct AboutPage: View {
                 }
             }
 
+
             Section(L10n.lookup("帮助与政策")) {
                 NavigationLink {
                     MoccaDocumentationPage()

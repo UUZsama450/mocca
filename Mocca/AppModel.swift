@@ -940,6 +940,9 @@ final class AppModel {
     @ObservationIgnored private var streamingRunIDsByConversation: [UUID: UUID] = [:]
     @ObservationIgnored private var pendingImageRequestsByMessageID: [UUID: [ExternalImageGenerationRequest]] = [:]
     @ObservationIgnored private var searchImageCandidatesByMessageID: [UUID: [SearchImageCandidate]] = [:]
+    // Slots reserve gallery height while bytes arrive. Only downloaded files enter ChatMessage.
+    private(set) var streamingSearchImageSlots: [UUID: [MessageAttachment]] = [:]
+    @ObservationIgnored private var streamingSearchDownloads: [UUID: [String: Task<Void, Never>]] = [:]
     @ObservationIgnored private var pendingSearchImageRequestsByMessageID: [UUID: [SearchImageRequest]] = [:]
     @ObservationIgnored private var conversationSummaryRuns: [UUID: ConversationSummaryRun] = [:]
     @ObservationIgnored private var contextCompressionRun: ContextCompressionRun?
@@ -9025,6 +9028,8 @@ final class AppModel {
                 )
                 if !response.images.isEmpty {
                     await MainActor.run { [weak self] in
+                        guard self?.isCurrentStreamingRun(conversationID, runID: fileToolRunID) == true,
+                              self?.activeStreamingMessageIDsByConversation[conversationID] == searchImageMessageID else { return }
                         self?.registerSearchImageCandidates(
                             response.images,
                             for: searchImageMessageID
@@ -9103,6 +9108,10 @@ final class AppModel {
         try Task.checkCancellation()
         if !receivedContent {
             throw AIChatServiceError.emptyResponse
+        }
+        if let downloads = streamingSearchDownloads[assistantMessage.id] {
+            for task in downloads.values { await task.value }
+            try Task.checkCancellation()
         }
         guard var completed = try await finishSuccessfulStreaming(
             conversationID: conversationID,
@@ -9225,6 +9234,7 @@ final class AppModel {
             assistantMessageID: activeStreamingMessageIDsByConversation[conversationID]
         )
         if let messageID = activeStreamingMessageIDsByConversation[conversationID] {
+            clearStreamingSearchDownloads(messageID)
             streamingCheckpoints.remove(messageID)
             streamingRevisions.removeValue(forKey: messageID)
             checkpointedStreamingRevisions.removeValue(forKey: messageID)
@@ -9837,6 +9847,12 @@ final class AppModel {
                 default: conversationMessages[index].text
             ].append(chunk)
             markStreamingProgressDirty(messageID)
+            if publishesContent, chunk.utf8.contains(0x3E),
+               let candidates = searchImageCandidatesByMessageID[messageID],
+               (streamingSearchDownloads[messageID]?.count ?? 0) < 4,
+               let raw = rawStreamingTextByMessageID[messageID] {
+                startStreamingSearchImages(raw, candidates: candidates, conversationID: conversationID, messageID: messageID)
+            }
             // Keep receiving raw text while hidden. Resume or finalization will
             // filter it when needed, including before the first visible prefix.
             guard publishesContent,
@@ -9957,6 +9973,62 @@ final class AppModel {
         preparedStreamingPayloads.removeValue(forKey: messageID)
     }
 
+    private func startStreamingSearchImages(
+        _ raw: String, candidates: [SearchImageCandidate], conversationID: UUID, messageID: UUID
+    ) {
+        let cleaned = ExternalImageGenerationCodec.stripForDisplay(AIMessageReactionCodec.stripForDisplay(raw))
+        let selection = SearchImageSelectionCodec.parse(cleaned, candidates: candidates)
+        for request in selection.requests {
+            let id = request.candidate.id
+            guard streamingSearchDownloads[messageID]?[id] == nil, let offset = request.textOffsetUTF8 else { continue }
+            let slot = MessageAttachment(kind: .image, metadata: [
+                "source": "web_search_image", "search_image_id": id, "search_text_offset": String(offset)
+            ])
+            streamingSearchImageSlots[messageID, default: []].append(slot)
+            streamingSearchDownloads[messageID, default: [:]][id] = Task { [weak self] in
+                let payload = try? await SearchImageDownloadService.download(request.candidate)
+                guard let self, !Task.isCancelled,
+                      self.activeStreamingMessageIDsByConversation[conversationID] == messageID,
+                      var messages = self.conversationMessageStore[conversationID],
+                      let index = messages.firstIndex(where: { $0.id == messageID && $0.isStreaming }) else { return }
+                if let payload, let image = Self.searchAttachment(payload, request: request, digest: nil) {
+                    messages[index].attachments.append(image)
+                    messages[index].parts = Self.rebuiltParts(for: messages[index])
+                    self.markStreamingProgressDirty(messageID)
+                } else {
+                    self.streamingSearchImageSlots[messageID]?.removeAll { $0.id == slot.id }
+                }
+                messages[index].updatedAt = .now
+                self.conversationMessageStore[conversationID] = messages
+            }
+        }
+    }
+
+    private static func searchAttachment(
+        _ payload: GeneratedImagePayload, request: SearchImageRequest, digest: String?
+    ) -> MessageAttachment? {
+        guard var attachment = AttachmentStore.saveGeneratedImage(data: payload.data, mimeType: payload.mimeType) else { return nil }
+        let candidate = request.candidate
+        attachment.remoteURL = URL(string: candidate.url)
+        attachment.metadata["source"] = "web_search_image"
+        attachment.metadata["search_image_id"] = candidate.id
+        attachment.metadata["remote_url"] = candidate.url
+        if let offset = request.textOffsetUTF8 {
+            attachment.metadata["search_text_offset"] = String(offset)
+            attachment.metadata["search_text_digest"] = digest
+        }
+        if !candidate.title.isEmpty { attachment.metadata["title"] = candidate.title }
+        attachment.metadata["source_url"] = candidate.sourceURL
+        return attachment
+    }
+
+    private func clearStreamingSearchDownloads(_ messageID: UUID) {
+        if let tasks = streamingSearchDownloads.removeValue(forKey: messageID) {
+            for task in tasks.values { task.cancel() }
+            streamingSearchImageSlots.removeValue(forKey: messageID)
+        }
+    }
+
     private func processSearchImageRequests(
         _ requests: [SearchImageRequest],
         for message: ChatMessage
@@ -9986,26 +10058,11 @@ final class AppModel {
 
         var attachments: [MessageAttachment] = []
         let textDigest = SearchImageLayout.digest(message.text)
-        for (index, candidate, payload) in downloaded {
-            guard var attachment = AttachmentStore.saveGeneratedImage(
-                data: payload.data,
-                mimeType: payload.mimeType
-            ) else { continue }
-            attachment.remoteURL = URL(string: candidate.url)
-            attachment.metadata["source"] = "web_search_image"
-            attachment.metadata["search_image_id"] = candidate.id
-            if let offset = selectedRequests[index].textOffsetUTF8 {
-                attachment.metadata["search_text_offset"] = String(offset)
-                attachment.metadata["search_text_digest"] = textDigest
+        guard !Task.isCancelled else { return message }
+        for (index, _, payload) in downloaded {
+            if let attachment = Self.searchAttachment(payload, request: selectedRequests[index], digest: textDigest) {
+                attachments.append(attachment)
             }
-            attachment.metadata["remote_url"] = candidate.url
-            if !candidate.title.isEmpty {
-                attachment.metadata["title"] = candidate.title
-            }
-            if let sourceURL = candidate.sourceURL {
-                attachment.metadata["source_url"] = sourceURL
-            }
-            attachments.append(attachment)
         }
 
         if !attachments.isEmpty {
@@ -12038,6 +12095,7 @@ final class AppModel {
         }
         defer {
             if let messageID = resolvedMessageID {
+                clearStreamingSearchDownloads(messageID)
                 rawStreamingTextByMessageID.removeValue(forKey: messageID)
                 streamingRevisions.removeValue(forKey: messageID)
                 checkpointedStreamingRevisions.removeValue(forKey: messageID)
@@ -12078,8 +12136,22 @@ final class AppModel {
         } else {
             pendingImageRequestsByMessageID.removeValue(forKey: messageID)
         }
-        if !cancelled, !searchImageRequests.isEmpty {
-            pendingSearchImageRequestsByMessageID[messageID] = searchImageRequests
+        let attempted = streamingSearchDownloads[messageID]
+        if attempted != nil {
+            // Freeze successful images in marker order, including a stopped partial reply.
+            let digest = SearchImageLayout.digest(searchImageResult.displayText)
+            let attachments = conversationMessages[index].attachments
+            let ordered = searchImageRequests.compactMap { request -> MessageAttachment? in
+                guard var image = attachments.first(where: { $0.metadata["search_image_id"] == request.candidate.id }) else { return nil }
+                image.metadata["search_text_offset"] = request.textOffsetUTF8.map(String.init)
+                image.metadata["search_text_digest"] = digest
+                return image
+            }
+            conversationMessages[index].attachments = attachments.filter { $0.metadata["source"] != "web_search_image" } + ordered
+        }
+        let remaining = searchImageRequests.filter { attempted?[$0.candidate.id] == nil }
+        if !cancelled, !remaining.isEmpty {
+            pendingSearchImageRequestsByMessageID[messageID] = remaining
         } else {
             pendingSearchImageRequestsByMessageID.removeValue(forKey: messageID)
         }
@@ -12413,6 +12485,12 @@ final class AppModel {
             // reply would be re-parsed and rewritten despite no new content.
             updateReplySegmentation(in: &message, forPersistence: true)
             preparedStreamingPayloads[messageID] = (revision, message.text, message.parts, message.replySegmentation)
+        }
+        if streamingSearchDownloads[messageID] != nil, !message.attachments.isEmpty {
+            let digest = SearchImageLayout.digest(message.text)
+            for index in message.attachments.indices where message.attachments[index].metadata["search_text_offset"] != nil {
+                message.attachments[index].metadata["search_text_digest"] = digest
+            }
         }
         message.streamingRevision = revision
         return message

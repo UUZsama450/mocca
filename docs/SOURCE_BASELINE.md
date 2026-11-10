@@ -1,6 +1,12 @@
 # Source baseline
 
-## Current release 1.0.8 (5298)
+## Current release 1.0.9 (5323)
+
+The portable source derives from phone build 5321. It removes touch recording, its Settings entry, and the build-time activation settings. The public source continues to use configurable signing. [SHA-256 manifest](SOURCE_5323_SHA256.json) · [Release notes](../CHANGELOG.md).
+
+公开源码基于手机 5321，移除触摸记录、设置入口和启用配置，保留可配置签名。
+
+## Historical release 1.0.8 (5298)
 
 All 162 product files match the source snapshot used to build the App Store submission. [SHA-256 manifest](SOURCE_5298_SHA256.json) · [Release notes](../CHANGELOG.md).
 

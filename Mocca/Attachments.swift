@@ -15,27 +15,27 @@ enum SearchImageLayout {
         Data(SHA256.hash(data: Data(text.utf8))).base64EncodedString()
     }
 
-    static func blocks(text: String, segments: [String], images: [MessageAttachment]) -> [Block] {
+    static func blocks(text: String, segments: [String], images: [MessageAttachment], streaming: Bool = false) -> [Block] {
         let original = segments.map(Block.text)
         guard !images.isEmpty else { return original }
         guard images.contains(where: { $0.metadata["search_text_offset"] != nil }) else {
             return original + [.gallery(images)]
         }
 
-        let signature = digest(text)
+        let signature = streaming ? nil : digest(text)
         var groups: [String.Index: [MessageAttachment]] = [:]
         var footer: [MessageAttachment] = []
         for image in images {
-            guard image.metadata["search_text_digest"] == signature,
+            guard (streaming || image.metadata["search_text_digest"] == signature),
                   let value = image.metadata["search_text_offset"], let offset = Int(value), offset >= 0,
                   let byte = text.utf8.index(text.utf8.startIndex, offsetBy: offset, limitedBy: text.utf8.endIndex),
                   let index = String.Index(byte, within: text) else {
-                footer.append(image)
+                if !streaming { footer.append(image) }
                 continue
             }
             groups[index, default: []].append(image)
         }
-        guard !groups.isEmpty else { return original + [.gallery(images)] }
+        guard !groups.isEmpty else { return footer.isEmpty ? original : original + [.gallery(footer)] }
 
         // Segmentation can trim paragraph separators. Locate each visible
         // segment in order, keeping galleries in those separators in order too.
@@ -776,19 +776,25 @@ struct MessageAttachmentsView: View {
                     LazyHStack(spacing: 10) {
                         ForEach(Array(searchImages.enumerated()), id: \.element.id) { index, attachment in
                             Button {
-                                guard DrawerInlineActionTapGate.allowsAction else { return }
+                                let ready = searchImages.filter { $0.localURL != nil }
+                                guard DrawerInlineActionTapGate.allowsAction,
+                                      let selected = ready.firstIndex(where: { $0.id == attachment.id }) else { return }
                                 imagePreview = MessageImagePreviewPresentation(
-                                    images: searchImages,
-                                    initialIndex: index
+                                    images: ready,
+                                    initialIndex: selected
                                 )
                             } label: {
-                                messageImageThumbnail(
-                                    attachment,
-                                    size: searchImageTileSize,
-                                    cornerRadius: 14
-                                )
+                                if attachment.localURL == nil {
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .fill(Color.secondary.opacity(0.08))
+                                        .frame(width: searchImageTileSize, height: searchImageTileSize)
+                                        .overlay { ProgressView() }
+                                } else {
+                                    messageImageThumbnail(attachment, size: searchImageTileSize, cornerRadius: 14)
+                                }
                             }
                             .buttonStyle(MessageImageThumbnailButtonStyle())
+                            .disabled(attachment.localURL == nil)
                             .accessibilityLabel(L10n.format("打开第 %@ 张搜索图片，共 %@ 张", [String(describing: index + 1), String(describing: searchImages.count)]))
                         }
                     }

@@ -791,7 +791,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5298</string>
+				<string>5323</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -803,7 +803,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.8</string>
+				<string>1.0.9</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -990,7 +990,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5298</string>
+				<string>5323</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1002,7 +1002,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.8</string>
+				<string>1.0.9</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -1570,7 +1570,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5298</string>
+				<string>5323</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1586,7 +1586,7 @@
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.8</string>
+				<string>1.0.9</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension</string>
 				<key>PRODUCT_NAME</key>
@@ -1622,7 +1622,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5298</string>
+				<string>5323</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1638,7 +1638,7 @@
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.8</string>
+				<string>1.0.9</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension</string>
 				<key>PRODUCT_NAME</key>
