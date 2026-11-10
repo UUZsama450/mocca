@@ -8,6 +8,8 @@
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).background-generation.processing</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).background-generation.continued.*</string>
 	</array>
+	<key>MoccaQQGroupInvitationURL</key>
+	<string>$(MOCCA_QQ_GROUP_INVITATION_URL)</string>
 	<key>MoccaSponsorshipEnabled</key>
 	<string>$(MOCCA_ENABLE_SPONSORSHIP)</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>

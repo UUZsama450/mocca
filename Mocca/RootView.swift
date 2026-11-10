@@ -3363,28 +3363,24 @@ private struct MainChatContainer: View, @preconcurrency Equatable {
 }
 
 private struct MainChatPanelChrome: ViewModifier {
-    @Environment(AppModel.self) private var model
     let cornerRadius: CGFloat
     let configuration: DrawerLiveMainPanelConfiguration
 
     func body(content: Content) -> some View {
+        let panelShape = UnevenRoundedRectangle(
+            topLeadingRadius: cornerRadius,
+            bottomLeadingRadius: cornerRadius,
+            style: .continuous
+        )
         content
             .contentShape(Rectangle())
             .overlay {
-                // ChatGPT-style light scrim: one flat color layer rather than
-                // a live blur/material, so the drawer keeps a cheap render path.
-                DrawerPanelScrim(configuration: configuration)
+                DrawerPanelScrim(configuration: configuration, panelShape: panelShape)
                     .contentShape(Rectangle())
                     // The native touch shield owns closing the drawer.
                     .allowsHitTesting(false)
             }
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: cornerRadius,
-                    bottomLeadingRadius: cornerRadius,
-                    style: .continuous
-                )
-            )
+            .clipShape(panelShape)
             .background {
                 DrawerPanelShadowLayer(
                     cornerRadius: cornerRadius,
@@ -3399,11 +3395,26 @@ private struct MainChatPanelChrome: ViewModifier {
 
 private struct DrawerPanelScrim: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.pixelLength) private var pixelLength
     let configuration: DrawerLiveMainPanelConfiguration
+    let panelShape: UnevenRoundedRectangle
 
     var body: some View {
-        Color(uiColor: model.themeSurfaceUIColor)
-            .opacity(0.38 * configuration.progress)
+        let progress = configuration.progress
+        let isDarkDrawer = colorScheme == .dark && panelShape.cornerRadii.topLeading > 0
+        let tint = isDarkDrawer ? Color(white: 0.18) : Color(uiColor: model.themeSurfaceUIColor)
+
+        tint
+            .opacity(0.38 * progress)
+            .overlay {
+                if isDarkDrawer {
+                    panelShape.strokeBorder(
+                        Color.white.opacity(0.22 * progress),
+                        lineWidth: 2 * pixelLength
+                    )
+                }
+            }
     }
 }
 
@@ -19007,19 +19018,21 @@ private enum DrawerConversationListMode: Hashable {
     case group
 }
 
-/// Gives the ordinary and group lists different native scroll identities.
-/// On iOS 18 and later, each identity also retains its own exact user position
-/// while the other mode is not visible. The iOS 17 fallback still prevents the
-/// two data sets from inheriting the same UIScrollView content offset.
+/// The ordinary and group lists have separate scroll identities and, on
+/// iOS 18 and later, separate position bindings. Changing assistants resets
+/// only the ordinary list.
 private struct DrawerConversationListPositionOwner<Content: View>: View {
     let mode: DrawerConversationListMode
+    let assistantID: UUID
     let content: Content
 
     init(
         mode: DrawerConversationListMode,
+        assistantID: UUID,
         @ViewBuilder content: () -> Content
     ) {
         self.mode = mode
+        self.assistantID = assistantID
         self.content = content()
     }
 
@@ -19028,10 +19041,11 @@ private struct DrawerConversationListPositionOwner<Content: View>: View {
         if #available(iOS 18.0, *) {
             IOS18DrawerConversationListPositionOwner(
                 mode: mode,
+                assistantID: assistantID,
                 content: content
             )
         } else {
-            content.id(mode)
+            content.id(mode == .oneToOne ? assistantID : nil)
         }
     }
 }
@@ -19039,21 +19053,30 @@ private struct DrawerConversationListPositionOwner<Content: View>: View {
 @available(iOS 18.0, *)
 private struct IOS18DrawerConversationListPositionOwner<Content: View>: View {
     let mode: DrawerConversationListMode
+    let assistantID: UUID
     let content: Content
     @State private var oneToOnePosition = ScrollPosition(edge: .top)
     @State private var groupPosition = ScrollPosition(edge: .top)
 
-    @ViewBuilder
     var body: some View {
-        switch mode {
-        case .oneToOne:
-            content
-                .id(mode)
-                .scrollPosition($oneToOnePosition)
-        case .group:
-            content
-                .id(mode)
-                .scrollPosition($groupPosition)
+        Group {
+            switch mode {
+            case .oneToOne:
+                content
+                    .id(mode)
+                    .scrollPosition($oneToOnePosition)
+            case .group:
+                content
+                    .id(mode)
+                    .scrollPosition($groupPosition)
+            }
+        }
+        .onChange(of: assistantID) { _, _ in
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                oneToOnePosition.scrollTo(edge: .top)
+            }
         }
     }
 }
@@ -19448,7 +19471,8 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
 
             ZStack(alignment: .bottom) {
                 DrawerConversationListPositionOwner(
-                    mode: groupChatMode ? .group : .oneToOne
+                    mode: groupChatMode ? .group : .oneToOne,
+                    assistantID: model.currentAssistantID
                 ) {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 5) {

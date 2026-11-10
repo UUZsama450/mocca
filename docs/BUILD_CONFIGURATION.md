@@ -66,6 +66,10 @@ These portable defaults apply to the [current source snapshot](SOURCE_BASELINE.m
 
 这些可移植默认值用于[当前源码快照](SOURCE_BASELINE.md)。构建源码不会替换已安装应用或改变 App Store 发布；正式归档需要单独核对源码与应用身份。
 
+For the QQ group link, set `MOCCA_QQ_GROUP_INVITATION_URL` in your ignored local configuration. Write the URL prefix as `https:/$()/` so Xcode preserves both slashes. With an empty value, the row displays the copyable group number.
+
+要启用 QQ 群跳转，请在本地构建配置中填写 `MOCCA_QQ_GROUP_INVITATION_URL`。把网址开头写成 `https:/$()/`，以保留两个斜线。留空时仍可复制群号。
+
 Configuration file semantics: [Apple Xcode documentation](https://developer.apple.com/documentation/xcode/adding-a-build-configuration-file-to-your-project).
 
 ## Local verification / 本地验证

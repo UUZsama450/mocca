@@ -2382,6 +2382,17 @@
         }
       }
     },
+    "QQ群": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "QQ Group"
+          }
+        }
+      }
+    },
     "了解 Mocca": {
       "extractionState": "manual",
       "localizations": {

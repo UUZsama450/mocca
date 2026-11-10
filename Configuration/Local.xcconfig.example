@@ -5,3 +5,4 @@ MOCCA_DEVELOPMENT_TEAM = YOUR_TEAM_ID
 
 // Opt in only for sponsorship development or a configured store release.
 MOCCA_ENABLE_SPONSORSHIP = NO
+MOCCA_QQ_GROUP_INVITATION_URL =

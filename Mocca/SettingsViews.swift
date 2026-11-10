@@ -2096,6 +2096,17 @@ private struct MoccaPrivacyBullet: View {
 }
 
 private struct MoccaLegalNoticesPage: View {
+    private static let qqGroupNumber = "245204779"
+
+    private var qqGroupLabel: some View {
+        LabeledContent {
+            Text(verbatim: Self.qqGroupNumber)
+        } label: {
+            Label(L10n.lookup("QQ群"), systemImage: "person.2")
+        }
+        .contentShape(Rectangle())
+    }
+
     var body: some View {
         List {
             Section("Mocca") {
@@ -2112,6 +2123,20 @@ private struct MoccaLegalNoticesPage: View {
                 }
                 Link(destination: URL(string: "https://uuzsama450.github.io/mocca-website/support.html")!) {
                     Label(L10n.lookup("帮助与支持"), systemImage: "questionmark.circle")
+                }
+                Group {
+                    if let invitation = AppBuildConfiguration.qqGroupInvitationURL {
+                        Link(destination: invitation) { qqGroupLabel }
+                    } else {
+                        qqGroupLabel
+                    }
+                }
+                .contextMenu {
+                    Button {
+                        UIPasteboard.general.string = Self.qqGroupNumber
+                    } label: {
+                        Label(L10n.lookup("复制"), systemImage: "doc.on.doc")
+                    }
                 }
             }
 
