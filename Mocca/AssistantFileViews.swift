@@ -392,6 +392,7 @@ private struct AssistantFileEditorView: View {
                     }
                 }
             }
+            .modifier(DefaultControlTintModifier())
             .navigationTitle(expectedRevision == nil ? L10n.lookup("新建文件") : L10n.lookup("编辑文件"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -401,6 +402,7 @@ private struct AssistantFileEditorView: View {
                 }
                 ToolbarItemGroup(placement: .confirmationAction) {
                     fileMenu
+                        .modifier(LegacyNavigationTintModifier())
                     Button(L10n.lookup("保存"), action: saveAndDismiss)
                         .foregroundStyle(.primary)
                         .disabled(!canSave)

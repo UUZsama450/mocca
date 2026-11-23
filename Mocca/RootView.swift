@@ -303,16 +303,6 @@ enum VersionFlashTrace {
     }
 }
 
-/// Side-by-side feel test against 1.0.2 (5173). Each launch argument restores
-/// one 5173 drawer behavior; a normal launch from the Home Screen uses none.
-enum DrawerFeelComparison {
-    private static let arguments = ProcessInfo.processInfo.arguments
-    private static let all = arguments.contains("-feel5173All")
-    static let releaseAxisCheck = all || arguments.contains("-feel5173ReleaseAxis")
-    static let viewTransform = all || arguments.contains("-feel5173ViewTransform")
-    static let noSelectionObserver = all || arguments.contains("-feel5173NoSelectionObserver")
-}
-
 private enum RegenerationViewportTransitionFeature {
     static let isEnabled = !ProcessInfo.processInfo.arguments.contains(
         "-disableRegenerationViewportTransition"
@@ -370,6 +360,7 @@ private enum ChatBottomTrace {
     }
 }
 
+#if DEBUG || TOP_EDGE_DIAGNOSTICS
 private struct DrawerFrameTraceSample: Sendable {
     let interval: Double
     let expectedInterval: Double
@@ -490,6 +481,8 @@ private final class DrawerFrameDisplayLinkTarget: NSObject {
     }
 }
 
+#endif
+
 @MainActor
 private final class DrawerHighRefreshDisplayLinkTarget: NSObject {
     @objc func displayLinkDidFire(_ displayLink: CADisplayLink) {}
@@ -573,6 +566,7 @@ private final class DrawerSettleDisplayLinkDriver: NSObject {
     private let settleDuration: TimeInterval = 0.560 * (0.34 / 0.42)
     private var displayLink: CADisplayLink?
     private var startedAt: CFTimeInterval?
+    private var isWindowResize = false
     private var startProgress: CGFloat = 0
     private var targetProgress: CGFloat = 0
     private var onProgress: ((CGFloat) -> Void)?
@@ -585,21 +579,25 @@ private final class DrawerSettleDisplayLinkDriver: NSObject {
     func start(
         from startProgress: CGFloat,
         to targetProgress: CGFloat,
+        forWindowResize: Bool,
         onProgress: @escaping (CGFloat) -> Void,
         onCompletion: @escaping () -> Void
     ) {
         stop()
+        isWindowResize = forWindowResize
         self.startProgress = startProgress
         self.targetProgress = targetProgress
         self.onProgress = onProgress
         self.onCompletion = onCompletion
-        startedAt = CACurrentMediaTime()
+        startedAt = forWindowResize ? nil : CACurrentMediaTime()
 
         let link = CADisplayLink(
             target: self,
             selector: #selector(displayLinkDidFire(_:))
         )
-        if UIScreen.main.maximumFramesPerSecond >= 120 {
+        if forWindowResize {
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        } else if UIScreen.main.maximumFramesPerSecond >= 120 {
             link.preferredFrameRateRange = CAFrameRateRange(
                 minimum: 80,
                 maximum: 120,
@@ -619,9 +617,13 @@ private final class DrawerSettleDisplayLinkDriver: NSObject {
     }
 
     @objc private func displayLinkDidFire(_ displayLink: CADisplayLink) {
-        let startTime = startedAt ?? displayLink.timestamp
+        // A window resize can spend its first frame performing system layout.
+        // Start this short transition when the display can present its first sample.
+        let startTime = startedAt ?? displayLink.targetTimestamp
+        if startedAt == nil { startedAt = startTime }
         let elapsed = max(displayLink.targetTimestamp - startTime, 0)
-        guard elapsed < settleDuration else {
+        let duration = isWindowResize ? 0.26 : settleDuration
+        guard elapsed < duration else {
             let completion = onCompletion
             onProgress?(targetProgress)
             stop()
@@ -629,15 +631,19 @@ private final class DrawerSettleDisplayLinkDriver: NSObject {
             return
         }
 
-        let sampledProgress = startProgress + spring.value(
-            target: targetProgress - startProgress,
-            initialVelocity: CGFloat.zero,
-            time: elapsed
-        )
+        let distance = targetProgress - startProgress
+        let sampledProgress: CGFloat
+        if isWindowResize {
+            let t = CGFloat(elapsed / duration)
+            sampledProgress = startProgress + distance * t * t * (3 - 2 * t)
+        } else {
+            sampledProgress = startProgress + spring.value(target: distance, initialVelocity: CGFloat.zero, time: elapsed)
+        }
         onProgress?(min(max(sampledProgress, 0), 1))
     }
 }
 
+#if DEBUG || TOP_EDGE_DIAGNOSTICS
 @MainActor
 private final class DrawerFrameTraceSession {
     let sequence: Int
@@ -769,10 +775,12 @@ private enum DrawerFrameTrace {
     }
 
     static func rootDidDisappear() {
+        guard enabled else { return }
         finish(reason: "root_disappear")
     }
 
     static func sceneDidDeactivate() {
+        guard enabled else { return }
         finish(reason: "scene_deactivate")
     }
 
@@ -789,6 +797,16 @@ private enum DrawerFrameTrace {
         }
     }
 }
+
+#else
+@MainActor
+private enum DrawerFrameTrace {
+    static func begin(startProgress: CGFloat, logicalStartProgress: CGFloat) {}
+    static func touchEnded(finalProgress: CGFloat?) {}
+    static func rootDidDisappear() {}
+    static func sceneDidDeactivate() {}
+}
+#endif
 
 private struct ConversationPositionRequestKey: Hashable {
     let conversationID: UUID
@@ -875,6 +893,7 @@ private struct NativeChatPresentationRevision: Hashable {
     let chatBackgroundMaskStrength: Double
     let showTokenUsage: Bool
     let chatFontScale: Double
+    let messageActionSizePercent: Int
     let chatBubbleSpacing: Double
     let assistantMessageLineSpacing: Double
     let assistantMarkdownListItemSpacing: Double
@@ -936,6 +955,7 @@ private struct NativeChatPresentationRevision: Hashable {
         chatBackgroundMaskStrength = preferences.chatBackgroundMaskStrength
         showTokenUsage = preferences.showTokenUsage
         chatFontScale = preferences.chatFontScale
+        messageActionSizePercent = preferences.messageActionSizePercent
         chatBubbleSpacing = preferences.effectiveChatBubbleSpacing
         assistantMessageLineSpacing = preferences.assistantMessageLineSpacing
         assistantMarkdownListItemSpacing = preferences.assistantMarkdownListItemSpacing
@@ -1308,6 +1328,10 @@ private struct MessageReplacementViewportRequest {
     var streamingMessage: ChatMessage?
     var readingAnchorMaxY: CGFloat?
     var keepsExactBottom = false
+    var deletionReadingFraction: CGFloat?
+    var usesNativeLanding: Bool {
+        replacementMessage != nil || codeDisclosure != nil || keepsExactBottom || deletionReadingFraction != nil
+    }
     var didCommit = false
     var landingAnchorID: ConversationBottomAnchorID?
     var targetMessageID: UUID?
@@ -1629,16 +1653,10 @@ private final class ComposerKeyboardMotionSource {
 
 }
 
-/// Keeps the already-rendered chat viewport above the real scroll view while
-/// regeneration resolves its concrete user-row landing. Only a detached UIKit
-/// snapshot is animated; the SwiftUI transcript tree and message identities
-/// remain untouched.
+/// Covers a favorite jump, or keeps the old transcript visible during a generation edit.
+/// Both release through the existing measured landing and cancellation paths.
 @MainActor
-private final class RegenerationViewportTransitionCoordinator {
-    private weak var preparedHostView: UIView?
-    private var preparedSnapshotView: UIView?
-    private var preparedFrameInHost: CGRect = .zero
-
+private final class MessageViewportTransitionCoordinator {
     private var activeToken: UUID?
     private var activeRequestID: UUID?
     private var overlayView: UIView?
@@ -1646,171 +1664,83 @@ private final class RegenerationViewportTransitionCoordinator {
     private var timeoutTask: Task<Void, Never>?
     private var sequence: UInt64 = 0
 
-    var hasActiveWork: Bool {
-        preparedSnapshotView != nil
-            || activeToken != nil
-            || overlayView != nil
-            || revealAnimator != nil
-            || timeoutTask != nil
-    }
+    var hasActiveWork: Bool { overlayView != nil }
 
-    @discardableResult
-    func prepare(from scrollView: UIScrollView?) -> Bool {
-        discardPrepared(reason: "replace")
+    func coverTranscript(_ view: UIView?, compositedIn surface: UIView?, perform operation: @escaping (UUID?) -> Void) {
+        cancelAll(reason: "newGeneration")
         guard RegenerationViewportTransitionFeature.isEnabled,
-              activeToken == nil,
-              revealAnimator == nil,
-              let scrollView,
-              let window = scrollView.window,
-              let hostView = scrollView.superview,
-              scrollView.bounds.width > 1,
-              scrollView.bounds.height > 1,
-              !scrollView.isTracking,
-              !scrollView.isDragging,
-              !scrollView.isDecelerating,
-              scrollView.panGestureRecognizer.numberOfTouches == 0 else {
-            return false
+              let view, view.window != nil, let hostView = view.superview,
+              let surface, view.isDescendant(of: surface),
+              view.bounds.width > 1, view.bounds.height > 1 else {
+            operation(nil)
+            return
         }
-        if #available(iOS 17.4, *), scrollView.isScrollAnimating {
-            return false
+        // Render the presenting chat surface, then crop to the transcript.
+        // Its real background is needed to composite UIKit's sampled edge
+        // effect once. Capturing the transparent transcript alone duplicates
+        // edge text; capturing the window would include menus and sheets.
+        let captureRect = view.convert(view.bounds, to: surface)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = view.traitCollection.displayScale
+        var didDraw = false
+        let image = UIGraphicsImageRenderer(size: captureRect.size, format: format).image { context in
+            context.cgContext.translateBy(x: -captureRect.minX, y: -captureRect.minY)
+            didDraw = surface.drawHierarchy(in: surface.bounds, afterScreenUpdates: false)
         }
-
-        let frameInWindow = scrollView.convert(scrollView.bounds, to: window)
-        guard frameInWindow.minX.isFinite,
-              frameInWindow.minY.isFinite,
-              frameInWindow.width.isFinite,
-              frameInWindow.height.isFinite,
-              frameInWindow.width > 1,
-              frameInWindow.height > 1,
-              window.bounds.intersection(frameInWindow).width
-                >= frameInWindow.width - 1,
-              window.bounds.intersection(frameInWindow).height
-                >= frameInWindow.height - 1,
-              let snapshotView = window.resizableSnapshotView(
-                from: frameInWindow,
-                afterScreenUpdates: false,
-                withCapInsets: .zero
-              ) else {
-            return false
+        guard didDraw else { operation(nil); return }
+        let snapshot = UIImageView(image: image)
+        let frame = view.convert(view.bounds, to: hostView)
+        guard !frame.isEmpty, !frame.isInfinite,
+              frame.origin.x.isFinite, frame.origin.y.isFinite else {
+            operation(nil)
+            return
         }
-
-        let frameInHost = hostView.convert(frameInWindow, from: window)
-        guard frameInHost.minX.isFinite,
-              frameInHost.minY.isFinite,
-              frameInHost.width.isFinite,
-              frameInHost.height.isFinite,
-              frameInHost.width > 1,
-              frameInHost.height > 1 else {
-            return false
-        }
-
-        snapshotView.isUserInteractionEnabled = false
-        snapshotView.accessibilityElementsHidden = true
-        preparedHostView = hostView
-        preparedSnapshotView = snapshotView
-        preparedFrameInHost = frameInHost
-        ChatBottomTrace.log(
-            "REGENERATION_VIEWPORT_TRANSITION_PREPARED"
-                + " width=\(String(format: "%.1f", frameInHost.width))"
-                + " height=\(String(format: "%.1f", frameInHost.height))"
-        )
-        return true
-    }
-
-    func activatePrepared() -> UUID? {
-        guard RegenerationViewportTransitionFeature.isEnabled,
-              activeToken == nil,
-              revealAnimator == nil,
-              let hostView = preparedHostView,
-              hostView.window != nil,
-              let snapshotView = preparedSnapshotView,
-              preparedFrameInHost.width > 1,
-              preparedFrameInHost.height > 1 else {
-            discardPrepared(reason: "activationUnavailable")
-            return nil
-        }
-
-        let container = UIView(frame: preparedFrameInHost)
-        container.clipsToBounds = true
-        container.isUserInteractionEnabled = true
-        container.accessibilityElementsHidden = true
-        snapshotView.frame = container.bounds
-        snapshotView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        container.addSubview(snapshotView)
-        hostView.addSubview(container)
-
-        preparedHostView = nil
-        preparedSnapshotView = nil
-        preparedFrameInHost = .zero
-
+        let overlay = UIView(frame: frame)
+        overlay.clipsToBounds = true
+        overlay.isUserInteractionEnabled = true
+        overlay.accessibilityElementsHidden = true
+        snapshot.frame = overlay.bounds
+        snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        overlay.addSubview(snapshot)
+        hostView.insertSubview(overlay, aboveSubview: view)
+        overlayView = overlay
         sequence &+= 1
         let token = UUID()
         activeToken = token
-        activeRequestID = nil
-        overlayView = container
         scheduleTimeout(for: token)
-        ChatBottomTrace.log(
-            "REGENERATION_VIEWPORT_TRANSITION_ACTIVATED"
-                + " token=\(ChatBottomTrace.shortID(token))"
-        )
-        return token
+        ChatBottomTrace.log("GENERATION_TRANSCRIPT_SNAPSHOT")
+        operation(token)
     }
 
-    /// Covers a favorite-target jump with the current theme surface while the
-    /// existing target materialization and landing checks run underneath. This
-    /// does not snapshot or mutate the transcript and never starts regeneration.
-    @discardableResult
-    func activateSolidCover(
-        from scrollView: UIScrollView?,
-        backgroundColor: UIColor
-    ) -> UUID? {
-        discardPrepared(reason: "solidCover")
-        guard RegenerationViewportTransitionFeature.isEnabled,
-              activeToken == nil,
-              revealAnimator == nil,
-              let scrollView,
-              let hostView = scrollView.superview,
-              hostView.window != nil,
-              scrollView.bounds.width > 1,
-              scrollView.bounds.height > 1 else {
-            return nil
-        }
+    func activate(from scrollView: UIScrollView?, coveringWith color: UIColor) -> UUID? {
+        guard RegenerationViewportTransitionFeature.isEnabled, !hasActiveWork,
+              let scrollView, let hostView = scrollView.superview, scrollView.window != nil,
+              scrollView.bounds.width > 1, scrollView.bounds.height > 1 else { return nil }
+        let frame = scrollView.convert(scrollView.bounds, to: hostView)
+        guard !frame.isEmpty, !frame.isInfinite, frame.origin.x.isFinite, frame.origin.y.isFinite else { return nil }
 
-        let frameInHost = scrollView.convert(scrollView.bounds, to: hostView)
-        guard frameInHost.minX.isFinite,
-              frameInHost.minY.isFinite,
-              frameInHost.width.isFinite,
-              frameInHost.height.isFinite,
-              frameInHost.width > 1,
-              frameInHost.height > 1 else {
-            return nil
-        }
-
-        let container = UIView(frame: frameInHost)
-        container.backgroundColor = backgroundColor
-        container.clipsToBounds = true
-        container.isUserInteractionEnabled = true
-        container.accessibilityElementsHidden = true
-        hostView.addSubview(container)
-
+        let overlay = UIView()
+        overlay.backgroundColor = color
+        overlay.frame = frame
+        overlay.clipsToBounds = true
+        overlay.isUserInteractionEnabled = true
+        overlay.accessibilityElementsHidden = true
+        hostView.insertSubview(overlay, aboveSubview: scrollView)
+        overlayView = overlay
         sequence &+= 1
         let token = UUID()
         activeToken = token
-        activeRequestID = nil
-        overlayView = container
         scheduleTimeout(for: token)
         ChatBottomTrace.log(
             "FAVORITE_VIEWPORT_TRANSITION_ACTIVATED"
                 + " token=\(ChatBottomTrace.shortID(token))"
-                + " width=\(String(format: "%.1f", frameInHost.width))"
-                + " height=\(String(format: "%.1f", frameInHost.height))"
         )
         return token
     }
 
     func bind(_ token: UUID, to requestID: UUID) {
         guard activeToken == token,
-              overlayView != nil else { return }
+              hasActiveWork else { return }
         activeRequestID = requestID
         ChatBottomTrace.log(
             "REGENERATION_VIEWPORT_TRANSITION_BOUND"
@@ -1820,7 +1750,7 @@ private final class RegenerationViewportTransitionCoordinator {
     }
 
     func owns(requestID: UUID) -> Bool {
-        activeRequestID == requestID && overlayView != nil
+        activeRequestID == requestID && hasActiveWork
     }
 
     func reveal(requestID: UUID, reason: String) {
@@ -1828,19 +1758,8 @@ private final class RegenerationViewportTransitionCoordinator {
         revealActive(reason: reason)
     }
 
-    func discardPrepared(reason: String) {
-        guard preparedSnapshotView != nil else { return }
-        preparedHostView = nil
-        preparedSnapshotView = nil
-        preparedFrameInHost = .zero
-        ChatBottomTrace.log(
-            "REGENERATION_VIEWPORT_TRANSITION_PREPARED_DROP reason=\(reason)"
-        )
-    }
-
     func cancelAll(reason: String) {
-        discardPrepared(reason: reason)
-        guard overlayView != nil || revealAnimator != nil else { return }
+        guard hasActiveWork || revealAnimator != nil else { return }
         sequence &+= 1
         timeoutTask?.cancel()
         timeoutTask = nil
@@ -1871,8 +1790,8 @@ private final class RegenerationViewportTransitionCoordinator {
     }
 
     private func revealActive(reason: String) {
-        guard revealAnimator == nil,
-              let overlayView else { return }
+        guard revealAnimator == nil, hasActiveWork else { return }
+        let overlayView = overlayView
         sequence &+= 1
         let revealSequence = sequence
         timeoutTask?.cancel()
@@ -1886,9 +1805,9 @@ private final class RegenerationViewportTransitionCoordinator {
             curve: .easeInOut
         )
         animator.addAnimations {
-            overlayView.alpha = 0
+            overlayView?.alpha = 0
             if !reducesMotion {
-                overlayView.transform = CGAffineTransform(
+                overlayView?.transform = CGAffineTransform(
                     translationX: 0,
                     y: -10
                 )
@@ -2244,14 +2163,47 @@ private protocol DrawerLivePanelMotionReceiver: AnyObject {
     func applyDrawerProgress(_ progress: CGFloat)
 }
 
+@MainActor
+@Observable
+final class ChatLayoutMetrics {
+    fileprivate var messageEditorOwnsKeyboard = false
+    fileprivate(set) var windowHeight: CGFloat?
+    fileprivate(set) var userTextMaxWidth: CGFloat = 270
+    @ObservationIgnored fileprivate weak var window: UIWindow?
+    @ObservationIgnored private var panelWidth: CGFloat = 0
+
+    fileprivate func updateWindow(_ window: UIWindow?) {
+        if self.window !== window { self.window = window }
+        guard let height = window?.bounds.height, height > 0, height != windowHeight else { return }
+        windowHeight = height
+    }
+
+    fileprivate func updatePanelWidth(_ width: CGFloat) {
+        guard width > 0, width.isFinite, width != panelWidth else { return }
+        panelWidth = width
+        let limit = min(width * 0.64, 270)
+        if userTextMaxWidth != limit { userTextMaxWidth = limit }
+    }
+}
+
 /// Geometry and chrome have separate observation consumers. Motion never
 /// replaces the hosting controller's root, conversation, or message hierarchy.
 @MainActor
 @Observable
 private final class DrawerLiveMainPanelConfiguration {
+    let layoutMetrics: ChatLayoutMetrics
+
+    init(layoutMetrics: ChatLayoutMetrics) {
+        self.layoutMetrics = layoutMetrics
+    }
+
     var cornerRadius: CGFloat = 0
     var isInteractionBlocked = false
+    var isPinnedLayout = false
+    var sidebarIsVisible = false
     var progress: CGFloat = 0
+    var usesVerticalToolbar = false
+    var usesOuterDisplaySidebarButton = false
     @ObservationIgnored let chromeDriver = DrawerPanelChromeDriver()
     @ObservationIgnored var onOpenDrawer: () -> Void = {}
     @ObservationIgnored var onCloseDrawer: () -> Void = {}
@@ -2277,6 +2229,31 @@ private struct DrawerLiveMainPanelContent: View {
     let configuration: DrawerLiveMainPanelConfiguration
 
     var body: some View {
+        Group {
+            if PadSidebar.isEnabled {
+                NavigationStack {
+                    NativeAdaptiveChatSurface(configuration: configuration)
+                }
+                .modifier(DrawerLiveMainPanelChrome(configuration: configuration))
+            } else {
+                phonePanel
+                    .environment(\.usesVerticalChatToolbar, configuration.usesVerticalToolbar)
+                    .environment(\.usesOuterDisplaySidebarButton, configuration.usesOuterDisplaySidebarButton)
+            }
+        }
+        // The presented editor has its own keyboard layout guide. The chat
+        // behind it must keep its original viewport and native top scroll edge.
+        .ignoresSafeArea(.keyboard, edges: configuration.layoutMetrics.messageEditorOwnsKeyboard ? .bottom : [])
+        .environment(configuration.layoutMetrics)
+        .environment(model)
+        .environment(\.locale, AppLocalization.shared.locale)
+        .tint(Color(uiColor: model.themeActionUIColor))
+        .accentColor(Color(uiColor: model.themeActionUIColor))
+        .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
+        .appFontEnvironment(model.preferences.appFontPostScriptName)
+    }
+
+    private var phonePanel: some View {
         // Keep keyboard layout in the same SwiftUI root as the composer and
         // transcript. Relaying its final inset from the outer root loses the
         // system's intermediate keyboard layout even with a SwiftUI transaction.
@@ -2297,12 +2274,73 @@ private struct DrawerLiveMainPanelContent: View {
             .modifier(DrawerLiveMainPanelChrome(configuration: configuration))
             .offset(x: -insets.leading, y: -insets.top)
         }
-        .environment(model)
-        .environment(\.locale, AppLocalization.shared.locale)
-        .tint(Color(uiColor: model.themeActionUIColor))
-        .accentColor(Color(uiColor: model.themeActionUIColor))
-        .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
-        .appFontEnvironment(model.preferences.appFontPostScriptName)
+    }
+}
+
+private extension EnvironmentValues {
+    @Entry var usesVerticalChatToolbar = false
+    @Entry var usesOuterDisplaySidebarButton = false
+}
+
+private struct DuoDrawerToolbar: ViewModifier {
+    @State private var hasDeviceHinge = false
+    let onToggleSidebar: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 27.1, *), UIDevice.current.userInterfaceIdiom == .phone {
+            Group {
+                if hasDeviceHinge {
+                    DuoDrawerNavigation(onToggleSidebar: onToggleSidebar) { content }
+                } else {
+                    content
+                }
+            }
+            .onHingeChange(isEnabled: !hasDeviceHinge) { _, context in
+                if context.hinge != nil { hasDeviceHinge = true }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct DuoDrawerNavigation<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.toolbarVerticalEdge) private var toolbarEdge
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    let onToggleSidebar: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        let vertical = toolbarEdge != nil
+        let outerDisplaySidebar = vertical && horizontalSizeClass == .compact
+        NavigationStack {
+            content()
+                .environment(\.usesVerticalChatToolbar, vertical)
+                .environment(\.usesOuterDisplaySidebarButton, outerDisplaySidebar)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarVisibility(vertical ? .visible : .hidden, for: .navigationBar)
+                .toolbar {
+                    if outerDisplaySidebar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            DrawerMenuButton(action: onToggleSidebar)
+                                .accessibilityLabel(L10n.lookup(model.isDrawerPresented ? "关闭聊天列表" : "打开聊天列表"))
+                                .accessibilityIdentifier("duo.sidebarToggle")
+                        }
+                        .axisBehavior(.verticalPreferred)
+                        .sharedBackgroundVisibility(.hidden)
+                    }
+                    if vertical {
+                        ToolbarItem(placement: .topBarPinnedTrailing) {
+                            NewChatHeaderButton()
+                                .accessibilityIdentifier("duo.newChat")
+                        }
+                        .axisBehavior(.verticalPreferred)
+                        .sharedBackgroundVisibility(.hidden)
+                    }
+                }
+        }
     }
 }
 
@@ -2364,6 +2402,7 @@ private final class DrawerLiveMainPanelController: UIViewController, DrawerLiveP
     private var tracker: DrawerPresentationProgressTracker?
     private var drawerWidth: CGFloat = 0
     private var progress: CGFloat = 0
+    private var appliedTranslation: CGFloat?
 
     init(model: AppModel, configuration: DrawerLiveMainPanelConfiguration) {
         self.configuration = configuration
@@ -2379,6 +2418,7 @@ private final class DrawerLiveMainPanelController: UIViewController, DrawerLiveP
 
     override func loadView() {
         let wrapper = DrawerLivePanelPassthroughView()
+        appliedTranslation = nil
         wrapper.touchShield = touchShield
         view = wrapper
         view.backgroundColor = .clear
@@ -2386,7 +2426,7 @@ private final class DrawerLiveMainPanelController: UIViewController, DrawerLiveP
         addChild(host)
         // This host owns safe-area and keyboard layout for its live content.
         host.view.backgroundColor = .clear
-        host.view.clipsToBounds = false
+        host.view.clipsToBounds = PadSidebar.isEnabled
         view.addSubview(host.view)
         host.didMove(toParent: self)
         view.addSubview(touchShield)
@@ -2398,14 +2438,8 @@ private final class DrawerLiveMainPanelController: UIViewController, DrawerLiveP
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // Never set frame on a transformed view: keep its layout rectangle
-        // fixed and move only the complete live surface in the compositor.
-        let bounds = CGRect(origin: .zero, size: view.bounds.size)
-        if host.view.bounds != bounds { host.view.bounds = bounds }
-        let center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
-        if host.view.center != center { host.view.center = center }
-        if touchShield.bounds != bounds { touchShield.bounds = bounds }
-        if touchShield.center != center { touchShield.center = center }
+        configuration.layoutMetrics.updateWindow(view.window)
+        if !PadSidebar.isEnabled { updatePanelBounds(leading: 0) }
         applyDrawerProgress(progress)
     }
 
@@ -2423,24 +2457,40 @@ private final class DrawerLiveMainPanelController: UIViewController, DrawerLiveP
     func applyDrawerProgress(_ progress: CGFloat) {
         self.progress = min(max(progress, 0), 1)
         guard isViewLoaded else { return }
-        let transform = CGAffineTransform(translationX: drawerWidth * self.progress, y: 0)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        // Write the layer, not UIView.transform: the view setter notifies every
-        // descendant geometry observer, which invalidates the long transcript's
-        // collection layout on each frame. The surface only translates here and
-        // returns to identity when closed; layer geometry still drives hit-testing.
-        if DrawerFeelComparison.viewTransform {
-            host.view.transform = transform
-            touchShield.transform = transform
-        } else {
-            host.view.layer.setAffineTransform(transform)
-            touchShield.layer.setAffineTransform(transform)
+        let offset = drawerWidth * self.progress
+        let translation = configuration.isPinnedLayout ? 0 : offset
+        if PadSidebar.isEnabled || appliedTranslation != translation {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if PadSidebar.isEnabled {
+                updatePanelBounds(leading: configuration.isPinnedLayout ? offset : 0)
+            }
+            if appliedTranslation != translation {
+                // The panel and its touch shield share one layer translation.
+                // Reassigning UIView.transform would invalidate descendant geometry.
+                let transform = CGAffineTransform(translationX: translation, y: 0)
+                host.view.layer.setAffineTransform(transform)
+                touchShield.layer.setAffineTransform(transform)
+                appliedTranslation = translation
+            }
+            CATransaction.commit()
         }
-        CATransaction.commit()
         // Only the existing lightweight chrome leaf observes this value.
-        if configuration.progress != self.progress { configuration.progress = self.progress }
-        configuration.chromeDriver.update(progress: self.progress)
+        let chromeProgress = configuration.isPinnedLayout ? 0 : self.progress
+        if configuration.progress != chromeProgress {
+            configuration.progress = chromeProgress
+            configuration.chromeDriver.update(progress: chromeProgress)
+        }
+    }
+
+    private func updatePanelBounds(leading: CGFloat) {
+        let bounds = CGRect(x: 0, y: 0, width: max(0, view.bounds.width - leading), height: view.bounds.height)
+        let center = CGPoint(x: leading + bounds.width / 2, y: view.bounds.midY)
+        configuration.layoutMetrics.updatePanelWidth(bounds.width)
+        if host.view.bounds != bounds { host.view.bounds = bounds }
+        if host.view.center != center { host.view.center = center }
+        if touchShield.bounds != bounds { touchShield.bounds = bounds }
+        if touchShield.center != center { touchShield.center = center }
     }
 
     func updateInteractionRouting() {
@@ -2455,6 +2505,9 @@ private final class DrawerLiveMainPanelController: UIViewController, DrawerLiveP
 }
 
 private struct DrawerLiveMainPanelHost: UIViewControllerRepresentable {
+    @Environment(ChatLayoutMetrics.self) private var layoutMetrics
+    @Environment(\.usesVerticalChatToolbar) private var usesVerticalToolbar
+    @Environment(\.usesOuterDisplaySidebarButton) private var usesOuterDisplaySidebarButton
     let model: AppModel
     let drawerWidth: CGFloat
     let cornerRadius: CGFloat
@@ -2464,9 +2517,11 @@ private struct DrawerLiveMainPanelHost: UIViewControllerRepresentable {
     let onCloseDrawer: () -> Void
     let isConversationDrawerClosePending: (UUID) -> Bool
     let onConversationContentReady: (UUID) -> Void
+    var isPinnedLayout = false
+    var sidebarIsVisible = false
 
     func makeUIViewController(context: Context) -> DrawerLiveMainPanelController {
-        let configuration = DrawerLiveMainPanelConfiguration()
+        let configuration = DrawerLiveMainPanelConfiguration(layoutMetrics: layoutMetrics)
         updateConfiguration(configuration)
         let controller = DrawerLiveMainPanelController(model: model, configuration: configuration)
         controller.loadViewIfNeeded()
@@ -2481,6 +2536,14 @@ private struct DrawerLiveMainPanelHost: UIViewControllerRepresentable {
     }
 
     private func updateConfiguration(_ configuration: DrawerLiveMainPanelConfiguration) {
+        if configuration.usesVerticalToolbar != usesVerticalToolbar {
+            configuration.usesVerticalToolbar = usesVerticalToolbar
+        }
+        if configuration.usesOuterDisplaySidebarButton != usesOuterDisplaySidebarButton {
+            configuration.usesOuterDisplaySidebarButton = usesOuterDisplaySidebarButton
+        }
+        if configuration.isPinnedLayout != isPinnedLayout { configuration.isPinnedLayout = isPinnedLayout }
+        if configuration.sidebarIsVisible != sidebarIsVisible { configuration.sidebarIsVisible = sidebarIsVisible }
         if configuration.cornerRadius != cornerRadius { configuration.cornerRadius = cornerRadius }
         if configuration.isInteractionBlocked != isInteractionBlocked {
             configuration.isInteractionBlocked = isInteractionBlocked
@@ -2504,9 +2567,11 @@ private struct DrawerLiveMainPanelHost: UIViewControllerRepresentable {
 private final class DrawerDetachedMainPanelProgress {
     private(set) var isActive = false
     private(set) var drivesDrawer = false
+    private(set) var isWindowResize = false
     private(set) var progress: CGFloat?
 
-    func begin(at progress: CGFloat, drivesDrawer: Bool = false) {
+    func begin(at progress: CGFloat, drivesDrawer: Bool = false, forWindowResize: Bool = false) {
+        isWindowResize = forWindowResize
         isActive = true
         self.drivesDrawer = drivesDrawer
         self.progress = min(max(progress, 0), 1)
@@ -2520,6 +2585,7 @@ private final class DrawerDetachedMainPanelProgress {
     func clear() {
         isActive = false
         drivesDrawer = false
+        isWindowResize = false
         progress = nil
     }
 }
@@ -2558,6 +2624,8 @@ private struct DrawerLeafProgressConversationDrawer: View {
     let topReturnCoordinator: DrawerListTopReturnCoordinator
     let onRequestClose: () -> Void
     let onRequestCloseAfterConversationReady: (UUID) -> Void
+    var isPinnedLayout = false
+    var sidebarIsVisible = false
 
     var body: some View {
         let leafProgress = settleProgress.drivesDrawer
@@ -2571,15 +2639,225 @@ private struct DrawerLeafProgressConversationDrawer: View {
             settleProgress: settleProgress,
             backgroundTrailingExtension: backgroundTrailingExtension,
             safeAreaInsets: safeAreaInsets,
-            isDrawerGestureActive: gestureActivity.active,
+            gestureActivity: gestureActivity,
             topReturnCoordinator: topReturnCoordinator,
             onRequestClose: onRequestClose,
-            onRequestCloseAfterConversationReady: onRequestCloseAfterConversationReady
+            onRequestCloseAfterConversationReady: onRequestCloseAfterConversationReady,
+            isPinnedLayout: isPinnedLayout,
+            sidebarIsVisible: sidebarIsVisible
         )
     }
 }
 
+// Keep the iPhone drawer when selecting the navigation style. Within the iPad
+// presentation, the window width decides whether a column is pinned.
+@MainActor
+private enum PadSidebar {
+    static let isEnabled = UIDevice.current.userInterfaceIdiom == .pad
+
+    static var placesOpenSidebarAboveChat: Bool {
+        if #available(iOS 18.0, *) { return false }
+        return isEnabled
+    }
+}
+
+private struct SystemChatNavigationKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var usesSystemChatNavigation: Bool {
+        get { self[SystemChatNavigationKey.self] }
+        set { self[SystemChatNavigationKey.self] = newValue }
+    }
+}
+
+/// The same sidebar remains mounted in compact drawer and pinned layouts.
+private struct NativeAdaptiveSidebarContent: View, Equatable {
+    let motion: DrawerContentMotionModifier
+    let width: CGFloat
+    let isPinnedLayout: Bool
+    let sidebarIsVisible: Bool
+    let gestureActivity: DrawerGestureActivity
+    let topReturnCoordinator: DrawerListTopReturnCoordinator
+    let onRequestClose: () -> Void
+    let onRequestCloseAfterConversationReady: (UUID) -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.motion.progress == rhs.motion.progress
+            && lhs.motion.settleProgress === rhs.motion.settleProgress
+            && lhs.width == rhs.width
+            && lhs.isPinnedLayout == rhs.isPinnedLayout
+            && lhs.sidebarIsVisible == rhs.sidebarIsVisible
+            && lhs.gestureActivity === rhs.gestureActivity
+            && lhs.topReturnCoordinator === rhs.topReturnCoordinator
+    }
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { geometry in
+                ConversationDrawerContent(
+                    width: geometry.size.width,
+                    safeAreaInsets: .init(),
+                    gestureActivity: gestureActivity,
+                    topReturnCoordinator: topReturnCoordinator,
+                    onRequestClose: onRequestClose,
+                    onRequestCloseAfterConversationReady: onRequestCloseAfterConversationReady,
+                    usesNativeSidebarNavigation: true,
+                    nativeSidebarIsVisible: sidebarIsVisible
+                )
+                .equatable()
+                .modifier(motion)
+                .background {
+                    SidebarBackgroundView(referenceWidth: geometry.size.width)
+                        .equatable()
+                        .ignoresSafeArea()
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if #available(iOS 26.0, *) {
+                    ToolbarItem(placement: .topBarLeading) { sidebarTitle }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarLeading) { sidebarTitle }
+                }
+                if !isPinnedLayout {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: onRequestClose) { Image(systemName: "xmark").modifier(motion) }
+                            .accessibilityLabel(L10n.lookup("关闭聊天列表"))
+                    }
+                }
+            }
+        }
+        .frame(width: width)
+        .accessibilityIdentifier("nativeSidebar.content")
+    }
+
+    private var sidebarTitle: some View {
+        Text(verbatim: "Mocca")
+            .font(.title2.weight(.semibold))
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.leading, 12)
+            .accessibilityAddTraits(.isHeader)
+            .modifier(motion)
+    }
+}
+
+private struct NativeSidebarFooter: View {
+    let showsGroupCreator: Bool
+    let onCreateGroup: () -> Void
+    let onFavorites: () -> Void
+    let onSettings: () -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            if showsGroupCreator {
+                Button(action: onCreateGroup) {
+                    Image(systemName: "plus.bubble")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel(L10n.lookup("创建群聊"))
+                .accessibilityIdentifier("drawer.createGroupChat")
+            }
+            Button(action: onFavorites) {
+                Label(L10n.lookup("bookmarks.title"), systemImage: "bookmark")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            Button(action: onSettings) {
+                Label(L10n.lookup("设置"), systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+        }
+        .font(.system(size: 14))
+        .foregroundStyle(.secondary)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+private struct NativeSidebarToggleGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scale = rect.width / 22
+        let inset = 0.8 * scale
+        let outline = rect.insetBy(dx: inset, dy: inset)
+        var path = Path(roundedRect: outline, cornerRadius: 3.2 * scale)
+        let dividerX = rect.minX + 7.3 * scale
+        path.move(to: CGPoint(x: dividerX, y: outline.minY))
+        path.addLine(to: CGPoint(x: dividerX, y: outline.maxY))
+        return path
+    }
+}
+
+private struct NativeSidebarToggleIcon: View {
+    @Environment(\.layoutDirection) private var layoutDirection
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 22
+
+    var body: some View {
+        NativeSidebarToggleGlyph()
+            .stroke(Color.primary, style: StrokeStyle(
+                lineWidth: iconWidth * 1.6 / 22,
+                lineCap: .round,
+                lineJoin: .round
+            ))
+            .frame(width: iconWidth, height: iconWidth * 18 / 22)
+            .scaleEffect(x: layoutDirection == .rightToLeft ? -1 : 1, y: 1)
+            .frame(width: max(24, iconWidth), height: max(24, iconWidth * 18 / 22))
+            .accessibilityHidden(true)
+    }
+}
+
+private struct NativeAdaptiveChatSurface: View {
+    @Environment(AppModel.self) private var model
+    let configuration: DrawerLiveMainPanelConfiguration
+
+    var body: some View {
+        ChatView(
+            topSafeAreaInset: 0,
+            onOpenDrawer: { configuration.onOpenDrawer() },
+            isConversationDrawerClosePending: { configuration.isConversationDrawerClosePending($0) },
+            onConversationContentReady: { configuration.onConversationContentReady($0) }
+        )
+        .environment(\.usesSystemChatNavigation, true)
+        .background(Color(uiColor: model.themeSurfaceUIColor))
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(action: { configuration.onOpenDrawer() }) {
+                    NativeSidebarToggleIcon()
+                }
+                .accessibilityLabel(L10n.lookup(configuration.sidebarIsVisible ? "关闭聊天列表" : "打开聊天列表"))
+                .accessibilityIdentifier("nativeSidebar.toggle")
+            }
+            ToolbarItem(placement: .principal) {
+                if model.preferences.showChatHeaderAssistantPill {
+                    CalendarPill()
+                }
+            }
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NewChatHeaderButton()
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NewChatHeaderButton()
+                }
+            }
+        }
+        .accessibilityIdentifier("nativeSidebar.detail")
+    }
+}
+
 struct RootView: View {
+    @State private var layoutMetrics = ChatLayoutMetrics()
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @State private var drawerFingerProgress = DrawerFingerTrackingProgress()
@@ -2607,6 +2885,11 @@ struct RootView: View {
     @State private var bottomToolPhotoSelection: [PhotosPickerItem] = []
     @State private var bottomToolAttachmentDestinationConversationID: UUID?
     @State private var didScheduleDrawerTrackedLayerAutoOpen = false
+    @State private var adaptiveSidebarIsWide = false
+    @State private var pinnedSidebarVisible = true
+    private var sidebarIsPresented: Bool {
+        PadSidebar.isEnabled && adaptiveSidebarIsWide ? pinnedSidebarVisible : model.isDrawerPresented
+    }
     private let drawerGestureIntentDistance: CGFloat = 18
     private let drawerGestureAxisRatio: CGFloat = 1.75
 
@@ -2618,17 +2901,20 @@ struct RootView: View {
                 width: proxy.size.width + safeAreaInsets.leading + safeAreaInsets.trailing,
                 height: proxy.size.height + safeAreaInsets.top + safeAreaInsets.bottom
             )
-            let drawerWidth = min(fullSize.width * 0.78, 390)
-            let settledProgress: CGFloat = model.isDrawerPresented ? 1 : 0
+            // Finish sliding the column closed before handing its space to the compact drawer.
+            let isPinnedLayout = PadSidebar.isEnabled
+                && (adaptiveSidebarIsWide || detachedMainPanelProgress.isWindowResize)
+            let drawerWidth = isPinnedLayout ? 320 : min(fullSize.width * 0.78, 390)
+            let settledProgress: CGFloat = (isPinnedLayout ? pinnedSidebarVisible : model.isDrawerPresented) ? 1 : 0
             let drawerProgress = min(max(drawerFingerProgress.initialProgress ?? settledProgress, 0), 1)
-            let drawerVisible = drawerFingerProgress.isActive
-                || detachedMainPanelProgress.isActive
-                || drawerProgress > 0.001
-                || model.isDrawerPresented
-            // Keep the panel fully rounded for the entire drawer interaction.
-            // Scaling the radius with progress exposes a square panel during a
-            // fast conversation switch followed immediately by a drawer drag.
-            let chatCornerRadius: CGFloat = drawerVisible ? 44 : 0
+            let drawerVisible = drawerFingerProgress.isActive || detachedMainPanelProgress.isActive
+                || drawerProgress > 0.001 || (isPinnedLayout ? pinnedSidebarVisible : model.isDrawerPresented)
+            // On iPadOS 17 the full-window chat host catches hits in the exposed sidebar.
+            // Once the two panels are at rest they no longer overlap.
+            let sidebarIsFrontmost = PadSidebar.placesOpenSidebarAboveChat && settledProgress == 1
+                && !drawerFingerProgress.isActive && !detachedMainPanelProgress.isActive
+            // iPad keeps a straight column edge; the existing phone card stays unchanged.
+            let chatCornerRadius: CGFloat = !PadSidebar.isEnabled && drawerVisible ? 44 : 0
 
             ZStack(alignment: .leading) {
                 DrawerLeafProgressConversationDrawer(
@@ -2641,51 +2927,50 @@ struct RootView: View {
                     gestureActivity: drawerGestureActivity,
                     topReturnCoordinator: drawerListTopReturnCoordinator,
                     onRequestClose: closeDrawerAfterSelection,
-                    onRequestCloseAfterConversationReady: requestDrawerCloseAfterConversationReady
+                    onRequestCloseAfterConversationReady: requestDrawerCloseAfterConversationReady,
+                    isPinnedLayout: isPinnedLayout,
+                    sidebarIsVisible: drawerVisible
                 )
-                    .frame(height: fullSize.height)
-                    .offset(x: -safeAreaInsets.leading, y: -safeAreaInsets.top)
-                    .allowsHitTesting(drawerVisible)
-                    .accessibilityHidden(!drawerVisible)
-                    .simultaneousGesture(
-                        drawerDragGesture(
-                            drawerWidth: drawerWidth,
-                            baseProgress: drawerProgress,
-                            finishesOpeningSettleForVerticalIntent: true
-                        )
-                    )
-                    .zIndex(1)
+                .frame(width: PadSidebar.isEnabled ? drawerWidth : nil, height: fullSize.height)
+                .offset(x: -safeAreaInsets.leading, y: -safeAreaInsets.top)
+                .allowsHitTesting(drawerVisible)
+                .accessibilityHidden(!drawerVisible)
+                .zIndex(sidebarIsFrontmost ? 3 : 1)
 
-                Group {
-                    DrawerInteractionMainPanelHost(
-                        model: model,
-                        drawerWidth: drawerWidth,
-                        cornerRadius: chatCornerRadius,
-                        activity: drawerGestureActivity,
-                        tracker: drawerPresentationProgressTracker,
-                        onOpenDrawer: openDrawerFromButton,
-                        onCloseDrawer: closeDrawerAnimated,
-                        isConversationDrawerClosePending: isDrawerClosePending,
-                        onConversationContentReady: handleConversationContentReady
-                    )
-                    .frame(width: fullSize.width, height: fullSize.height)
-                }
-                    .offset(x: -safeAreaInsets.leading, y: -safeAreaInsets.top)
-                    .simultaneousGesture(
-                        drawerDragGesture(
-                            drawerWidth: drawerWidth,
-                            baseProgress: drawerProgress,
-                            finishesOpeningSettleForVerticalIntent: false
-                        )
-                    )
-                    .zIndex(2)
-
+                DrawerInteractionMainPanelHost(
+                    model: model,
+                    drawerWidth: drawerWidth,
+                    cornerRadius: chatCornerRadius,
+                    activity: drawerGestureActivity,
+                    tracker: drawerPresentationProgressTracker,
+                    onOpenDrawer: openDrawerFromButton,
+                    onCloseDrawer: closeDrawerAnimated,
+                    isConversationDrawerClosePending: isDrawerClosePending,
+                    onConversationContentReady: handleConversationContentReady,
+                    isPinnedLayout: isPinnedLayout,
+                    sidebarIsVisible: drawerVisible,
+                    isSettling: detachedMainPanelProgress.isActive
+                )
+                .frame(width: fullSize.width, height: fullSize.height)
+                .offset(x: -safeAreaInsets.leading, y: -safeAreaInsets.top)
+                .zIndex(2)
             }
-            .background(
-                    Color(uiColor: model.themeSurfaceUIColor)
-                    .ignoresSafeArea()
-            )
+            .frame(width: fullSize.width, height: fullSize.height, alignment: .leading)
+            .background {
+                drawerPanBridge(
+                    drawerWidth: drawerWidth,
+                    baseProgress: drawerProgress,
+                    leadingInset: safeAreaInsets.leading
+                )
+            }
+            .background(Color(uiColor: model.themeSurfaceUIColor).ignoresSafeArea())
+            .onChange(of: fullSize.width, initial: true) { previous, width in
+                updateAdaptiveSidebarLayout(width: width, previousWidth: previous)
+            }
         }
+        .modifier(DuoDrawerToolbar {
+            if model.isDrawerPresented { closeDrawerAnimated() } else { openDrawerFromButton() }
+        })
         .tint(Color(uiColor: model.themeActionUIColor))
         .accentColor(Color(uiColor: model.themeActionUIColor))
         .background(Color(uiColor: model.themeSurfaceUIColor).ignoresSafeArea())
@@ -2732,9 +3017,14 @@ struct RootView: View {
         }
         .onAppear {
             model.applyAppearanceMode()
+            if PadSidebar.isEnabled {
+                model.setDrawerPresented(false, playHaptic: false)
+                model.setDrawerStreamingTextDisplaySuspended(false)
+                DrawerNativeScrollGate.reset()
+            }
             DrawerHighRefreshLease.prepare()
             detachedMainPanelProgress.clear()
-            drawerPresentationProgressTracker.update(model.isDrawerPresented ? 1 : 0)
+            drawerPresentationProgressTracker.update(sidebarIsPresented ? 1 : 0)
             model.setDrawerStreamingTextDisplaySuspended(
                 model.isDrawerPresented
             )
@@ -2764,6 +3054,16 @@ struct RootView: View {
             finishInterruptedDrawerInteraction()
         }
         .onChange(of: model.isDrawerPresented) { _, isPresented in
+            if PadSidebar.isEnabled && adaptiveSidebarIsWide {
+                if isPresented {
+                    model.setDrawerPresented(false, playHaptic: false)
+                    settleDrawer(open: true)
+                } else if !isDrawerGestureActive && !detachedMainPanelProgress.isActive {
+                    model.setDrawerStreamingTextDisplaySuspended(false)
+                    DrawerNativeScrollGate.reset()
+                }
+                return
+            }
             if isPresented {
                 model.setDrawerStreamingTextDisplaySuspended(true)
             }
@@ -2782,6 +3082,7 @@ struct RootView: View {
             syncDrawerNativeScrollGate()
         }
         .onChange(of: model.selectedConversationID) { _, _ in
+            guard !(PadSidebar.isEnabled && adaptiveSidebarIsWide) else { return }
             let visualProgress = drawerPresentationProgressTracker.resolved(
                 fallback: model.isDrawerPresented ? 1 : 0
             )
@@ -2789,7 +3090,7 @@ struct RootView: View {
                 model.setDrawerStreamingTextDisplaySuspended(true)
             }
         }
-        .sheet(isPresented: $model.isBottomToolsPresented) {
+        .sheet(isPresented: $model.isBottomToolsPresented, onDismiss: model.bottomToolsDidDismiss) {
             BottomToolsPresentationHost(
                 toolsModel: model.bottomTools,
                 photoSelection: $bottomToolPhotoSelection,
@@ -2800,8 +3101,13 @@ struct RootView: View {
         .onChange(of: bottomToolPhotoSelection) { _, items in
             consumeBottomToolPhotoSelection(items)
         }
-        .alert(L10n.lookup("请求失败"), isPresented: $model.isErrorPresented) {
-            Button(L10n.lookup("好"), role: .cancel) {}
+        .alert(L10n.lookup(model.pendingCacheRecovery == nil ? "请求失败" : "缓存设置不兼容"), isPresented: $model.isErrorPresented) {
+            if model.pendingCacheRecovery != nil {
+                Button(L10n.lookup("改用官方默认并重试")) { model.resolveCacheRecovery(useOfficialDefault: true) }
+                Button(L10n.lookup("保持设置"), role: .cancel) { model.resolveCacheRecovery(useOfficialDefault: false) }
+            } else {
+                Button(L10n.lookup("好"), role: .cancel) {}
+            }
         } message: {
             Text(model.errorMessage)
         }
@@ -2826,12 +3132,13 @@ struct RootView: View {
         }
         .modifier(ToolApprovalAlertModifier(model: model, request: model.pendingToolApproval))
         .modifier(LargeFileConfirmationModifier(confirmation: model.largeFileConfirmation))
+        .environment(layoutMetrics)
         .onDisappear {
             model.setDrawerStreamingTextDisplaySuspended(false)
             cancelDrawerSettleWork()
             detachedMainPanelProgress.clear()
             drawerListTopReturnCoordinator.reset()
-            let semanticEndpoint: CGFloat = model.isDrawerPresented ? 1 : 0
+            let semanticEndpoint: CGFloat = sidebarIsPresented ? 1 : 0
             drawerPresentationProgressTracker.update(semanticEndpoint)
             drawerDragProgress = nil
             DrawerFrameTrace.rootDidDisappear()
@@ -2842,6 +3149,52 @@ struct RootView: View {
             DrawerInlineActionTapGate.reset()
             pendingDrawerCloseConversationID = nil
         }
+    }
+
+    private func updateAdaptiveSidebarLayout(width: CGFloat, previousWidth: CGFloat) {
+        guard PadSidebar.isEnabled else { return }
+        let wide = width >= 900
+        guard adaptiveSidebarIsWide != wide else {
+            if width != previousWidth && !detachedMainPanelProgress.isWindowResize {
+                let wasTracking = isDrawerGestureActive
+                finishInterruptedDrawerInteraction()
+                // The same physical contact must not reacquire after a resize.
+                if wasTracking { drawerGestureLocked = false }
+            }
+            return
+        }
+        let target: CGFloat = wide ? 1 : 0
+        let start = drawerPresentationProgressTracker.resolved(fallback: sidebarIsPresented ? 1 : 0)
+        let shouldSlide = width != previousWidth && previousWidth > 0 && scenePhase == .active
+            && !UIAccessibility.isReduceMotionEnabled && abs(target - start) > 0.001
+        let wasTracking = isDrawerGestureActive
+        pendingDrawerCloseConversationID = nil
+        cancelDrawerSettleWork()
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            detachedMainPanelProgress.clear()
+            drawerDragProgress = nil
+            drawerGestureLocked = nil
+            drawerDragActivationTranslationX = 0
+            drawerDragStartProgress = target
+            adaptiveSidebarIsWide = wide
+            pinnedSidebarVisible = wide
+            model.setDrawerPresented(false, playHaptic: false)
+            drawerListTopReturnCoordinator.finishSoftTopReturnForDrawerOpening()
+            setDrawerGestureActive(false)
+            model.setDrawerStreamingTextDisplaySuspended(false)
+            DrawerNativeScrollGate.reset()
+            DrawerViewportRefreshFreeze.reset()
+            if wasTracking { drawerGestureLocked = false }
+            if shouldSlide {
+                startDrawerSettleProgress(from: start, to: target, forWindowResize: true)
+            } else {
+                drawerPresentationProgressTracker.update(target)
+            }
+        }
+        DrawerInlineActionTapGate.reset()
+        DrawerHighRefreshLease.stop()
     }
 
     private func consumeBottomToolPhotoSelection(
@@ -2900,9 +3253,11 @@ struct RootView: View {
         let progress = drawerPresentationProgressTracker.resolved(
             fallback: drawerDragProgress
                 ?? detachedMainPanelProgress.progress
-                ?? (model.isDrawerPresented ? 1 : 0)
+                ?? (sidebarIsPresented ? 1 : 0)
         )
-        let open = progress == 0.5 ? model.isDrawerPresented : progress > 0.5
+        let open = detachedMainPanelProgress.isWindowResize
+            ? adaptiveSidebarIsWide
+            : (progress == 0.5 ? sidebarIsPresented : progress > 0.5)
         let endpoint: CGFloat = open ? 1 : 0
 
         // Invalidate delayed semantic commits and stop the display link first,
@@ -2917,12 +3272,17 @@ struct RootView: View {
             drawerDragStartProgress = endpoint
             drawerDragActivationTranslationX = 0
             // Lifecycle reconciliation has no new user action to vibrate for.
-            model.isDrawerPresented = open
+            if PadSidebar.isEnabled && adaptiveSidebarIsWide {
+                pinnedSidebarVisible = open
+                model.isDrawerPresented = false
+            } else {
+                model.isDrawerPresented = open
+            }
             drawerPresentationProgressTracker.update(endpoint)
             drawerListTopReturnCoordinator.finishSoftTopReturnForDrawerOpening()
             setDrawerGestureActive(false)
             DrawerViewportRefreshFreeze.setSettling(false)
-            model.setDrawerStreamingTextDisplaySuspended(open)
+            model.setDrawerStreamingTextDisplaySuspended(open && !(PadSidebar.isEnabled && adaptiveSidebarIsWide))
         }
         DrawerInlineActionTapGate.reset()
         DrawerFrameTrace.sceneDidDeactivate()
@@ -2930,7 +3290,7 @@ struct RootView: View {
     }
 
     @discardableResult
-    private func startDrawerSettleProgress(from start: CGFloat, to target: CGFloat) -> UInt64 {
+    private func startDrawerSettleProgress(from start: CGFloat, to target: CGFloat, forWindowResize: Bool = false) -> UInt64 {
         drawerSettleSequence &+= 1
         let sequence = drawerSettleSequence
         DrawerViewportRefreshFreeze.setSettling(true)
@@ -2948,13 +3308,15 @@ struct RootView: View {
         withTransaction(transaction) {
             detachedMainPanelProgress.begin(
                 at: start,
-                drivesDrawer: true
+                drivesDrawer: true,
+                forWindowResize: forWindowResize
             )
             drawerDragProgress = nil
         }
         drawerSettleDriver.start(
             from: start,
             to: target,
+            forWindowResize: forWindowResize,
             onProgress: { progress in
                 guard drawerSettleSequence == sequence else { return }
                 if detachedMainPanelProgress.isActive {
@@ -2982,7 +3344,7 @@ struct RootView: View {
                 }
                 drawerPresentationProgressTracker.update(target)
                 DrawerViewportRefreshFreeze.setSettling(false)
-                model.setDrawerStreamingTextDisplaySuspended(target > 0.001)
+                model.setDrawerStreamingTextDisplaySuspended(target > 0.001 && !(PadSidebar.isEnabled && adaptiveSidebarIsWide))
                 if completedDetachedSettle {
                     detachedMainPanelProgress.clear()
                 } else {
@@ -2997,13 +3359,28 @@ struct RootView: View {
         return sequence
     }
 
-    private func drawerDragGesture(
+    private func drawerPanBridge(
         drawerWidth: CGFloat,
         baseProgress: CGFloat,
-        finishesOpeningSettleForVerticalIntent: Bool
-    ) -> some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .local)
-            .onChanged { value in
+        leadingInset: CGFloat
+    ) -> some View {
+        DrawerPanGestureBridge(
+            isEnabled: scenePhase == .active,
+            startsInDrawer: { location in
+                let progress = drawerPresentationProgressTracker.resolved(fallback: baseProgress)
+                return location.x + leadingInset < drawerWidth * progress
+            },
+            allowsTouch: { touch in
+                guard PadSidebar.isEnabled else { return true }
+                var view = touch.view
+                while let current = view {
+                    if current is UIControl || current is UINavigationBar { return false }
+                    if let text = current as? UITextView, text.isEditable { return false }
+                    view = current.superview
+                }
+                return true
+            },
+            onChanged: { value in
                 guard scenePhase == .active else { return }
                 let dx = value.translation.width
                 let dy = value.translation.height
@@ -3029,7 +3406,7 @@ struct RootView: View {
                         // the drawer while its native list begins a vertical
                         // rubber-band gesture. Preserve the list's own bounce;
                         // only finish the already-authorized opening settle.
-                        if finishesOpeningSettleForVerticalIntent {
+                        if value.startedInDrawer {
                             finishDrawerOpeningSettleForVerticalIntentIfNeeded()
                         }
                         return
@@ -3087,10 +3464,9 @@ struct RootView: View {
                 let clampedProgress = min(max(nextProgress, 0), 1)
                 drawerDragProgress = clampedProgress
                 drawerPresentationProgressTracker.update(clampedProgress)
-            }
-            .onEnded { value in
+            },
+            onEnded: { value in
                 let dx = value.translation.width
-                let dy = value.translation.height
                 let didOwnDrawerGesture = drawerGestureLocked == true
                 defer {
                     if didOwnDrawerGesture {
@@ -3104,14 +3480,11 @@ struct RootView: View {
                 }
                 // Direction was decided when this touch took ownership. Keep
                 // following that horizontal gesture even if its path later curves.
-                let releaseIntent = DrawerFeelComparison.releaseAxisCheck
-                    ? max(drawerGestureIntentDistance, abs(dy) * drawerGestureAxisRatio)
-                    : drawerGestureIntentDistance
                 guard drawerGestureLocked == true,
                       drawerDragProgress != nil,
-                      abs(dx) > releaseIntent else {
+                      abs(dx) > drawerGestureIntentDistance else {
                     if drawerGestureLocked == true, drawerDragProgress != nil {
-                        settleDrawer(open: model.isDrawerPresented)
+                        settleDrawer(open: sidebarIsPresented)
                     }
                     return
                 }
@@ -3132,13 +3505,28 @@ struct RootView: View {
                     currentProgress > 0.52 || (meaningfulOpenDrag && predictedProgress > 0.62)
                 }
                 settleDrawer(open: shouldOpen)
-            }
+            },
+            onCancelled: cancelDrawerFingerTracking
+        )
+    }
+
+    private func cancelDrawerFingerTracking() {
+        defer {
+            drawerDragActivationTranslationX = 0
+            drawerGestureLocked = nil
+            setDrawerGestureActive(false)
+        }
+        guard drawerGestureLocked == true, let progress = drawerDragProgress else { return }
+        DrawerInlineActionTapGate.endDrawerDrag()
+        DrawerFrameTrace.touchEnded(finalProgress: progress)
+        DrawerHighRefreshLease.releaseAfterSettle()
+        settleDrawer(open: progress == 0.5 ? sidebarIsPresented : progress > 0.5)
     }
 
     private func finishDrawerOpeningSettleForVerticalIntentIfNeeded() {
         guard let targetProgress = drawerSettleDriver.activeTargetProgress,
               targetProgress >= 0.5,
-              model.isDrawerPresented,
+              sidebarIsPresented,
               !detachedMainPanelProgress.isActive else { return }
         let interruptedProgress = drawerPresentationProgressTracker.resolved(
             fallback: drawerDragProgress ?? targetProgress
@@ -3194,6 +3582,11 @@ struct RootView: View {
     }
 
     private func openDrawerFromButton() {
+        guard !isDrawerGestureActive else { return }
+        if PadSidebar.isEnabled && adaptiveSidebarIsWide {
+            settleDrawer(open: !pinnedSidebarVisible)
+            return
+        }
         guard !model.isDrawerPresented else { return }
         model.setDrawerStreamingTextDisplaySuspended(true)
         pendingDrawerCloseConversationID = nil
@@ -3220,14 +3613,17 @@ struct RootView: View {
     }
 
     private func closeDrawerAnimated() {
+        guard !isDrawerGestureActive else { return }
         settleDrawer(open: false)
     }
 
     private func closeDrawerAfterSelection() {
+        guard !(PadSidebar.isEnabled && adaptiveSidebarIsWide) else { return }
         settleDrawer(open: false, playHaptic: false)
     }
 
     private func requestDrawerCloseAfterConversationReady(_ conversationID: UUID) {
+        guard !(PadSidebar.isEnabled && adaptiveSidebarIsWide) else { return }
         guard model.isDrawerPresented,
               model.selectedConversationID == conversationID else { return }
         pendingDrawerCloseConversationID = conversationID
@@ -3276,7 +3672,7 @@ struct RootView: View {
     }
 
     private func settleDrawer(open: Bool, playHaptic: Bool = true) {
-        let fallbackProgress = drawerDragProgress ?? (model.isDrawerPresented ? 1 : 0)
+        let fallbackProgress = drawerDragProgress ?? (sidebarIsPresented ? 1 : 0)
         cancelDrawerSettleWork(releasingViewportFreeze: false)
         pendingDrawerCloseConversationID = nil
         let currentProgress = drawerPresentationProgressTracker.resolved(
@@ -3284,7 +3680,11 @@ struct RootView: View {
         )
         adoptDrawerPresentationProgressForRoot(currentProgress)
         model.setDrawerStreamingTextDisplaySuspended(true)
-        if open {
+        if PadSidebar.isEnabled && adaptiveSidebarIsWide {
+            pinnedSidebarVisible = open
+            startDrawerSettleProgress(from: currentProgress, to: open ? 1 : 0)
+            setDrawerGestureActive(false)
+        } else if open {
             // Transfer the chat scroll lock to the presented drawer before
             // releasing gesture ownership, avoiding an enable/disable round trip.
             model.setDrawerPresented(true)
@@ -3363,6 +3763,8 @@ private struct MainChatContainer: View, @preconcurrency Equatable {
 }
 
 private struct MainChatPanelChrome: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.pixelLength) private var pixelLength
     let cornerRadius: CGFloat
     let configuration: DrawerLiveMainPanelConfiguration
 
@@ -3372,7 +3774,7 @@ private struct MainChatPanelChrome: ViewModifier {
             bottomLeadingRadius: cornerRadius,
             style: .continuous
         )
-        content
+        let panel = content
             .contentShape(Rectangle())
             .overlay {
                 DrawerPanelScrim(configuration: configuration, panelShape: panelShape)
@@ -3380,15 +3782,29 @@ private struct MainChatPanelChrome: ViewModifier {
                     // The native touch shield owns closing the drawer.
                     .allowsHitTesting(false)
             }
-            .clipShape(panelShape)
-            .background {
-                DrawerPanelShadowLayer(
-                    cornerRadius: cornerRadius,
-                    driver: configuration.chromeDriver
-                )
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+
+        if PadSidebar.isEnabled {
+            panel.overlay(alignment: .leading) {
+                if configuration.isPinnedLayout && configuration.sidebarIsVisible && colorScheme == .dark {
+                    Rectangle()
+                        .fill(Color(uiColor: .separator))
+                        .frame(width: pixelLength)
+                        .ignoresSafeArea(.container, edges: .vertical)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
+        } else {
+            panel.clipShape(panelShape)
+                .background {
+                    DrawerPanelShadowLayer(
+                        cornerRadius: cornerRadius,
+                        driver: configuration.chromeDriver
+                    )
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+        }
     }
 }
 
@@ -3610,7 +4026,7 @@ private struct BottomToolsPresentationHost: View {
     }
 
     private func dismissBottomTools() {
-        model.isBottomToolsPresented = false
+        model.dismissBottomToolsAfterPicker()
     }
 
     private func collapseBottomToolsBehindSystemPicker() {
@@ -3831,7 +4247,9 @@ private final class ChatScrollInteractionState {
 }
 
 private struct ChatView: View {
+    @Environment(ChatLayoutMetrics.self) private var layoutMetrics
     @Environment(AppModel.self) private var model
+    @Environment(\.usesSystemChatNavigation) private var usesSystemChatNavigation
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.locale) private var nativeTranscriptLocale
     @Environment(\.dynamicTypeSize) private var nativeTranscriptDynamicTypeSize
@@ -3874,8 +4292,8 @@ private struct ChatView: View {
     @State private var concreteFavoriteTargetMessageID: UUID?
     @State private var chatScrollViewBox = WeakChatScrollViewBox()
     @State private var composerKeyboardMotionSource = ComposerKeyboardMotionSource()
-    @State private var regenerationViewportTransitionCoordinator =
-        RegenerationViewportTransitionCoordinator()
+    @State private var messageViewportTransitionCoordinator =
+        MessageViewportTransitionCoordinator()
     @State private var activatedCoveredMessageTargetRequestID: UUID?
     // Navigation and an active send read current geometry when needed. Keep
     // per-scroll frames out of ChatView's persistent State dependencies after
@@ -3965,7 +4383,10 @@ private struct ChatView: View {
     @State private var streamingFollowTouchPauseAnchorID:
         ConversationBottomAnchorID?
     @State private var reactionPicker: MessageReactionPickerPresentation?
+    @State private var reactionMoreMenu: MessageReactionPickerPresentation?
+    @State private var reactionMoreMenuAnchor = NativeMessageMenuAnchor()
     @State private var messageSheetPresentation: MessageSheetPresentation?
+    @State private var messageDeletionConfirmation: MessageDeletionConfirmation?
     @State private var directEditText = ""
     @State private var regenerationConfirmationMessage: ChatMessage?
     @State private var messageReplacementLandingTask: Task<Void, Never>?
@@ -4127,6 +4548,7 @@ private struct ChatView: View {
             versionFlashContext = nil
         }
         return MessageRow(
+            layoutMetrics: layoutMetrics,
             message: message,
             isConversationTail: isConversationTail,
             continuesUserBatch: continuesUserBatch,
@@ -4144,6 +4566,7 @@ private struct ChatView: View {
             onReaction: { message, location in
                 dismissKeyboard()
                 model.performCardHaptic()
+                reactionMoreMenu = nil
                 reactionPicker = MessageReactionPickerPresentation(
                     messageID: message.id,
                     globalLocation: location
@@ -4152,13 +4575,8 @@ private struct ChatView: View {
             onUserReaction: { message, reaction in
                 model.setMessageUserReaction(message.id, reaction: reaction)
             },
-            onMore: { message in
-                dismissKeyboard()
-                model.performCardHaptic()
-                messageSheetPresentation = MessageSheetPresentation(
-                    message: message,
-                    kind: .actions
-                )
+            onMenuAction: { message, action in
+                performMessageMenuAction(action, for: message)
             },
             onEdit: { message in
                 if message.isPendingUserSend == true { model.pauseUserBatch(for: message.conversationID) }
@@ -4444,6 +4862,7 @@ private struct ChatView: View {
         // only copy the transcript value and update its viewport metrics.
         return GeometryReader { viewport in
             var input = transcript
+            input.configuration.reconcilesContainerWidth = usesSystemChatNavigation
             input.configuration.bottom = composerBottomClearance
             input.configuration.bottomFollowClearance = max(0, composerOverlayBottomClearance - composerHeight)
             input.configuration.viewportInsets = UIEdgeInsets(
@@ -4451,6 +4870,7 @@ private struct ChatView: View {
                 bottom: viewport.safeAreaInsets.bottom, right: 0
             )
             return input
+                .frame(maxWidth: usesSystemChatNavigation ? .infinity : nil, alignment: .leading)
                 .background {
                     NativeTranscriptPreferences(relay: nativeTranscriptGeometry, publicationID: publicationID)
                 }
@@ -4466,7 +4886,7 @@ private struct ChatView: View {
         guard let request = messageReplacementRequest,
               request.codeDisclosure == nil,
               request.didCommit, !request.didRequestTargetReveal,
-              request.replacementMessage != nil || (!request.didIssueLanding && request.readingAnchorID == nil),
+              request.usesNativeLanding || (!request.didIssueLanding && request.readingAnchorID == nil),
               let landingAnchorID = request.landingAnchorID,
               landingAnchorID == publication.anchorID,
               landingAnchorID == currentConversationBottomAnchorID,
@@ -4482,10 +4902,15 @@ private struct ChatView: View {
               !messageReplacementLandingWasInterrupted(
                 scrollView, expectedScrollViewIdentity: request.scrollViewIdentity
               ) else { return nil }
-        let isReplacement = request.replacementMessage != nil
+        let isReplacement = request.replacementMessage != nil || request.deletionReadingFraction != nil
+            || (request.keepsExactBottom && !request.sourceAnchorID.messageIDs.contains(targetID))
         let target: NativeChatScrollTarget
-        if isReplacement {
-            target = request.keepsExactBottom ? .bottom : .rowBottom(targetID,
+        if request.keepsExactBottom {
+            target = .bottom
+        } else if let fraction = request.deletionReadingFraction {
+            target = .row(targetID, UnitPoint(x: 0.5, y: fraction))
+        } else if isReplacement {
+            target = .rowBottom(targetID,
                 min(request.readingAnchorMaxY ?? nativeViewportHeight - composerBottomClearance,
                     max(1, nativeViewportHeight - composerBottomClearance)))
         } else {
@@ -4510,7 +4935,7 @@ private struct ChatView: View {
             isCurrent: {
                 messageReplacementRequest?.id == request.id
                     && messageReplacementRequest?.didCommit == true
-                    && (isReplacement || messageReplacementRequest?.didIssueLanding == false)
+                    && (request.usesNativeLanding || messageReplacementRequest?.didIssueLanding == false)
                     && messageReplacementLayoutSessionID == currentChatViewportSessionID
                     && model.selectedConversationID == request.message.conversationID
                     && !model.isDrawerPresented
@@ -5091,7 +5516,8 @@ private struct ChatView: View {
                 // Clearing its identity also invalidates an in-flight
                 // dismissal completion before it can open an old sheet.
                 if reactionPicker != nil { reactionPicker = nil }
-                regenerationViewportTransitionCoordinator.cancelAll(
+                if reactionMoreMenu != nil { reactionMoreMenu = nil }
+                messageViewportTransitionCoordinator.cancelAll(
                     reason: "conversationChanged"
                 )
                 activatedCoveredMessageTargetRequestID = nil
@@ -5270,6 +5696,7 @@ private struct ChatView: View {
                     // Use the existing semantic event, before the idle
                     // cleanup gate; there is no drawer-frame observer.
                     if reactionPicker != nil { reactionPicker = nil }
+                    if reactionMoreMenu != nil { reactionMoreMenu = nil }
                     guard hasActiveDrawerOpeningCleanupWork else {
                         return
                     }
@@ -5436,18 +5863,13 @@ private struct ChatView: View {
             .accessibilityHidden(visibleMessages.isEmpty)
 
             if visibleMessages.isEmpty {
-                EmptyConversationView()
-                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.horizontal, 18)
-                    .padding(.top, 108)
+                emptyConversationArtwork
                     .modifier(ComposerOverlayPadding(geometry: composerGeometry))
-                    // The empty artwork keeps its original full-height layout;
-                    // only the transcript consumes the registered top bar.
-                    .ignoresSafeArea(.container, edges: .top)
+                    .ignoresSafeArea(.container, edges: usesSystemChatNavigation ? [] : .top)
                     .contentShape(Rectangle())
                     .onAppear {
                         if reactionPicker != nil { reactionPicker = nil }
+                        if reactionMoreMenu != nil { reactionMoreMenu = nil }
                         cancelCodeDisclosure(reason: "emptyConversation")
                         codeDisclosureStore.removeAll()
                         cancelAutomaticReasoningCollapseOwner(
@@ -5560,19 +5982,20 @@ private struct ChatView: View {
                let message = model.messages.first(where: { $0.id == presentation.messageID }) {
                 MessageReactionPickerOverlay(
                     presentation: presentation,
+                    message: message,
                     selectedReaction: message.reactions.userReaction,
                     onSelect: { reaction in
                         model.performCardHaptic()
                         let next = message.reactions.userReaction == reaction ? nil : reaction
                         model.setMessageUserReaction(message.id, reaction: next)
                     },
-                    onMore: {
+                    onMenuAction: { action in
                         guard reactionPicker?.id == presentation.id else { return }
-                        model.performCardHaptic()
-                        messageSheetPresentation = MessageSheetPresentation(
-                            message: message,
-                            kind: .actions
-                        )
+                        performMessageMenuAction(action, for: message)
+                    },
+                    onMoreRequested: { location in
+                        guard reactionPicker?.id == presentation.id else { return }
+                        reactionMoreMenu = MessageReactionPickerPresentation(messageID: message.id, globalLocation: location)
                     },
                     onDismiss: {
                         guard reactionPicker?.id == presentation.id else { return }
@@ -5581,10 +6004,37 @@ private struct ChatView: View {
                 )
                 .id(presentation.id)
             }
+            if let presentation = reactionMoreMenu,
+               let message = model.messages.first(where: { $0.id == presentation.messageID }) {
+                GeometryReader { proxy in
+                    let frame = proxy.frame(in: .global)
+                    NativeMessageMenuButton(
+                        items: { messageMenuItems(message, model: model) },
+                        allowsPresentation: { DrawerInlineActionTapGate.allowsAction },
+                        onSelect: { performMessageMenuAction($0, for: message) },
+                        pointSize: 17, tintColor: .label,
+                        accessibilityLabel: L10n.lookup("更多消息操作"),
+                        showsGlyph: false,
+                        presentationAnchor: reactionMoreMenuAnchor,
+                        onDismiss: {
+                            if reactionMoreMenu?.id == presentation.id { reactionMoreMenu = nil }
+                        }
+                    )
+                    .frame(width: 35, height: 42)
+                    .position(x: presentation.globalLocation.x - frame.minX,
+                              y: presentation.globalLocation.y - frame.minY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .onAppear { reactionMoreMenuAnchor.present() }
+                }
+                .id(presentation.id)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            guard !layoutMetrics.messageEditorOwnsKeyboard else { return }
+            guard let overlap = keyboardBottomOverlap(notification) else { return }
             updateKeyboardAnimationTiming(from: notification)
-            let isOpening = keyboardIsOpening(notification)
+            let isOpening = overlap.end > overlap.begin + 0.5
             if isOpening {
                 isComposerKeyboardPresented = true
                 cancelCodeDisclosure(reason: "keyboardWillChangeFrame")
@@ -5602,7 +6052,10 @@ private struct ChatView: View {
             requestKeyboardViewportPin(allowsFocusPending: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+            guard !layoutMetrics.messageEditorOwnsKeyboard else { return }
+            guard let overlap = keyboardBottomOverlap(notification) else { return }
             isComposerKeyboardPresented = true
+            guard overlap.end > 0 else { return }
             cancelCodeDisclosure(reason: "keyboardWillShow")
             cancelAutomaticReasoningCollapseOwner(reason: "keyboardWillShow")
             updateKeyboardAnimationTiming(from: notification)
@@ -5614,6 +6067,7 @@ private struct ChatView: View {
             requestKeyboardViewportPin(allowsFocusPending: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { notification in
+            guard !layoutMetrics.messageEditorOwnsKeyboard else { return }
             isComposerKeyboardPresented = true
             ChatBottomTrace.log(
                 "KEYBOARD_DID_SHOW \(keyboardNotificationTrace(notification)) "
@@ -5683,8 +6137,10 @@ private struct ChatView: View {
             requestKeyboardViewportPin()
         }
         .onDisappear {
+            layoutMetrics.messageEditorOwnsKeyboard = false
+            reactionMoreMenu = nil
             cancelCodeDisclosure(reason: "viewDisappeared")
-            regenerationViewportTransitionCoordinator.cancelAll(
+            messageViewportTransitionCoordinator.cancelAll(
                 reason: "viewDisappeared"
             )
             cancelAutomaticReasoningCollapseOwner(reason: "viewDisappeared")
@@ -5717,24 +6173,34 @@ private struct ChatView: View {
             cancelConversationReturnPositioning()
             navigationHideTask?.cancel()
         }
-        .sheet(item: $messageSheetPresentation) { presentation in
+        .sheet(item: $messageSheetPresentation, onDismiss: { layoutMetrics.messageEditorOwnsKeyboard = false }) { presentation in
             messageSheetContent(presentation)
+        }
+        .alert(
+            messageDeletionConfirmation?.title ?? L10n.lookup("删除消息"),
+            isPresented: Binding(
+                get: { messageDeletionConfirmation != nil },
+                set: { if !$0 { messageDeletionConfirmation = nil } }
+            ),
+            presenting: messageDeletionConfirmation
+        ) { confirmation in
+            Button(L10n.lookup("取消"), role: .cancel) {}
+            Button(confirmation.actionTitle, role: .destructive) {
+                deleteMessagePreservingReadingPosition(
+                    confirmation.message,
+                    deletesAllVersions: confirmation.deletesAllVersions
+                )
+            }
+        } message: { confirmation in
+            Text(confirmation.explanation)
         }
         .alert(regenerationConfirmationMessage?.role == .user ? L10n.lookup("重新发送") : L10n.lookup("重新生成"), isPresented: Binding(
             get: { regenerationConfirmationMessage != nil },
             set: { isPresented in
-                if !isPresented {
-                    regenerationViewportTransitionCoordinator.discardPrepared(
-                        reason: "confirmationDismissed"
-                    )
-                    regenerationConfirmationMessage = nil
-                }
+                if !isPresented { regenerationConfirmationMessage = nil }
             }
         )) {
             Button(L10n.lookup("取消"), role: .cancel) {
-                regenerationViewportTransitionCoordinator.discardPrepared(
-                    reason: "confirmationCancelled"
-                )
                 regenerationConfirmationMessage = nil
             }
             Button(regenerationConfirmationMessage?.role == .assistant ? L10n.lookup("重新生成") : L10n.lookup("重新发送")) {
@@ -5759,6 +6225,7 @@ private struct ChatView: View {
     private var shouldShowNavigationPanelIgnoringDrawer: Bool {
         guard !model.messages.isEmpty,
               reactionPicker == nil,
+              reactionMoreMenu == nil,
               messageSheetPresentation == nil else { return false }
         return switch model.preferences.mobileMessageNavButtonsMode {
         case .always: true
@@ -5772,6 +6239,7 @@ private struct ChatView: View {
         guard model.preferences.mobileMessageNavButtonsMode == .simple,
               !model.messages.isEmpty,
               reactionPicker == nil,
+              reactionMoreMenu == nil,
               messageSheetPresentation == nil else { return false }
         return model.hasLaterMessages || isQuickReturnToBottomVisible
     }
@@ -5789,16 +6257,11 @@ private struct ChatView: View {
         _ presentation: MessageSheetPresentation
     ) -> some View {
         switch presentation.kind {
-        case .actions:
-            MessageActionsSheet(
-                message: presentation.message,
-                onDelete: { message, deletesAllVersions in
-                    deleteMessagePreservingReadingPosition(
-                        message,
-                        deletesAllVersions: deletesAllVersions
-                    )
-                }
-            )
+        case .details(let snapshot):
+            MessageDetailsSheet(details: snapshot)
+        case .share:
+            ActivityShareSheet(items: [presentation.message.text])
+                .ignoresSafeArea()
         case .edit:
             MessageEditSheet(
                 text: $directEditText,
@@ -5807,10 +6270,59 @@ private struct ChatView: View {
                     : L10n.lookup("编辑助手消息"),
                 allowsSaveAndSend: true
             ) { shouldSend in
-                model.editMessage(
-                    presentation.message.id,
-                    text: directEditText,
-                    sendAfterSave: shouldSend
+                if shouldSend {
+                    let text = directEditText
+                    ChatBottomTrace.log("EDIT_SEND_TAPPED")
+                    // Dismissal starts in this button action. Start the edit on the
+                    // next main turn while the system animates the sheet away.
+                    DispatchQueue.main.async {
+                        submitMessageEdit(presentation.message, text: text)
+                    }
+                } else {
+                    model.editMessage(presentation.message.id, text: directEditText)
+                }
+            }
+            .onAppear { layoutMetrics.messageEditorOwnsKeyboard = true }
+        }
+    }
+
+    // Present follow-up UI from the chat, whose lifetime outlasts the native
+    // menu. Menu content itself must not own sheets or confirmation alerts.
+    private func performMessageMenuAction(_ action: MessageMenuAction, for message: ChatMessage) {
+        guard let message = model.messages.first(where: { $0.id == message.id }) else { return }
+        dismissKeyboard()
+        model.performCardHaptic()
+        switch action {
+        case .details:
+            messageSheetPresentation = MessageSheetPresentation(
+                message: message,
+                kind: .details(MessageDetailsSnapshot(message: message, providers: model.providers))
+            )
+        case .action(.deleteAllVersions):
+            messageDeletionConfirmation = MessageDeletionConfirmation(
+                message: message, deletesAllVersions: true,
+                versionCount: messageMenuVersionCount(message, model: model)
+            )
+        case .action(.standard(let action)):
+            switch action {
+            case .bookmark:
+                model.toggleMessageBookmark(message.id)
+            case .copy:
+                UIPasteboard.general.string = message.text
+            case .share:
+                messageSheetPresentation = MessageSheetPresentation(message: message, kind: .share)
+            case .branch:
+                model.branchConversation(at: message.id)
+            case .edit:
+                if message.isPendingUserSend == true { model.pauseUserBatch(for: message.conversationID) }
+                directEditText = message.text
+                messageSheetPresentation = MessageSheetPresentation(message: message, kind: .edit)
+            case .regenerate:
+                requestRegeneration(for: message)
+            case .delete:
+                messageDeletionConfirmation = MessageDeletionConfirmation(
+                    message: message, deletesAllVersions: false,
+                    versionCount: messageMenuVersionCount(message, model: model)
                 )
             }
         }
@@ -5836,7 +6348,7 @@ private struct ChatView: View {
             || automaticReasoningExpandedCheckpoint != nil
             || automaticReasoningCollapseRearmRequest != nil
             || automaticReasoningCollapseOwner != nil
-            || regenerationViewportTransitionCoordinator.hasActiveWork
+            || messageViewportTransitionCoordinator.hasActiveWork
             || landedMessageTargetRequest != nil
             || concreteFavoriteTargetMessageID != nil
             || messageTargetNavigationTask != nil
@@ -5918,7 +6430,7 @@ private struct ChatView: View {
 
     private var hasContentMutationCompetingOwner: Bool {
         automaticReasoningCollapseOwner != nil
-            || regenerationViewportTransitionCoordinator.hasActiveWork
+            || messageViewportTransitionCoordinator.hasActiveWork
             || messageReplacementLandingTask != nil
             || messageReplacementRequest != nil
             || userMessageSendPositionTask != nil
@@ -6107,7 +6619,7 @@ private struct ChatView: View {
                 ? pending : nil
         }
         let atBottom = inherited?.sourceWasAtBottom ?? (currentUIKitBottomState?.isAtBottom == true)
-        let keepBottom = sourceAnchorID.messageIDs.last == sourceMessage.id
+        let keepBottom = sourceMessage.role == .assistant && sourceAnchorID.messageIDs.last == sourceMessage.id
             && !model.hasLaterMessages && atBottom
         var request = MessageReplacementViewportRequest(
             id: UUID(), edit: .replacement(sourceMessage, with: newMessage),
@@ -6247,18 +6759,18 @@ private struct ChatView: View {
         guard targetRequest.usesCoveredViewportTransition,
               targetRequest.regenerationSourceMessageID == nil,
               activatedCoveredMessageTargetRequestID != targetRequest.id,
-              !regenerationViewportTransitionCoordinator.owns(
+              !messageViewportTransitionCoordinator.owns(
                   requestID: targetRequest.id
               ),
-              let token = regenerationViewportTransitionCoordinator
-                .activateSolidCover(
+              let token = messageViewportTransitionCoordinator
+                .activate(
                     from: chatScrollViewBox.scrollView,
-                    backgroundColor: model.themeSurfaceUIColor
+                    coveringWith: model.themeSurfaceUIColor
                 ) else {
             return
         }
         activatedCoveredMessageTargetRequestID = targetRequest.id
-        regenerationViewportTransitionCoordinator.bind(
+        messageViewportTransitionCoordinator.bind(
             token,
             to: targetRequest.id
         )
@@ -6296,7 +6808,7 @@ private struct ChatView: View {
         concreteFavoriteTargetMessageID = nil
         landedMessageTargetRequest = nil
         model.consumeMessageTargetNavigationRequest(targetRequest.id)
-        regenerationViewportTransitionCoordinator.reveal(
+        messageViewportTransitionCoordinator.reveal(
             requestID: targetRequest.id,
             reason: "favoriteTargetFailed"
         )
@@ -6399,7 +6911,7 @@ private struct ChatView: View {
     }
 
     private func cancelMessageTargetNavigationForUserInteraction() {
-        regenerationViewportTransitionCoordinator.cancelAll(
+        messageViewportTransitionCoordinator.cancelAll(
             reason: "userInteraction"
         )
         landedMessageTargetRequest = nil
@@ -6770,6 +7282,29 @@ private struct ChatView: View {
         }
     }
 
+    @ViewBuilder
+    private var emptyConversationArtwork: some View {
+        let artwork = EmptyConversationView()
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        if usesSystemChatNavigation {
+            // The iPad toolbar and composer already bound this space. Keep the
+            // artwork reachable without letting its height displace the composer.
+            GeometryReader { viewport in
+                ScrollView {
+                    artwork.frame(minHeight: viewport.size.height)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .scrollDismissesKeyboard(.interactively)
+            }
+            .padding(.horizontal, 18)
+        } else {
+            artwork
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.top, 108)
+        }
+    }
+
     private var measuredComposer: some View {
         ComposerGeometryInput(
             geometry: composerGeometry,
@@ -6780,6 +7315,10 @@ private struct ChatView: View {
             },
             onMeasuredHeight: updateComposerHeight
         )
+            // ComposerView supplies 12 pt. Match the split reading column:
+            // 18 pt row insets plus the wide assistant row's 10 pt end gap.
+            .padding(.leading, usesSystemChatNavigation ? 6 : 0)
+            .padding(.trailing, usesSystemChatNavigation ? 16 : 0)
             .environment(\.composerHeightPresentation, nil)
             #if DEBUG
             .onGeometryChange(for: CGRect.self) { proxy in
@@ -6842,6 +7381,7 @@ private struct ChatView: View {
     }
 
     private var topContentSpacerHeight: CGFloat {
+        if usesSystemChatNavigation { return 0 }
         if #available(iOS 26.0, *) {
             let compactEffectHeight = min(topSafeAreaInset, 48)
             return 8 + 50 + max(0, topSafeAreaInset - compactEffectHeight)
@@ -6862,13 +7402,6 @@ private struct ChatView: View {
         dismissKeyboard()
         model.performCardHaptic()
         guard !model.isConversationStreaming(message.conversationID) else { return }
-        if !model.isComposerFocused,
-           !isComposerKeyboardPresented,
-           !isKeyboardDismissalTransition {
-            regenerationViewportTransitionCoordinator.prepare(
-                from: chatScrollViewBox.scrollView
-            )
-        }
         if model.preferences.showRegenerateConfirmDialog {
             regenerationConfirmationMessage = message
         } else {
@@ -6876,44 +7409,55 @@ private struct ChatView: View {
         }
     }
 
-    private func beginRegeneration(for message: ChatMessage) {
-        guard let userMessageID = model.regenerationUserMessageID(
-            around: message.id
-        ) else {
-            regenerationViewportTransitionCoordinator.discardPrepared(
-                reason: "missingUserTarget"
-            )
+    private func submitMessageEdit(_ original: ChatMessage, text: String) {
+        guard original.conversationID == model.selectedConversationID else { return }
+        ChatBottomTrace.log("EDIT_SEND_STARTED")
+        if original.isPendingUserSend == true {
+            model.editMessage(original.id, text: text, sendAfterSave: true)
             return
         }
-        let transitionToken =
-            regenerationViewportTransitionCoordinator.activatePrepared()
-        guard model.selectConversation(
-            message.conversationID,
-            targeting: userMessageID,
-            regenerationSourceMessageID: message.id,
-            closeDrawer: false
-        ) else {
-            if transitionToken != nil {
-                regenerationViewportTransitionCoordinator.cancelAll(
-                    reason: "selectionRejected"
-                )
+        cancelCodeDisclosure(reason: "editSend")
+        messageViewportTransitionCoordinator.coverTranscript(nativeTranscriptDriver.generationTransitionView,
+            compositedIn: nativeTranscriptDriver.generationTransitionSurface) { token in
+            guard original.conversationID == model.selectedConversationID,
+                  let editedID = model.editMessage(original.id, text: text, keepUnchangedUserVersion: true) else {
+                messageViewportTransitionCoordinator.cancelAll(reason: "editNotApplied")
+                return
             }
+            beginMessageGenerationNavigation(messageID: editedID, conversationID: original.conversationID,
+                                             sendsEditedMessage: true, transitionToken: token)
+        }
+    }
+
+    private func beginRegeneration(for message: ChatMessage) {
+        messageViewportTransitionCoordinator.coverTranscript(nativeTranscriptDriver.generationTransitionView,
+            compositedIn: nativeTranscriptDriver.generationTransitionSurface) { token in
+            beginMessageGenerationNavigation(messageID: message.id, conversationID: message.conversationID,
+                                             transitionToken: token)
+        }
+    }
+
+    private func beginMessageGenerationNavigation(
+        messageID: UUID, conversationID: UUID, sendsEditedMessage: Bool = false,
+        transitionToken: UUID?
+    ) {
+        guard conversationID == model.selectedConversationID else {
+            messageViewportTransitionCoordinator.cancelAll(reason: "generationConversationChanged")
             return
         }
-        if let transitionToken,
-           let targetRequest = model.pendingMessageTargetNavigationRequest,
-           targetRequest.conversationID == message.conversationID,
-           targetRequest.messageID == userMessageID,
-           targetRequest.regenerationSourceMessageID == message.id {
-            regenerationViewportTransitionCoordinator.bind(
-                transitionToken,
-                to: targetRequest.id
-            )
-        } else if transitionToken != nil {
-            regenerationViewportTransitionCoordinator.cancelAll(
-                reason: "requestBindingFailed"
-            )
+        guard let userMessageID = model.regenerationUserMessageID(around: messageID) else {
+            messageViewportTransitionCoordinator.cancelAll(reason: "missingUserTarget")
+            if sendsEditedMessage { model.sendEditedMessage(messageID) }
+            return
         }
+        guard model.selectConversation(conversationID, targeting: userMessageID,
+                                       regenerationSourceMessageID: messageID,
+                                       sendsEditedMessageAfterLanding: sendsEditedMessage, closeDrawer: false),
+              let targetRequest = model.pendingMessageTargetNavigationRequest else {
+            messageViewportTransitionCoordinator.cancelAll(reason: "selectionRejected")
+            return
+        }
+        if let transitionToken { messageViewportTransitionCoordinator.bind(transitionToken, to: targetRequest.id) }
     }
 
     private var isPositioningCurrentConversation: Bool {
@@ -8423,6 +8967,20 @@ private struct ChatView: View {
             }
             return
         }
+        // The settle watcher can accept this opening before the deferred idle
+        // sample is delivered. That sample still describes the pre-pin offset
+        // in the smaller keyboard viewport. Preserve the newly accepted owner,
+        // as the phase-activity callback already does for the same stale sample.
+        if !isAtBottom, model.isComposerFocused,
+           keyboardBottomFollowIntent, autoFollowEngaged, !isUserScrollActive,
+           pendingKeyboardViewportPin == nil,
+           pendingKeyboardDismissalDeadline == nil {
+            ChatBottomTrace.log(
+                "KEYBOARD_FOLLOW_PRESERVE reason=acceptedBeforeIdle "
+                    + chatBottomTraceState
+            )
+            return
+        }
         if model.isComposerFocused,
            pendingKeyboardViewportPin == nil,
            pendingKeyboardDismissalDeadline == nil {
@@ -9416,25 +9974,19 @@ private struct ChatView: View {
         }
 
         let targetHostID = conversationMessageHostID(for: messageID)
-        let ownsViewportTransition =
-            regenerationViewportTransitionCoordinator.owns(
-                requestID: targetRequest.id
-            )
-        let usesRegenerationViewportTransition =
-            targetRequest.regenerationSourceMessageID != nil
-            && ownsViewportTransition
-        let prefersCoveredViewportTransition =
-            targetRequest.usesCoveredViewportTransition
-            || usesRegenerationViewportTransition
-        let usesCoveredViewportTransition =
-            (targetRequest.usesCoveredViewportTransition
-                && ownsViewportTransition)
-            || usesRegenerationViewportTransition
+        let isGeneration = targetRequest.regenerationSourceMessageID != nil
+        let usesGenerationFade = isGeneration
+            && messageViewportTransitionCoordinator.owns(requestID: targetRequest.id)
+        let usesFavoriteCover = targetRequest.usesCoveredViewportTransition
+            && messageViewportTransitionCoordinator.owns(requestID: targetRequest.id)
         prepareMessageNavigation(for: request.action)
         navigationAnchorMessageID = messageID
         navigationScrollTask = Task { @MainActor in
             var didVerifyLanding = false
             defer {
+                if usesGenerationFade {
+                    messageViewportTransitionCoordinator.reveal(requestID: targetRequest.id, reason: "generationNavigationEnded")
+                }
                 if navigationRequest == request {
                     navigationRequest = nil
                     navigationScrollTask = nil
@@ -9451,17 +10003,11 @@ private struct ChatView: View {
                 return
             }
 
-            if prefersCoveredViewportTransition {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
+            if isGeneration || targetRequest.usesCoveredViewportTransition {
                 traceScrollCommand(
                     source: "navigation.messageTarget",
                     target: "messageHost:\(ChatBottomTrace.shortID(messageID))",
-                    animation: usesRegenerationViewportTransition
-                        ? "disabledBehindViewportSnapshot"
-                        : usesCoveredViewportTransition
-                            ? "disabledBehindViewportCover"
-                            : "disabledCoverUnavailable"
+                    animation: isGeneration ? "immediateGenerationTarget" : "favoriteTarget"
                 )
                 guard await scrollProxy.animate(
                     targetHostID, anchor: .top, duration: 0, timing: .smooth
@@ -9561,17 +10107,22 @@ private struct ChatView: View {
                 model.consumeMessageTargetNavigationRequest(targetRequest.id)
             }
             if let regenerationSourceMessageID {
-                model.regenerateResponse(around: regenerationSourceMessageID)
+                if targetRequest.sendsEditedMessageAfterLanding {
+                    model.sendEditedMessage(regenerationSourceMessageID)
+                } else {
+                    model.regenerateResponse(around: regenerationSourceMessageID)
+                }
             }
-            if usesCoveredViewportTransition {
+            if usesFavoriteCover || usesGenerationFade {
                 await awaitNextMainQueueTurn()
                 await Task.yield()
-                regenerationViewportTransitionCoordinator.reveal(
-                    requestID: targetRequest.id,
-                    reason: regenerationSourceMessageID == nil
-                        ? "favoriteTargetLanded"
-                        : "landedAndRegenerationStarted"
-                )
+                if usesGenerationFade {
+                    // Staging the reply replaces a real row asynchronously.
+                    // Reveal only after that publication reaches the transcript.
+                    _ = await awaitNativeNavigationPublication(currentConversationBottomAnchorID, request: request)
+                }
+                messageViewportTransitionCoordinator.reveal(requestID: targetRequest.id,
+                    reason: usesGenerationFade ? "generationRowsPublished" : "favoriteTargetLanded")
             }
         }
         keepNavigationVisibleBriefly()
@@ -10205,35 +10756,52 @@ private struct ChatView: View {
         }
 
         let sourceAnchorID = currentConversationBottomAnchorID
-        let precedingUserID = deletionLandingTargetID(for: message)
+        let atBottom = currentUIKitBottomState?.isAtBottom == true
+        let deletingLatestAtBottom = atBottom && !model.hasLaterMessages
+            && sourceAnchorID.messageIDs.last == message.id
+        let precedingUserID = deletingLatestAtBottom ? nil : deletionLandingTargetID(for: message)
         // Prefer the old user-row semantics if it is actually visible. Otherwise
         // keep a surviving visible row; a full-screen deleted row needs an ID
         // landing instead of waiting for an offscreen user to produce a frame.
-        let visibleIDs = sourceAnchorID.messageIDs.filter { id in
-            guard id != message.id,
-                  let frame = validConcreteMessageFrame(id, anchorID: sourceAnchorID)
-            else { return false }
-            // Native row frames are relative to the collection viewport. The
-            // outer SwiftUI height includes the header's safe-area bar and can
-            // incorrectly count a row covered by the composer as readable.
-            return frame.maxY > 0 && frame.minY < max(0, scrollView.bounds.height - composerBottomClearance)
+        let readableTop = scrollView.adjustedContentInset.top + topContentSpacerHeight
+        let readableBottom = scrollView.bounds.height - composerBottomClearance
+        let frames = messageFrames
+        func isReadable(_ id: UUID) -> Bool {
+            guard id != message.id, let frame = frames[id],
+                  frame.maxY > readableTop, frame.minY < readableBottom else { return false }
+            return validConcreteMessageFrame(id, anchorID: sourceAnchorID) != nil
         }
-        let readingAnchorID = precedingUserID.flatMap {
-            visibleIDs.contains($0) ? $0 : nil
-        } ?? visibleIDs.first
-        let request = MessageReplacementViewportRequest(
+        let readingAnchorID: UUID?
+        if deletingLatestAtBottom {
+            readingAnchorID = nil
+        } else {
+            readingAnchorID = precedingUserID.flatMap { isReadable($0) ? $0 : nil }
+                ?? sourceAnchorID.messageIDs.first(where: isReadable)
+        }
+        var request = MessageReplacementViewportRequest(
             id: UUID(),
             edit: .deletion(message, allVersions: deletesAllVersions),
             sourceAnchorID: sourceAnchorID,
             scrollViewIdentity: ObjectIdentifier(scrollView),
             readingAnchorID: readingAnchorID,
-            readingAnchorMinY: readingAnchorID.flatMap {
-                validConcreteMessageFrame($0, anchorID: sourceAnchorID)?.minY
-            },
+            readingAnchorMinY: readingAnchorID.flatMap { frames[$0]?.minY },
             precedingUserID: precedingUserID,
             sourceWasAutoFollowEngaged: autoFollowEngaged,
-            sourceWasAtBottom: currentUIKitBottomState?.isAtBottom == true
+            sourceWasAtBottom: atBottom
         )
+        // Removing the last row can expose an older version or the preceding
+        // message. Its height may only become known during native self-sizing.
+        request.keepsExactBottom = deletingLatestAtBottom
+        if !deletesAllVersions, !request.keepsExactBottom, readingAnchorID == nil,
+           let frame = validConcreteMessageFrame(message.id, anchorID: sourceAnchorID) {
+            let insets = scrollView.adjustedContentInset
+            let viewport = scrollView.bounds.height - insets.top - insets.bottom
+            if frame.height > viewport, viewport > 0 {
+                // Invert UIKit's row alignment before replacing a screen-filling
+                // version. The same fractional anchor works at the new height.
+                request.deletionReadingFraction = min(1, max(0, (insets.top - frame.minY) / (frame.height - viewport)))
+            }
+        }
         prepareForMessageReplacementLanding()
         messageReplacementRequest = request
         ChatBottomTrace.log(
@@ -10282,7 +10850,15 @@ private struct ChatView: View {
                 request.targetMessageID = currentConversationBottomAnchorID.messageIDs.contains(replacement.id) ? replacement.id : nil
             } else if request.codeDisclosure != nil {
                 request.targetMessageID = request.message.id
+            } else if request.keepsExactBottom {
+                request.targetMessageID = currentConversationBottomAnchorID.messageIDs.last
+            } else if request.deletionReadingFraction != nil,
+                      let sibling = model.messages.first(where: {
+                          $0.id != request.message.id && $0.versionGroupKey == request.message.versionGroupKey
+                      }) {
+                request.targetMessageID = sibling.id
             } else {
+                request.deletionReadingFraction = nil
                 request.targetMessageID = MessageDeletionLandingPolicy.targetID(
                 deletedID: request.message.id,
                 readingAnchorID: request.readingAnchorID,
@@ -10296,7 +10872,7 @@ private struct ChatView: View {
             // UIKit applies the replacement destination with the row update.
             // Root only acknowledges measured completion; it never reveals the
             // new row's top or performs a second offset correction.
-            request.didIssueLanding = request.replacementMessage != nil || request.codeDisclosure != nil
+            request.didIssueLanding = request.usesNativeLanding
             messageReplacementRequest = request
         }
         guard request.targetMessageID != nil else {
@@ -10310,7 +10886,7 @@ private struct ChatView: View {
                 + " rows=\(currentConversationBottomAnchorID.messageIDs.count) "
                 + chatBottomTraceState
         )
-        guard request.replacementMessage == nil, request.codeDisclosure == nil else { return }
+        guard !request.usesNativeLanding else { return }
         // One initial opportunity after the view update. Subsequent progress is
         // driven by actual row/bottom geometry callbacks, never by a retry loop.
         messageReplacementLandingTask = Task { @MainActor in
@@ -10373,7 +10949,7 @@ private struct ChatView: View {
     }
 
     private func messageReplacementDesiredMinY(_ request: MessageReplacementViewportRequest) -> CGFloat? {
-        guard request.replacementMessage != nil || request.codeDisclosure != nil,
+        guard request.usesNativeLanding,
               let anchorID = request.landingAnchorID,
               let targetID = request.targetMessageID,
               let frame = validConcreteMessageFrame(targetID, anchorID: anchorID),
@@ -10382,6 +10958,11 @@ private struct ChatView: View {
             let maximumOffset = max(-scrollView.adjustedContentInset.top,
                 scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
             return frame.minY + scrollView.contentOffset.y - maximumOffset
+        }
+        if let fraction = request.deletionReadingFraction {
+            let insets = scrollView.adjustedContentInset
+            let viewport = scrollView.bounds.height - insets.top - insets.bottom
+            return insets.top + (viewport - frame.height) * fraction
         }
         if case .codeDisclosure(_, let change, let sourceEdgeY) = request.edit {
             guard let codeFrame = change.state.anchor.frameInWindow(matching: scrollView) else { return nil }
@@ -11777,12 +12358,20 @@ private struct ChatView: View {
         }
     }
 
-    private func keyboardIsOpening(_ notification: Notification) -> Bool {
-        let screenHeight = UIScreen.main.bounds.height
-        let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .zero
-        let beginFrame = notification.userInfo?[UIResponder.keyboardFrameBeginUserInfoKey] as? CGRect ?? .zero
-        guard endFrame != .zero, endFrame.minY < screenHeight - 1 else { return false }
-        return beginFrame == .zero || endFrame.minY < beginFrame.minY - 0.5
+    private func keyboardBottomOverlap(_ notification: Notification) -> (begin: CGFloat, end: CGFloat)? {
+        guard let window = layoutMetrics.window ?? nativeTranscriptDriver.scrollView?.window,
+              let screen = window.windowScene?.screen else { return nil }
+        if let sender = notification.object as? UIScreen, sender !== screen { return nil }
+        let bounds = window.bounds
+        func overlap(for key: String) -> CGFloat {
+            guard let frame = notification.userInfo?[key] as? CGRect, !frame.isEmpty else { return 0 }
+            let local = window.convert(frame, from: screen.coordinateSpace)
+            guard local.minX <= bounds.minX + 1, local.maxX >= bounds.maxX - 1,
+                  local.maxY >= bounds.maxY - 1 else { return 0 }
+            return bounds.intersection(local).height
+        }
+        return (overlap(for: UIResponder.keyboardFrameBeginUserInfoKey),
+                overlap(for: UIResponder.keyboardFrameEndUserInfoKey))
     }
 
     private func updateKeyboardAnimationTiming(from notification: Notification) {
@@ -12598,30 +13187,54 @@ private struct ChatHeaderInteractionLayer: View {
 }
 
 private struct RegisteredChatScrollHeader: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.usesSystemChatNavigation) private var usesSystemChatNavigation
+    @Environment(\.usesVerticalChatToolbar) private var usesVerticalChatToolbar
+    @Environment(\.usesOuterDisplaySidebarButton) private var usesOuterDisplaySidebarButton
     let topSafeAreaInset: CGFloat
     let onOpenDrawer: () -> Void
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if usesSystemChatNavigation {
+            content
+        } else if #available(iOS 26.0, *) {
             content
                 .safeAreaBar(edge: .top, spacing: 0) {
-                    Color.clear
-                        .frame(height: min(topSafeAreaInset, 48))
-                        .overlay(alignment: .top) {
-                            ChatHeader(
-                                onOpenDrawer: onOpenDrawer,
-                                showsNewChatButton: false
-                            )
-                                .padding(.top, topSafeAreaInset)
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
-                        }
+                    if !usesVerticalChatToolbar {
+                        Color.clear
+                            .frame(height: min(topSafeAreaInset, 48))
+                            .overlay(alignment: .top) {
+                                ChatHeader(
+                                    onOpenDrawer: onOpenDrawer,
+                                    showsNewChatButton: false
+                                )
+                                    .padding(.top, topSafeAreaInset)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                    }
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
-                .overlay(alignment: .top) {
-                    ChatHeaderInteractionLayer(onOpenDrawer: onOpenDrawer)
-                        .padding(.top, topSafeAreaInset)
+                .overlay(alignment: .topLeading) {
+                    if usesVerticalChatToolbar {
+                        HStack(spacing: 12) {
+                            if !usesOuterDisplaySidebarButton {
+                                DrawerMenuButton(action: onOpenDrawer)
+                                    .accessibilityLabel(L10n.lookup("打开聊天列表"))
+                            }
+                            if model.preferences.showChatHeaderAssistantPill {
+                                CalendarPill()
+                                    .frame(maxWidth: 220)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                        }
+                        .padding(.leading, usesOuterDisplaySidebarButton ? 16 : 20)
+                        .padding(.top, usesOuterDisplaySidebarButton ? topSafeAreaInset + 8 : topSafeAreaInset)
+                    } else {
+                        ChatHeaderInteractionLayer(onOpenDrawer: onOpenDrawer)
+                            .padding(.top, topSafeAreaInset)
+                    }
                 }
         } else {
             content.overlay(alignment: .top) {
@@ -14365,14 +14978,18 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
         let viewportDuration = keyboardMotionSource.viewportAnimationDuration(
             synchronousLayout: synchronousLayout, fallback: keyboardAnimationDuration
         )
-        // Composer measurement can publish one final, small geometry change
-        // while the keyboard owner's completion is still pending. Keep the
-        // normal opening/reversal animation, but do not launch a second text
-        // animation for a changed destination after the editor has settled.
+        // Apply a content-only correction immediately only after both the
+        // editor and the owned viewport have landed. The editor's old position
+        // is also stationary before its animation is installed; it can also
+        // finish before a delayed viewport motion.
         let isLateSettledCorrection = preservingSendRequestID == nil
             && isContentOnlyRetarget && isRetargeting && wasAnimating
-            && bottomDistanceMeasurement.keyboardMotionTargetY.map {
-                abs($0 - targetOffsetY) > 0.5
+            && bottomDistanceMeasurement.keyboardMotionTargetY.map { previousTargetY in
+                guard abs(previousTargetY - targetOffsetY) > 0.5,
+                      let shownY = scrollView.layer.presentation()?.bounds.origin.y else {
+                    return false
+                }
+                return abs(shownY - previousTargetY) <= 0.5
             } == true
             && keyboardMotionSource.inputPositionIsSettled(
                 in: scrollView, conversationID: conversationID
@@ -14654,6 +15271,9 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
             keyboardViewportCompletionTask = nil
             return
         }
+        let ownedViewportHeight = ownedScrollView.bounds.height
+            - ownedScrollView.adjustedContentInset.top
+            - ownedScrollView.adjustedContentInset.bottom
         keyboardViewportCompletionTask = Task { @MainActor [weak ownedScrollView] in
             try? await Task.sleep(for: .seconds(duration + 0.08))
             guard !Task.isCancelled else { return }
@@ -14697,11 +15317,18 @@ private struct ChatNativeBottomPositionModifier: ViewModifier {
                     + ownedScrollView.adjustedContentInset.bottom)
             let shownY = ownedScrollView.layer.presentation()?.bounds.origin.y
                 ?? ownedScrollView.contentOffset.y
+            let viewportHeight = ownedScrollView.bounds.height
+                - ownedScrollView.adjustedContentInset.top
+                - ownedScrollView.adjustedContentInset.bottom
+            let viewportChanged = abs(viewportHeight - ownedViewportHeight) > 0.5
             if allowsAutomaticBottomFollow,
-               abs(ownedScrollView.contentOffset.y - bottomY) <= 0.5,
-               abs(shownY - bottomY) <= 0.5 {
-                // The motion already landed. Restore following without a new
-                // scroll command that would block the next keyboard layout.
+               viewportChanged || (
+                   abs(ownedScrollView.contentOffset.y - bottomY) <= 0.5
+                    && abs(shownY - bottomY) <= 0.5
+               ) {
+                // A changed viewport belongs to the next layout transition.
+                // This completion may restore following, but must not move to
+                // that newer bottom or block its synchronous keyboard motion.
                 nativeDriver.armBottomPin()
             } else {
                 resetToBottom(source: "keyboardViewportCompletion")
@@ -14797,7 +15424,46 @@ private struct CalendarPill: View {
 
     var body: some View {
         let members = model.selectedConversationAssistantProfiles
+        let pill = label(members: members)
+        Group {
+            if #unavailable(iOS 18), UIDevice.current.userInterfaceIdiom == .pad {
+                pill.overlay {
+                    LegacyAssistantPillButton(onTap: selectAssistant, onHold: showCalendar)
+                }
+            } else {
+                pill.gesture(
+                    LongPressGesture(minimumDuration: 0.42, maximumDistance: 18)
+                        .exclusively(before: TapGesture())
+                        .onEnded { value in
+                            switch value {
+                            case .first(true): showCalendar()
+                            case .second: selectAssistant()
+                            default: break
+                            }
+                        }
+                )
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.format("当前助手：%@", [String(describing: displayName)]))
+        .accessibilityValue(model.selectedConversationIsGroupChat ? members.map(\.name).joined(separator: "、") : "")
+        .accessibilityHint(L10n.lookup("轻点选择助手，长按打开共享日历"))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { selectAssistant() }
+        .accessibilityAction(named: Text(L10n.lookup("打开共享日历"))) { showCalendar() }
+    }
 
+    private func selectAssistant() {
+        model.performCardHaptic()
+        model.isAssistantSelectorPresented = true
+    }
+
+    private func showCalendar() {
+        model.performCardHaptic()
+        model.isCalendarPresented = true
+    }
+
+    private func label(members: [AssistantProfile]) -> some View {
         HStack(spacing: 6) {
             if !model.selectedConversationIsGroupChat {
                 SponsorWearableAvatar(target: .assistant, badgeSize: 13) {
@@ -14833,34 +15499,53 @@ private struct CalendarPill: View {
         // interaction twin keeps the original comfortable 50pt height.
         .frame(height: 50)
         .contentShape(Capsule())
-        .gesture(
-            LongPressGesture(minimumDuration: 0.42, maximumDistance: 18)
-                .exclusively(before: TapGesture())
-                .onEnded { value in
-                    switch value {
-                    case .first(true):
-                        model.performCardHaptic()
-                        model.isCalendarPresented = true
-                    case .second:
-                        model.performCardHaptic()
-                        model.isAssistantSelectorPresented = true
-                    default:
-                        break
-                    }
-                }
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L10n.format("当前助手：%@", [String(describing: displayName)]))
-        .accessibilityValue(model.selectedConversationIsGroupChat ? members.map(\.name).joined(separator: "、") : "")
-        .accessibilityHint(L10n.lookup("轻点选择助手，长按打开共享日历"))
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction {
-            model.performCardHaptic()
-            model.isAssistantSelectorPresented = true
+    }
+}
+
+// The iPadOS 17 navigation title hosts this control directly. Let UIControl
+// deliver touch-up, and let a recognized hold cancel that touch sequence.
+private struct LegacyAssistantPillButton: UIViewRepresentable {
+    let onTap: () -> Void
+    let onHold: () -> Void
+
+    func makeUIView(context: Context) -> PressButton {
+        PressButton(frame: .zero)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: PressButton, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func updateUIView(_ button: PressButton, context: Context) {
+        button.onTap = onTap
+        button.onHold = onHold
+    }
+
+    final class PressButton: UIButton {
+        var onTap: (() -> Void)?
+        var onHold: (() -> Void)?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isAccessibilityElement = false
+            addTarget(self, action: #selector(tapped), for: .touchUpInside)
+            let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+            hold.minimumPressDuration = 0.42
+            hold.allowableMovement = 18
+            hold.cancelsTouchesInView = true
+            addGestureRecognizer(hold)
         }
-        .accessibilityAction(named: Text(L10n.lookup("打开共享日历"))) {
-            model.performCardHaptic()
-            model.isCalendarPresented = true
+
+        required init?(coder: NSCoder) { nil }
+
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).contains(point)
+        }
+
+        @objc private func tapped() { onTap?() }
+
+        @objc private func held(_ sender: UILongPressGestureRecognizer) {
+            if sender.state == .began { onHold?() }
         }
     }
 }
@@ -15672,26 +16357,100 @@ private struct UserBubbleLivelySendAnimationModifier: ViewModifier {
 // bubbles reserve it only for visible reactions so empty footers do not split
 // one user turn apart. The final assistant already has composer clearance.
 enum ConversationMessageLayout {
+    static let assistantBubbleHorizontalInset: CGFloat = 14
     static let reactionFooterHeight: CGFloat = 32
     static let reactionTopInset: CGFloat = 6
 }
 
-private struct StableMessageReactionFooter<Reactions: View>: ViewModifier {
-    let reactions: Reactions
-    var reservesSpace = true
+private extension HorizontalAlignment {
+    enum ActionSymbolLeading: AlignmentID {
+        static func defaultValue(in dimensions: ViewDimensions) -> CGFloat { dimensions[.leading] }
+    }
 
-    func body(content: Content) -> some View {
-        content
-            .padding(.bottom, reservesSpace ? ConversationMessageLayout.reactionFooterHeight : 0)
-            .overlay(alignment: .bottom) {
-                reactions
-                    .padding(.top, ConversationMessageLayout.reactionTopInset)
-                    .frame(height: reservesSpace ? ConversationMessageLayout.reactionFooterHeight : 0, alignment: .top)
+    static let actionSymbolLeading = HorizontalAlignment(ActionSymbolLeading.self)
+}
+
+// Wrap whole controls so a version selector or reaction chip always stays together.
+private struct MessageFooterFlowLayout: Layout {
+    let alignTrailing: Bool
+    var itemSpacing: CGFloat = 6
+    var wraps = true
+    private let lineSpacing: CGFloat = 6
+
+    struct Row {
+        var endIndex: Int
+        var width: CGFloat
+        var height: CGFloat
+    }
+
+    struct Cache {
+        let sizes: [CGSize]
+        let symbolInsets: [CGFloat]
+        var proposedWidth: CGFloat?
+        var itemSpacing: CGFloat?
+        var rows: [Row] = []
+        var contentSize = CGSize.zero
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        if alignTrailing {
+            return Cache(sizes: subviews.map { $0.sizeThatFits(.unspecified) }, symbolInsets: [])
+        }
+        let dimensions = subviews.map { $0.dimensions(in: .unspecified) }
+        return Cache(sizes: dimensions.map { CGSize(width: $0.width, height: $0.height) },
+                     symbolInsets: dimensions.map { $0[.actionSymbolLeading] })
+    }
+
+    private func arrange(width: CGFloat, cache: inout Cache) {
+        guard cache.proposedWidth != width || cache.itemSpacing != itemSpacing else { return }
+        cache.proposedWidth = width
+        cache.itemSpacing = itemSpacing
+        cache.rows.removeAll(keepingCapacity: true)
+        for (index, size) in cache.sizes.enumerated() {
+            if let last = cache.rows.indices.last,
+               cache.rows[last].width + itemSpacing + size.width <= width {
+                cache.rows[last].endIndex = index + 1
+                cache.rows[last].width += itemSpacing + size.width
+                cache.rows[last].height = max(cache.rows[last].height, size.height)
+            } else {
+                cache.rows.append(Row(endIndex: index + 1, width: size.width, height: size.height))
             }
+        }
+        cache.contentSize = .zero
+        for row in cache.rows {
+            cache.contentSize.width = max(cache.contentSize.width, row.width)
+            cache.contentSize.height += row.height
+        }
+        cache.contentSize.height += CGFloat(max(0, cache.rows.count - 1)) * lineSpacing
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        arrange(width: wraps ? (proposal.width ?? .infinity) : .infinity, cache: &cache)
+        let width = alignTrailing ? (proposal.width ?? cache.contentSize.width) : cache.contentSize.width
+        return CGSize(width: width, height: cache.contentSize.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        arrange(width: wraps ? bounds.width : .infinity, cache: &cache)
+        var start = 0
+        var y = bounds.minY
+        for row in cache.rows {
+            // Align the ink to the text column while moving the full tap targets together.
+            var x = alignTrailing ? bounds.maxX - row.width : bounds.minX - cache.symbolInsets[start]
+            for index in start..<row.endIndex {
+                let size = cache.sizes[index]
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
+                                      anchor: .topLeading, proposal: ProposedViewSize(size))
+                x += size.width + itemSpacing
+            }
+            start = row.endIndex
+            y += row.height + lineSpacing
+        }
     }
 }
 
 private struct MessageRow: View {
+    let layoutMetrics: ChatLayoutMetrics
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
     @State private var assistantEditorProfile: AssistantProfile? = nil
@@ -15710,7 +16469,7 @@ private struct MessageRow: View {
     let onUserSendAnimationStarted: (UUID) -> Void
     let onReaction: (ChatMessage, CGPoint) -> Void
     let onUserReaction: (ChatMessage, String?) -> Void
-    let onMore: (ChatMessage) -> Void
+    let onMenuAction: (ChatMessage, MessageMenuAction) -> Void
     let onEdit: (ChatMessage) -> Void
     let onRegenerate: (ChatMessage) -> Void
     let onStreamingReasoningCollapseChanged: (UUID, UUID, Bool) -> Void
@@ -15745,10 +16504,6 @@ private struct MessageRow: View {
             .opacity(waitsForSendArrival ? 0 : 1)
             .animation(nil, value: waitsForSendArrival)
             .accessibilityHidden(waitsForSendArrival)
-    }
-
-    private var userMessageTextMaxWidth: CGFloat {
-        min(UIScreen.main.bounds.width * 0.64, 270)
     }
 
     private var assistantUsesWideTextLayout: Bool {
@@ -16004,7 +16759,7 @@ private struct MessageRow: View {
             if message.role != .user, hasVisibleReaction {
                 HStack(spacing: 0) {
                     if message.role == .user { Spacer(minLength: 0) }
-                    MessageReactionChips(message: message)
+                    HStack(spacing: 6) { MessageReactionChips(message: message) }
                         .fixedSize(horizontal: true, vertical: true)
                     if message.role != .user { Spacer(minLength: 0) }
                 }
@@ -16020,7 +16775,7 @@ private struct MessageRow: View {
                     MessageInlineActionsBar(
                         message: message,
                         onReaction: onReaction,
-                        onMore: onMore,
+                        onMenuAction: onMenuAction,
                         onEdit: onEdit,
                         onRegenerate: onRegenerate,
                         onSelectVersion: onSelectVersion
@@ -16031,17 +16786,15 @@ private struct MessageRow: View {
                 }
                 .padding(
                     .leading,
-                    message.role == .assistant ? assistantContentLeadingInset : 0
+                    message.role == .assistant ? assistantTextLeadingInset : 0
                 )
                 .padding(.top, hasVisibleReaction ? 8 : 6)
             }
+            if message.role == .user { userReactionFooter }
         }
         .frame(maxWidth: .infinity)
-        .modifier(StableMessageReactionFooter(
-            reactions: userReactionFooter,
-            reservesSpace: message.role == .user
-                ? (!hasFollowingUserBatch || hasVisibleReaction) : !isConversationTail
-        ))
+        .padding(.bottom, message.role != .user && !isConversationTail
+                 ? ConversationMessageLayout.reactionFooterHeight : 0)
         .background {
             if message.role == .assistant,
                !message.isStreaming,
@@ -16074,7 +16827,7 @@ private struct MessageRow: View {
                         markdown
                     } else {
                         markdown
-                            .padding(.horizontal, 14)
+                            .padding(.horizontal, ConversationMessageLayout.assistantBubbleHorizontalInset)
                             .padding(.vertical, 10)
                             .background(
                                 ChatBubbleSurface(
@@ -16192,13 +16945,27 @@ private struct MessageRow: View {
 
     @ViewBuilder
     private var userReactionFooter: some View {
-        if message.role == .user, hasVisibleReaction {
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                MessageReactionChips(message: message)
-                    .fixedSize(horizontal: true, vertical: true)
+        let versions = message.isUserEditVersion == true
+            ? model.versions(for: message.id, in: message.conversationID) : []
+        if hasVisibleReaction || versions.count > 1 {
+            VStack(alignment: .trailing, spacing: 4) {
+                if versions.count > 1, let index = versions.firstIndex(where: { $0.id == message.id }) {
+                    MessageVersionSelector(message: message, versions: versions, index: index, onSelect: onSelectVersion)
+                        .disabled(model.isConversationStreaming(message.conversationID))
+                }
+                if hasVisibleReaction {
+                    MessageFooterFlowLayout(alignTrailing: true) {
+                        MessageReactionChips(message: message)
+                    }
+                }
             }
+            .frame(maxWidth: layoutMetrics.userTextMaxWidth, alignment: .trailing)
             .padding(.trailing, reactionTrailingInset)
+            .padding(.top, ConversationMessageLayout.reactionTopInset)
+            .frame(minHeight: ConversationMessageLayout.reactionFooterHeight, alignment: .top)
+        } else if !hasFollowingUserBatch {
+            Color.clear.frame(height: ConversationMessageLayout.reactionFooterHeight)
+                .accessibilityHidden(true)
         }
     }
 
@@ -16214,6 +16981,11 @@ private struct MessageRow: View {
 
     private var assistantContentLeadingInset: CGFloat {
         !assistantUsesWideTextLayout && model.preferences.showModelIcon ? 40 : 0
+    }
+
+    private var assistantTextLeadingInset: CGFloat {
+        assistantContentLeadingInset + (assistantUsesWideTextLayout || message.text.isEmpty
+            ? 0 : ConversationMessageLayout.assistantBubbleHorizontalInset)
     }
 
     private var reactionTrailingInset: CGFloat {
@@ -16233,8 +17005,8 @@ private struct MessageRow: View {
             onEdit: {
                 onEdit(message)
             },
-            onMore: {
-                onMore(message)
+            onMenuAction: { action in
+                onMenuAction(message, action)
             }
         )
     }
@@ -16259,7 +17031,7 @@ private struct MessageRow: View {
             collapsedCodeLineLimit: model.preferences.autoCollapseCodeBlockLines,
             codeBlockAppearance: model.preferences.codeBlockAppearance,
             fillsAvailableWidth: false,
-            compactMaximumWidth: userMessageTextMaxWidth,
+            compactMaximumWidth: layoutMetrics.userTextMaxWidth,
             // User-message long press now belongs to one bubble context menu,
             // so this path no longer needs TextKit's native range selection.
             // Keep compact bubbles on SwiftUI's single-pass text layout: the
@@ -16378,7 +17150,8 @@ private struct MessageReactionPickerPresentation: Identifiable {
 
 private struct MessageSheetPresentation: Identifiable {
     enum Kind {
-        case actions
+        case details(MessageDetailsSnapshot)
+        case share
         case edit
     }
 
@@ -16395,9 +17168,11 @@ private struct MessageReactionPickerOverlay: View {
     @State private var isDismissing = false
 
     let presentation: MessageReactionPickerPresentation
+    let message: ChatMessage
     let selectedReaction: String?
     let onSelect: (String) -> Void
-    let onMore: () -> Void
+    let onMenuAction: (MessageMenuAction) -> Void
+    let onMoreRequested: (CGPoint) -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -16417,13 +17192,15 @@ private struct MessageReactionPickerOverlay: View {
                     .onTapGesture { dismiss() }
 
                 MessageReactionPickerBar(
+                    message: message,
                     selectedReaction: selectedReaction,
                     onSelect: { reaction in
                         guard !isDismissing else { return }
                         onSelect(reaction)
                         dismiss()
                     },
-                    onMore: { dismiss(after: onMore) }
+                    onMenuAction: { action in dismiss(after: { onMenuAction(action) }) },
+                    onMoreRequested: { location in dismiss(after: { onMoreRequested(location) }) }
                 )
                 .frame(width: pickerWidth, height: 58)
                 .scaleEffect(reduceMotion || isVisible ? 1 : (isDismissing ? 0.96 : 0.82))
@@ -16455,11 +17232,14 @@ private struct MessageReactionPickerOverlay: View {
 }
 
 private struct MessageReactionPickerBar: View {
+    @Environment(AppModel.self) private var model
     private static let reactions = MessageReactionOptions.all
 
+    let message: ChatMessage
     let selectedReaction: String?
     let onSelect: (String) -> Void
-    let onMore: () -> Void
+    let onMenuAction: (MessageMenuAction) -> Void
+    let onMoreRequested: (CGPoint) -> Void
 
     var body: some View {
         if #available(iOS 26.0, *) {
@@ -16501,14 +17281,32 @@ private struct MessageReactionPickerBar: View {
                 .frame(height: 26)
                 .padding(.horizontal, 2)
 
-            Button(action: onMore) {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 35, height: 42)
-                    .contentShape(Rectangle())
+            if #available(iOS 17.4, *) {
+                GeometryReader { proxy in
+                    Button {
+                        let frame = proxy.frame(in: .global)
+                        onMoreRequested(CGPoint(x: frame.midX, y: frame.midY))
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.lookup("更多消息操作"))
+                }
+                .frame(width: 35, height: 42)
+            } else {
+                NativeMessageMenuButton(
+                    items: { messageMenuItems(message, model: model) },
+                    allowsPresentation: { DrawerInlineActionTapGate.allowsAction },
+                    onSelect: onMenuAction,
+                    pointSize: 17, tintColor: .label,
+                    accessibilityLabel: L10n.lookup("更多消息操作")
+                )
+                .frame(width: 35, height: 42)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(L10n.lookup("更多消息操作"))
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 7)
@@ -16520,11 +17318,13 @@ private enum MessageReactionOptions {
 }
 
 private struct UserMessageNativeContextMenuModifier: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @State private var moreMenuAnchor = NativeMessageMenuAnchor()
     let message: ChatMessage
     let onSelectReaction: (String?) -> Void
     let onRegenerate: () -> Void
     let onEdit: () -> Void
-    let onMore: () -> Void
+    let onMenuAction: (MessageMenuAction) -> Void
 
     func body(content: Content) -> some View {
         let previewShape = RoundedRectangle(cornerRadius: 19, style: .continuous)
@@ -16537,20 +17337,48 @@ private struct UserMessageNativeContextMenuModifier: ViewModifier {
                     onSelectReaction: onSelectReaction,
                     onRegenerate: onRegenerate,
                     onEdit: onEdit,
-                    onMore: onMore
+                    onMenuAction: onMenuAction,
+                    onMoreRequested: requestMoreMenu
                 )
             }
             .menuOrder(.fixed)
+            .background(alignment: .bottomTrailing) {
+                if #available(iOS 17.4, *) {
+                    NativeMessageMenuButton(
+                        items: { messageMenuItems(message, model: model) },
+                        allowsPresentation: { DrawerInlineActionTapGate.allowsAction },
+                        onSelect: onMenuAction,
+                        pointSize: 16,
+                        tintColor: .label,
+                        accessibilityLabel: L10n.lookup("更多"),
+                        showsGlyph: false,
+                        presentationAnchor: moreMenuAnchor
+                    )
+                    .frame(width: 28, height: 28)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
+    }
+
+    private var requestMoreMenu: (() -> Void)? {
+        if #available(iOS 17.4, *) {
+            return moreMenuAnchor.present
+        }
+        // Earlier iOS versions have no public programmatic menu presentation.
+        return nil
     }
 }
 
 private struct UserMessageNativeContextMenuItems: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
     let message: ChatMessage
     let onSelectReaction: (String?) -> Void
     let onRegenerate: () -> Void
     let onEdit: () -> Void
-    let onMore: () -> Void
+    let onMenuAction: (MessageMenuAction) -> Void
+    let onMoreRequested: (() -> Void)?
 
     private var textForActions: String {
         message.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -16594,18 +17422,43 @@ private struct UserMessageNativeContextMenuItems: View {
 
         Divider()
 
-        Button(L10n.lookup("复制"), systemImage: "doc.on.doc") {
+        Button {
             UIPasteboard.general.string = textForActions
+        } label: {
+            menuLabel("复制", systemImage: "doc.on.doc")
         }
         .disabled(textForActions.isEmpty)
 
-        Button(L10n.lookup("重新发送"), systemImage: "arrow.clockwise", action: onRegenerate)
-            .disabled(isConversationStreaming)
+        Button(action: onRegenerate) {
+            menuLabel("重新发送", systemImage: "arrow.clockwise")
+        }
+        .disabled(isConversationStreaming)
 
-        Button(L10n.lookup("编辑"), systemImage: "pencil", action: onEdit)
-            .disabled(isConversationStreaming)
+        Button(action: onEdit) {
+            menuLabel("编辑", systemImage: "pencil")
+        }
+        .disabled(isConversationStreaming)
 
-        Button(L10n.lookup("更多"), systemImage: isBookmarked ? "bookmark.fill" : "ellipsis", action: onMore)
+        if let onMoreRequested {
+            Button(action: onMoreRequested) {
+                menuLabel("更多", systemImage: isBookmarked ? "bookmark.fill" : "ellipsis")
+            }
+        } else {
+            Menu {
+                MessageActionsMenuItems(message: message, onSelect: onMenuAction)
+            } label: {
+                menuLabel("更多", systemImage: isBookmarked ? "bookmark.fill" : "ellipsis")
+            }
+            .menuOrder(.fixed)
+        }
+    }
+
+    private func menuLabel(_ title: String, systemImage: String) -> some View {
+        Label {
+            Text(L10n.lookup(title))
+        } icon: {
+            Image(uiImage: messageMenuSymbol(systemImage, colorScheme: colorScheme))
+        }
     }
 }
 
@@ -16613,18 +17466,18 @@ private struct MessageReactionChips: View {
     @Environment(AppModel.self) private var model
     let message: ChatMessage
 
-    var body: some View {
-        HStack(spacing: 6) {
-            if model.preferences.aiMessageReactionsEnabled,
-               let reaction = message.reactions.assistantReaction {
-                reactionChip(reaction) {
-                    AssistantAvatarView(profile: model.assistantReactionAuthor(for: message), size: 20)
-                }
+    @ScaledMetric(relativeTo: .body) private var emojiSize: CGFloat = 16
+
+    @ViewBuilder var body: some View {
+        if model.preferences.aiMessageReactionsEnabled,
+           let reaction = message.reactions.assistantReaction {
+            reactionChip(reaction) {
+                AssistantAvatarView(profile: model.assistantReactionAuthor(for: message), size: 20)
             }
-            if let reaction = message.reactions.userReaction {
-                reactionChip(reaction) {
-                    UserProfileAvatarView(profile: model.userProfile, size: 20)
-                }
+        }
+        if let reaction = message.reactions.userReaction {
+            reactionChip(reaction) {
+                UserProfileAvatarView(profile: model.userProfile, size: 20)
             }
         }
     }
@@ -16636,14 +17489,85 @@ private struct MessageReactionChips: View {
         HStack(spacing: 5) {
             avatar()
             Text(reaction)
-                .font(.system(size: 16))
+                .font(.system(size: message.role == .user ? emojiSize : 16))
         }
-        .padding(.leading, 3)
-        .padding(.trailing, 8)
-        .padding(.vertical, 3)
+        .padding(3)
         .background(Color(uiColor: .secondarySystemBackground).opacity(0.84), in: Capsule())
         .overlay(Capsule().stroke(Color.primary.opacity(0.10), lineWidth: 0.7))
     }
+}
+
+private struct MessageVersionSelector: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.messageInlineActionAdmission) private var actionAdmission
+    @ScaledMetric(relativeTo: .body) private var counterSize: CGFloat = 14
+    let message: ChatMessage
+    let versions: [ChatMessage]
+    let index: Int
+    let onSelect: (ChatMessage, ChatMessage) -> Void
+
+    private var foregroundColor: Color {
+        colorScheme == .dark ? .white.opacity(0.78) : .black.opacity(0.72)
+    }
+
+    var body: some View {
+        // Give each arrow four extra points toward the counter while preserving glyph positions.
+        HStack(spacing: -2) {
+            versionButton(systemName: "chevron.left",
+                          alignment: .leading,
+                          label: L10n.lookup(message.role == .user ? "上一版提问" : "上一版回答"),
+                          disabled: index == 0) {
+                if versions.indices.contains(index - 1) { onSelect(message, versions[index - 1]) }
+            }
+            Text("\(index + 1)/\(versions.count)")
+                .font(.system(size: (message.role == .user ? counterSize : 14) * model.preferences.messageActionScale,
+                              weight: .medium, design: .rounded))
+                .foregroundStyle(foregroundColor)
+                .monospacedDigit()
+                .fixedSize()
+                .frame(minWidth: 34 * model.preferences.messageActionScale)
+            versionButton(systemName: "chevron.right",
+                          alignment: .trailing,
+                          label: L10n.lookup(message.role == .user ? "下一版提问" : "下一版回答"),
+                          disabled: index + 1 >= versions.count) {
+                if versions.indices.contains(index + 1) { onSelect(message, versions[index + 1]) }
+            }
+        }
+        .frame(minHeight: 28)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func versionButton(
+        systemName: String,
+        alignment: Alignment,
+        label: String,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        let pointSize = 13 * model.preferences.messageActionScale
+        return Button {
+            guard DrawerInlineActionTapGate.allowsAction,
+                  actionAdmission.allowsAction() else { return }
+            model.performCardHaptic()
+            action()
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: pointSize, weight: .semibold))
+                .foregroundStyle(foregroundColor)
+                .alignmentGuide(alignment == .leading ? .actionSymbolLeading : .leading) {
+                    $0[.leading] + (alignment == .leading ? pointSize * 0.1 : 0)
+                }
+                .frame(width: 24, height: 28)
+                .frame(width: 28, alignment: alignment)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.28 : 1)
+        .accessibilityLabel(label)
+    }
+
 }
 
 private struct MessageInlineActionsBar: View {
@@ -16652,7 +17576,7 @@ private struct MessageInlineActionsBar: View {
     @Environment(\.messageInlineActionAdmission) private var actionAdmission
     let message: ChatMessage
     let onReaction: (ChatMessage, CGPoint) -> Void
-    let onMore: (ChatMessage) -> Void
+    let onMenuAction: (ChatMessage, MessageMenuAction) -> Void
     let onEdit: (ChatMessage) -> Void
     let onRegenerate: (ChatMessage) -> Void
     let onSelectVersion: (ChatMessage, ChatMessage) -> Void
@@ -16684,7 +17608,11 @@ private struct MessageInlineActionsBar: View {
     var body: some View {
         let responseVersions = self.responseVersions
         let selectedResponseVersionIndex = responseVersions.firstIndex(where: { $0.id == message.id })
-        HStack(spacing: 6) {
+        let scale = model.preferences.messageActionScale
+        let enlarged = scale > 1
+        // Compensate for the change in glyph width inside each fixed 28 pt tap target.
+        let itemSpacing = 6 + 16 * (scale - 1)
+        MessageFooterFlowLayout(alignTrailing: false, itemSpacing: itemSpacing, wraps: enlarged) {
             if message.role == .assistant {
                 ForEach(visibleAssistantActions) { action in
                     assistantAction(action)
@@ -16714,24 +17642,16 @@ private struct MessageInlineActionsBar: View {
                     onEdit(message)
                 }
 
-                actionButton(
-                    systemName: "ellipsis",
-                    label: L10n.lookup("更多"),
-                    color: isBookmarked ? Color.accentColor : nil
-                ) {
-                    onMore(message)
-                }
+                moreMenu
             }
 
             if responseVersions.count > 1,
                let selectedResponseVersionIndex {
-                responseVersionSelector(
-                    selectedIndex: selectedResponseVersionIndex,
-                    count: responseVersions.count
-                )
+                MessageVersionSelector(message: message, versions: responseVersions,
+                                       index: selectedResponseVersionIndex, onSelect: onSelectVersion)
             }
         }
-        .frame(height: 28)
+        .frame(height: enlarged ? nil : 28)
         .accessibilityElement(children: .contain)
         .onAppear {
             isSpeaking = DeviceTTSService.isSpeaking(messageID: message.id)
@@ -16761,17 +17681,24 @@ private struct MessageInlineActionsBar: View {
                 onRegenerate(message)
             }
         case .reaction:
-            GeometryReader { proxy in
-                actionButton(
-                    systemName: action.systemImage,
-                    label: L10n.lookup(action.title),
-                    color: message.reactions.userReaction == nil ? nil : Color.accentColor
-                ) {
-                    let frame = proxy.frame(in: .global)
-                    onReaction(message, CGPoint(x: frame.midX, y: frame.minY))
+            // Keep the symbol as the sizing view. The overlay resolves the
+            // picker anchor at activation without observing scroll positions.
+            actionGlyph(action.systemImage, color: message.reactions.userReaction == nil ? nil : .accentColor)
+                .accessibilityHidden(true)
+                .overlay {
+                    GeometryReader { proxy in
+                        Button {
+                            performInlineAction {
+                                let frame = proxy.frame(in: .global)
+                                onReaction(message, CGPoint(x: frame.midX, y: frame.minY))
+                            }
+                        } label: {
+                            Color.clear.contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(L10n.lookup(action.title))
+                    }
                 }
-            }
-            .frame(width: 28, height: 28)
         case .speech:
             actionButton(
                 systemName: isSpeaking ? "stop.circle" : action.systemImage,
@@ -16780,14 +17707,6 @@ private struct MessageInlineActionsBar: View {
                 disabled: textForActions.isEmpty
             ) {
                 DeviceTTSService.toggle(text: textForActions, messageID: message.id)
-            }
-        case .translate:
-            actionButton(
-                systemName: action.systemImage,
-                label: L10n.lookup(action.title),
-                disabled: textForActions.isEmpty
-            ) {
-                model.translateMessage(message.id)
             }
         case .branch:
             actionButton(
@@ -16806,73 +17725,24 @@ private struct MessageInlineActionsBar: View {
                 onEdit(message)
             }
         case .more:
-            actionButton(
-                systemName: action.systemImage,
-                label: L10n.lookup(action.title),
-                color: isBookmarked ? Color.accentColor : nil
-            ) {
-                onMore(message)
-            }
+            moreMenu
         }
     }
 
-    private func responseVersionSelector(
-        selectedIndex: Int,
-        count: Int
-    ) -> some View {
-        HStack(spacing: 2) {
-            versionButton(
-                systemName: "chevron.left",
-                label: L10n.lookup("上一版回答"),
-                disabled: selectedIndex == 0
-            ) {
-                let responseVersions = self.responseVersions
-                guard responseVersions.indices.contains(selectedIndex - 1) else { return }
-                onSelectVersion(message, responseVersions[selectedIndex - 1])
-            }
-
-            Text("\(selectedIndex + 1)/\(count)")
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(foregroundColor)
-                .monospacedDigit()
-                .frame(minWidth: 34)
-
-            versionButton(
-                systemName: "chevron.right",
-                label: L10n.lookup("下一版回答"),
-                disabled: selectedIndex + 1 >= count
-            ) {
-                let responseVersions = self.responseVersions
-                guard responseVersions.indices.contains(selectedIndex + 1) else { return }
-                onSelectVersion(message, responseVersions[selectedIndex + 1])
-            }
-        }
-        .frame(height: 28)
-        .accessibilityElement(children: .contain)
-    }
-
-    private func versionButton(
-        systemName: String,
-        label: String,
-        disabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button {
-            guard DrawerInlineActionTapGate.allowsAction,
-                  actionAdmission.allowsAction() else { return }
-            model.performCardHaptic()
-            action()
-        } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(foregroundColor)
-                .frame(width: 24, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.28 : 1)
-        .accessibilityLabel(label)
+    private var moreMenu: some View {
+        let pointSize = 16 * model.preferences.messageActionScale
+        return NativeMessageMenuButton(
+            items: { messageMenuItems(message, model: model) },
+            allowsPresentation: {
+                DrawerInlineActionTapGate.allowsAction && actionAdmission.allowsAction()
+            },
+            onSelect: { onMenuAction(message, $0) },
+            pointSize: pointSize,
+            tintColor: UIColor(isBookmarked ? Color.accentColor : foregroundColor),
+            accessibilityLabel: L10n.lookup("更多")
+        )
+        .frame(width: 28, height: 28)
+        .accessibilityIdentifier("messageActions.more")
     }
 
     private func actionButton(
@@ -16883,21 +17753,31 @@ private struct MessageInlineActionsBar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button {
-            guard DrawerInlineActionTapGate.allowsAction,
-                  actionAdmission.allowsAction() else { return }
-            model.performCardHaptic()
-            action()
+            performInlineAction(action)
         } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(color ?? foregroundColor)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
+            actionGlyph(systemName, color: color)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.35 : 1)
         .accessibilityLabel(label)
+    }
+
+    private func actionGlyph(_ name: String, color: Color?) -> some View {
+        let pointSize = 16 * model.preferences.messageActionScale
+        return Image(systemName: name)
+            .font(.system(size: pointSize, weight: .medium))
+            .foregroundStyle(color ?? foregroundColor)
+            // SF Symbols include a small side bearing inside their intrinsic frame.
+            .alignmentGuide(.actionSymbolLeading) { $0[.leading] + pointSize * 0.1 }
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+    }
+
+    private func performInlineAction(_ action: () -> Void) {
+        guard DrawerInlineActionTapGate.allowsAction, actionAdmission.allowsAction() else { return }
+        model.performCardHaptic()
+        action()
     }
 }
 
@@ -17008,7 +17888,7 @@ private struct MessageDetailsContent: View {
     }
 }
 
-private enum MessageActionsSheetRow: Identifiable {
+private enum MessageMenuAction: Identifiable {
     case details
     case action(AssistantMessageMoreActionItem)
 
@@ -17020,335 +17900,273 @@ private enum MessageActionsSheetRow: Identifiable {
     }
 }
 
-private struct MessageActionsSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let message: ChatMessage
-    let onDelete: (ChatMessage, Bool) -> Void
+private struct MessageMenuItem: Identifiable {
+    let action: MessageMenuAction
+    let title: String
+    let systemImage: String
+    var isDestructive = false
+    var isDisabled = false
 
-    @State private var isEditing = false
-    @State private var editText = ""
-    @State private var isSharing = false
-    @State private var isDeleteConfirmationPresented = false
-    @State private var isDeleteAllVersionsConfirmationPresented = false
-    @State private var isRegenerateConfirmationPresented = false
-    @State private var details: MessageDetailsSnapshot?
-    @State private var isShowingDetails = false
+    var id: String { action.id }
+}
 
-    private var isBookmarked: Bool {
-        model.messages.first(where: { $0.id == message.id })?.reactions.bookmarkedAt != nil
-    }
+@MainActor
+private func messageMenuVersionCount(_ message: ChatMessage, model: AppModel) -> Int {
+    guard message.role == .assistant || message.isUserEditVersion == true else { return 1 }
+    return max(model.versions(for: message.id, in: message.conversationID).count, 1)
+}
 
-    private var visibleMoreActions: [AssistantMessageMoreActionItem] {
-        guard message.role != .assistant else {
-            return model.preferences.assistantMessageMoreActionItems.filter { item in
-                switch item {
-                case .standard(let action):
-                    !model.preferences.hiddenAssistantMessageMoreActions.contains(action)
-                case .deleteAllVersions:
-                    model.preferences.showDeleteAllMessageVersionsAction
-                        && responseVersionCount > 1
-                }
+/// Both native menu entrances use the same labels, ordering and availability.
+/// UIKit resolves this at presentation time; SwiftUI resolves it for the submenu.
+@MainActor
+private func messageMenuItems(_ message: ChatMessage, model: AppModel) -> [MessageMenuItem] {
+    let message = model.messages.first(where: { $0.id == message.id }) ?? message
+    let isBookmarked = message.reactions.bookmarkedAt != nil
+    let versionCount = messageMenuVersionCount(message, model: model)
+    let isStreaming = model.isConversationStreaming(message.conversationID)
+    let isUserVersionDeletionDisabled = message.isUserEditVersion == true && isStreaming
+    let actions: [AssistantMessageMoreActionItem]
+    if message.role == .assistant {
+        actions = model.preferences.assistantMessageMoreActionItems.filter { item in
+            switch item {
+            case .standard(let action):
+                !model.preferences.hiddenAssistantMessageMoreActions.contains(action)
+            case .deleteAllVersions:
+                model.preferences.showDeleteAllMessageVersionsAction && versionCount > 1
             }
         }
-
-        var actions: [AssistantMessageMoreActionItem] = []
+    } else {
+        var items: [AssistantMessageMoreActionItem] = []
         if model.preferences.aiMessageReactionsEnabled || isBookmarked {
-            actions.append(.standard(.bookmark))
+            items.append(.standard(.bookmark))
         }
-        actions.append(contentsOf: [.standard(.copy), .standard(.share)])
+        items.append(contentsOf: [.standard(.copy), .standard(.share)])
         if message.role == .user {
-            actions.append(
-                contentsOf: [
-                    .standard(.translate),
-                    .standard(.branch),
-                    .standard(.regenerate)
-                ]
-            )
+            items.append(contentsOf: [.standard(.branch), .standard(.regenerate)])
         } else {
-            actions.append(.standard(.edit))
+            items.append(.standard(.edit))
         }
-        actions.append(.standard(.delete))
-        return actions
+        items.append(.standard(.delete))
+        if message.role == .user && versionCount > 1 { items.append(.deleteAllVersions) }
+        actions = items
     }
 
-    private var responseVersionCount: Int {
-        guard message.role == .assistant else { return 1 }
-        return max(model.versions(for: message.id).count, 1)
-    }
-
-    private var menuRows: [MessageActionsSheetRow] {
-        let actions = visibleMoreActions
-        var rows = actions.map(MessageActionsSheetRow.action)
-        // Keep existing custom action order and persisted preferences intact.
-        // Details sit just above deletion; they also remain available when
-        // the user has hidden every configurable action.
-        let insertionIndex = actions.firstIndex(of: .standard(.delete))
-            ?? actions.firstIndex(of: .deleteAllVersions)
-            ?? actions.count
-        rows.insert(.details, at: insertionIndex)
-        return rows
-    }
-
-    private var deleteActionTitle: String {
-        responseVersionCount > 1 ? L10n.lookup("删除当前版本") : L10n.lookup("删除")
-    }
-
-    private var preferredSheetHeight: CGFloat {
-        if isShowingDetails { return 380 }
-        let rowCount = menuRows.count
-        let rowContentHeight = CGFloat(rowCount) * 50
-            + CGFloat(max(rowCount - 1, 0)) * 4
-        let measuredContentHeight = rowCount == 0
-            ? 220
-            : rowContentHeight + 92
-        let screenLimit = UIScreen.main.bounds.height * 0.72
-        return min(max(measuredContentHeight, 220), screenLimit)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Capsule()
-                .fill(Color.secondary.opacity(0.30))
-                .frame(width: 38, height: 5)
-                .padding(.top, 10)
-                .padding(.bottom, 12)
-
-            GeometryReader { proxy in
-                ZStack(alignment: .top) {
-                    navigationPage(at: 0, size: proxy.size) {
-                        VStack(spacing: 0) {
-                            pageHeader(isDetails: false)
-                            menuContent
-                        }
-                    }
-                    navigationPage(at: 1, size: proxy.size) {
-                        VStack(spacing: 0) {
-                            pageHeader(isDetails: true)
-                            if let details {
-                                MessageDetailsContent(details: details)
-                            }
-                        }
-                    }
-                }
-                .clipped()
-            }
-        }
-        .presentationDetents([.height(preferredSheetHeight), .large])
-        .presentationDragIndicator(.hidden)
-        .sheet(isPresented: $isEditing) {
-            MessageEditSheet(
-                text: $editText,
-                roleTitle: message.role == .user ? L10n.lookup("编辑用户消息") : L10n.lookup("编辑助手消息"),
-                allowsSaveAndSend: message.role == .user || message.role == .assistant
-            ) { shouldSend in
-                model.editMessage(message.id, text: editText, sendAfterSave: shouldSend)
-                isEditing = false
-                dismiss()
-            }
-        }
-        .sheet(isPresented: $isSharing) {
-            ActivityShareSheet(items: [message.text])
-                .ignoresSafeArea()
-        }
-        .alert(L10n.lookup("删除消息"), isPresented: $isDeleteConfirmationPresented) {
-            Button(L10n.lookup("取消"), role: .cancel) {}
-            Button(deleteActionTitle, role: .destructive) {
-                onDelete(message, false)
-                dismiss()
-            }
-        } message: {
-            Text(
-                responseVersionCount > 1
-                    ? L10n.lookup("只删除当前显示的这个回复版本，其他版本会保留。")
-                    : L10n.lookup("删除这条消息？")
-            )
-        }
-        .alert(L10n.lookup("完全删除所有版本"), isPresented: $isDeleteAllVersionsConfirmationPresented) {
-            Button(L10n.lookup("取消"), role: .cancel) {}
-            Button(L10n.lookup("完全删除"), role: .destructive) {
-                onDelete(message, true)
-                dismiss()
-            }
-        } message: {
-            Text(L10n.format("将永久删除这条回答的全部 %@ 个版本。前面的用户消息与其他消息会保留，此操作无法撤销。", [String(describing: responseVersionCount)]))
-        }
-        .alert(message.role == .user ? L10n.lookup("重新发送") : L10n.lookup("重新生成"), isPresented: $isRegenerateConfirmationPresented) {
-            Button(L10n.lookup("取消"), role: .cancel) {}
-            Button(message.role == .assistant ? L10n.lookup("重新生成") : L10n.lookup("重新发送")) {
-                model.regenerateResponse(around: message.id)
-                dismiss()
-            }
-        } message: {
-            if message.role == .user {
-                Text(model.preferences.regenerateDeleteTrailingMessages
-                     ? L10n.lookup("会删除这条消息后面的后续消息，然后重新发送。")
-                     : L10n.lookup("会重新发送这条消息，后续消息会保留。"))
-            } else {
-                Text(model.preferences.regenerateDeleteTrailingMessages
-                     ? L10n.lookup("会删除这条消息后面的后续消息，然后重新生成。")
-                     : L10n.lookup("会基于这条消息重新生成一条新回复，后续消息会保留。"))
-            }
-        }
-    }
-
-    private func navigationPage<Content: View>(
-        at depth: Int, size: CGSize, @ViewBuilder content: () -> Content
-    ) -> some View {
-        let currentDepth = isShowingDetails ? 1 : 0
-        let position = depth == currentDepth ? 0 : (depth < currentDepth ? -1 : 1)
-        return content()
-            .frame(width: size.width, height: size.height, alignment: .top)
-            .offset(x: reduceMotion ? 0 : CGFloat(position) * size.width)
-            .opacity(position == 0 ? 1 : (position < 0 || reduceMotion ? 0 : 0.35))
-            .allowsHitTesting(position == 0)
-            .accessibilityHidden(position != 0)
-    }
-
-    private func pageHeader(isDetails: Bool) -> some View {
-        Text(L10n.lookup(isDetails ? "消息详情" : "消息操作"))
-            .font(.system(size: 17, weight: .semibold))
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: .leading) {
-                if isDetails {
-                    Button {
-                        model.performCardHaptic()
-                        // Keep the captured page alive while it slides out.
-                        withAnimation(.easeInOut(duration: 0.28)) {
-                            isShowingDetails = false
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.leading, 12)
-                    .accessibilityLabel(L10n.lookup("返回消息操作"))
-                }
-            }
-            .padding(.bottom, 10)
-    }
-
-    private var menuContent: some View {
-        ScrollView {
-            VStack(spacing: 4) {
-                ForEach(menuRows) { row in
-                    switch row {
-                    case .details:
-                        actionRow(L10n.lookup("消息详情"), systemName: "info.circle") {
-                            details = MessageDetailsSnapshot(message: message, providers: model.providers)
-                            withAnimation(.easeInOut(duration: 0.30)) {
-                                isShowingDetails = true
-                            }
-                        }
-                    case .action(let action):
-                        moreActionRow(action)
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 18)
-        }
-    }
-
-    @ViewBuilder
-    private func moreActionRow(_ item: AssistantMessageMoreActionItem) -> some View {
+    var rows = actions.map { item -> MessageMenuItem in
+        var row = MessageMenuItem(action: .action(item), title: L10n.lookup(item.title), systemImage: item.systemImage)
         switch item {
         case .deleteAllVersions:
-            actionRow(L10n.lookup(item.title), systemName: item.systemImage, role: .destructive) {
-                isDeleteAllVersionsConfirmationPresented = true
-            }
+            row.isDestructive = true
+            row.isDisabled = isUserVersionDeletionDisabled
         case .standard(let action):
-        switch action {
-        case .bookmark:
-            actionRow(
-                L10n.lookup(isBookmarked ? "取消收藏" : action.title),
-                systemName: isBookmarked ? "bookmark.slash" : action.systemImage
-            ) {
-                model.toggleMessageBookmark(message.id)
-                dismiss()
+            switch action {
+            case .bookmark:
+                row = MessageMenuItem(
+                    action: .action(item),
+                    title: L10n.lookup(isBookmarked ? "取消收藏" : action.title),
+                    systemImage: isBookmarked ? "bookmark.slash" : action.systemImage
+                )
+            case .copy, .share:
+                row.isDisabled = message.text.isEmpty
+            case .branch, .regenerate:
+                row.isDisabled = isStreaming
+                if action == .regenerate && message.role != .assistant {
+                    row = MessageMenuItem(action: .action(item), title: L10n.lookup("重新发送"),
+                                          systemImage: action.systemImage, isDisabled: isStreaming)
+                }
+            case .edit:
+                row.isDisabled = message.isStreaming || isStreaming
+            case .delete:
+                row = MessageMenuItem(
+                    action: .action(item),
+                    title: L10n.lookup(versionCount > 1 ? "删除当前版本" : "删除"),
+                    systemImage: action.systemImage,
+                    isDestructive: true,
+                    isDisabled: isUserVersionDeletionDisabled
+                )
             }
-        case .copy:
-            actionRow(L10n.lookup(action.title), systemName: action.systemImage, disabled: message.text.isEmpty) {
-                UIPasteboard.general.string = message.text
-                dismiss()
-            }
-        case .share:
-            actionRow(L10n.lookup(action.title), systemName: action.systemImage, disabled: message.text.isEmpty) {
-                isSharing = true
-            }
-        case .translate:
-            actionRow(L10n.lookup(action.title), systemName: action.systemImage, disabled: message.text.isEmpty) {
-                model.translateMessage(message.id)
-                dismiss()
-            }
-        case .branch:
-            actionRow(
-                L10n.lookup(action.title),
-                systemName: action.systemImage,
-                disabled: model.isConversationStreaming(message.conversationID)
-            ) {
-                model.branchConversation(at: message.id)
-                dismiss()
-            }
-        case .edit:
-            actionRow(
-                L10n.lookup(action.title),
-                systemName: action.systemImage,
-                disabled: message.isStreaming || model.isConversationStreaming(message.conversationID)
-            ) {
-                editText = message.text
-                isEditing = true
-            }
-        case .regenerate:
-            actionRow(
-                message.role == .assistant ? L10n.lookup(action.title) : L10n.lookup("重新发送"),
-                systemName: action.systemImage,
-                disabled: model.isConversationStreaming(message.conversationID)
-            ) {
-                if model.preferences.showRegenerateConfirmDialog {
-                    isRegenerateConfirmationPresented = true
-                } else {
-                    model.regenerateResponse(around: message.id)
-                    dismiss()
+        }
+        return row
+    }
+    // Keep the user's saved action order. Details remain accessible even if
+    // every configurable action is hidden, immediately before deletion.
+    let insertionIndex = actions.firstIndex(of: .standard(.delete))
+        ?? actions.firstIndex(of: .deleteAllVersions) ?? actions.count
+    rows.insert(MessageMenuItem(action: .details, title: L10n.lookup("消息详情"), systemImage: "info.circle"),
+                at: insertionIndex)
+    return rows
+}
+
+/// Explicit template colours keep SwiftUI context-menu symbols and UIKit
+/// button-menu symbols consistent, including the destructive icon in iOS 27.
+@MainActor
+private func messageMenuSymbol(
+    _ name: String, isDestructive: Bool = false, colorScheme: ColorScheme
+) -> UIImage {
+    let traits = UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
+    let color = (isDestructive ? UIColor.systemRed : UIColor.label).resolvedColor(with: traits)
+    return UIImage(systemName: name)?.withTintColor(color, renderingMode: .alwaysOriginal) ?? UIImage()
+}
+
+private struct MessageActionsMenuItems: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    let message: ChatMessage
+    let onSelect: (MessageMenuAction) -> Void
+
+    var body: some View {
+        ForEach(messageMenuItems(message, model: model)) { item in
+            Button(role: item.isDestructive ? .destructive : nil) {
+                onSelect(item.action)
+            } label: {
+                Label {
+                    Text(item.title)
+                } icon: {
+                    Image(uiImage: messageMenuSymbol(item.systemImage,
+                        isDestructive: item.isDestructive, colorScheme: colorScheme))
                 }
             }
-        case .delete:
-            actionRow(deleteActionTitle, systemName: action.systemImage, role: .destructive) {
-                isDeleteConfirmationPresented = true
-            }
-        }
+            .disabled(item.isDisabled)
         }
     }
+}
 
-    private func actionRow(
-        _ title: String,
-        systemName: String,
-        role: ButtonRole? = nil,
-        disabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(role: role) {
-            model.performCardHaptic()
-            action()
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: systemName)
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 26)
-                Text(title)
-                    .font(.system(size: 17, weight: .medium))
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 50)
-            .contentShape(Rectangle())
+/// UIButton supplies the system menu, anchoring and animation. Its public
+/// context-menu delegate lets us apply the same runtime keyboard/drawer gate
+/// as the neighbouring buttons without observing keyboard state in every row.
+@MainActor
+private final class NativeMessageMenuAnchor {
+    weak var button: UIButton?
+
+    func present() {
+        // Keep this handoff outside SwiftUI state: rebuilding a visible context
+        // menu while its action dismisses can restore the original menu.
+        DispatchQueue.main.async { [weak self, weak button] in
+            guard let button, self?.button === button, button.window != nil else { return }
+            if #available(iOS 17.4, *) { button.performPrimaryAction() }
         }
-        .buttonStyle(.plain)
-        .disabled(disabled)
+    }
+}
+
+private struct NativeMessageMenuButton: UIViewRepresentable {
+    @Environment(\.colorScheme) private var colorScheme
+    let items: () -> [MessageMenuItem]
+    let allowsPresentation: () -> Bool
+    let onSelect: (MessageMenuAction) -> Void
+    let pointSize: CGFloat
+    let tintColor: UIColor
+    let accessibilityLabel: String
+    var showsGlyph = true
+    var presentationAnchor: NativeMessageMenuAnchor?
+    var onDismiss: (() -> Void)? = nil
+
+    func makeUIView(context: Context) -> MenuButton {
+        let button = MenuButton(type: .system)
+        button.showsMenuAsPrimaryAction = true
+        button.preferredMenuElementOrder = .fixed
+        button.backgroundColor = .clear
+        return button
+    }
+
+    func updateUIView(_ button: MenuButton, context: Context) {
+        button.tintColor = tintColor
+        button.setImage(showsGlyph ? UIImage(systemName: "ellipsis", withConfiguration:
+            UIImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)) : nil, for: .normal)
+        button.accessibilityLabel = accessibilityLabel
+        button.isAccessibilityElement = showsGlyph
+        button.accessibilityElementsHidden = !showsGlyph
+        button.allowsPresentation = allowsPresentation
+        button.onDismiss = onDismiss
+        button.makeMenu = {
+            UIMenu(children: items().map { item in
+                var attributes: UIMenuElement.Attributes = []
+                if item.isDestructive { attributes.insert(.destructive) }
+                if item.isDisabled { attributes.insert(.disabled) }
+                return UIAction(title: item.title,
+                                image: messageMenuSymbol(item.systemImage,
+                                    isDestructive: item.isDestructive, colorScheme: colorScheme),
+                                identifier: UIAction.Identifier(item.id), attributes: attributes) { _ in
+                    onSelect(item.action)
+                }
+            })
+        }
+        // Keep the currently displayed native menu intact during row updates.
+        // The latest factory is read again on the next presentation.
+        if button.menu == nil { button.menu = button.makeMenu?() }
+        presentationAnchor?.button = button
+    }
+
+    final class MenuButton: UIButton {
+        var allowsPresentation: () -> Bool = { true }
+        var makeMenu: (() -> UIMenu)?
+        var onDismiss: (() -> Void)?
+
+        override func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            configurationForMenuAtLocation location: CGPoint
+        ) -> UIContextMenuConfiguration? {
+            guard allowsPresentation() else { return nil }
+            menu = makeMenu?()
+            return super.contextMenuInteraction(interaction, configurationForMenuAtLocation: location)
+        }
+
+        override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                             willEndFor configuration: UIContextMenuConfiguration,
+                                             animator: (any UIContextMenuInteractionAnimating)?) {
+            super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
+            guard let onDismiss else { return }
+            if let animator { animator.addCompletion { onDismiss() } }
+            else { DispatchQueue.main.async { onDismiss() } }
+        }
+    }
+}
+
+@MainActor
+private struct MessageDeletionConfirmation {
+    let message: ChatMessage
+    let deletesAllVersions: Bool
+    let versionCount: Int
+
+    var title: String {
+        L10n.lookup(deletesAllVersions ? "完全删除所有版本" : "删除消息")
+    }
+
+    var actionTitle: String {
+        L10n.lookup(deletesAllVersions ? "完全删除" : (versionCount > 1 ? "删除当前版本" : "删除"))
+    }
+
+    var explanation: String {
+        if deletesAllVersions {
+            return L10n.format(
+                message.role == .user
+                    ? "将永久删除这条提问的全部 %@ 个版本。回答和后续消息会保留。此操作无法撤销。"
+                    : "将永久删除这条回答的全部 %@ 个版本。前面的用户消息与其他消息会保留，此操作无法撤销。",
+                [String(versionCount)]
+            )
+        }
+        guard versionCount > 1 else { return L10n.lookup("删除这条消息？") }
+        return L10n.lookup(message.role == .user
+            ? "只删除这个提问版本？回答和后续对话会保留。"
+            : "只删除当前显示的这个回复版本，其他版本会保留。")
+    }
+}
+
+private struct MessageDetailsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let details: MessageDetailsSnapshot
+
+    var body: some View {
+        NavigationStack {
+            MessageDetailsContent(details: details)
+                .navigationTitle(L10n.lookup("消息详情"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(L10n.lookup("完成")) { dismiss() }
+                    }
+                }
+        }
+        .presentationDetents([.height(380), .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
@@ -17895,7 +18713,8 @@ private struct ReasoningCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                guard DrawerInlineActionTapGate.allowsAction else { return }
+                let allowsAction = DrawerInlineActionTapGate.allowsAction
+                guard allowsAction else { return }
                 nativeMotion?.beginManualMeasuredDisclosure()
                 if model.preferences.fullyCollapseThinking || isThinking {
                     let nextCollapsed = !isLocallyCollapsed
@@ -18066,6 +18885,21 @@ private struct ToolEventResultPresentation: Identifiable {
 }
 
 @MainActor private enum ToolEventDetailFormatter {
+    // Use the arguments and receipt from this call: the live memory may have changed since.
+    static func memoryChange(name: String, requestedContent: String?, result: ToolEventParsedResult) -> String {
+        let missing = L10n.lookup("这条调用记录没有保存这段原文。")
+        let saved = requestedContent ?? (result.object == nil ? result.previewRaw : nil) ?? missing
+        let before = (result.object?["before"] as? String) ?? missing
+        switch name {
+        case "edit_memory" where result.object?["changed"] as? Bool != false:
+            return L10n.format("修改前：%@", [before]) + "\n" + L10n.format("修改后：%@", [saved])
+        case "delete_memory":
+            return before
+        default:
+            return saved
+        }
+    }
+
     static func preview(for event: ToolEvent, result: ToolEventParsedResult) -> String? {
         guard let raw = result.previewRaw else { return nil }
         guard let value = result.previewValue else {
@@ -18562,10 +19396,23 @@ private struct ToolEventRow: View {
 
     var body: some View {
         let result = parsedResult ?? ToolEventParsedResult(event: event)
-        let detailPreview = ToolEventDetailFormatter.preview(for: event, result: result)
-        let hasDetails = detailPreview != nil
-        let activityText = self.activityText
         let hasError = result.hasError(for: event)
+        let isMemory = MemoryToolRequest.names.contains(normalizedName)
+        let showsMemoryChange = isMemory && !hasError && event.status == .complete && result.previewRaw != nil
+        let detailPreview = showsMemoryChange
+            ? (isExpanded ? ToolEventDetailFormatter.memoryChange(name: normalizedName, requestedContent: argumentText("content"), result: result) : nil)
+            : ToolEventDetailFormatter.preview(for: event, result: result)
+        let hasDetails = showsMemoryChange || detailPreview != nil
+        let activityText: String = {
+            if isMemory {
+                if hasError { return L10n.lookup("记忆操作失败") }
+                if event.status == .pending || event.status == .running { return L10n.lookup("正在处理记忆") }
+                if normalizedName == "edit_memory", result.object?["changed"] as? Bool == false {
+                    return L10n.lookup("记忆内容未变")
+                }
+            }
+            return self.activityText
+        }()
         let statusColor: Color = hasError ? .red : .secondary
         let accessibilityStatus = self.accessibilityStatus(hasError: hasError)
         VStack(alignment: .leading, spacing: 4) {
@@ -18599,7 +19446,7 @@ private struct ToolEventRow: View {
                 Text(detailPreview)
                     .font(.system(size: 11))
                     .foregroundStyle(statusColor)
-                    .lineLimit(5)
+                    .lineLimit(showsMemoryChange ? nil : 5)
                     .padding(.leading, 28)
                     .transition(ChatDisclosureMotion.transition)
             }
@@ -18613,53 +19460,178 @@ private struct MessageEditSheet: View {
     let roleTitle: String
     let allowsSaveAndSend: Bool
     let onSave: (Bool) -> Void
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @FocusState private var isFocused: Bool
 
     private var canSave: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
-        NavigationStack {
-            TextEditor(text: $text)
-                .font(.system(size: 17))
-                .focused($isFocused)
-                .padding(14)
-                .scrollContentBackground(.hidden)
-                .background(Color(uiColor: .secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .padding(16)
-                .navigationTitle(roleTitle)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        if allowsSaveAndSend {
-                            Button(L10n.lookup("保存")) {
-                                onSave(false)
-                                dismiss()
-                            }
-                            .foregroundStyle(.primary)
-                            .disabled(!canSave)
-                        } else {
-                            Button(L10n.lookup("取消")) {
-                                dismiss()
-                            }
-                                .foregroundStyle(.primary)
-                        }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button(L10n.lookup(allowsSaveAndSend ? "保存并发送" : "保存")) {
-                            onSave(allowsSaveAndSend)
-                            dismiss()
-                        }
-                        .foregroundStyle(allowsSaveAndSend ? Color.accentColor : Color.primary)
-                        .disabled(!canSave)
-                    }
-                }
+        MessageEditKeyboardLayout(
+            text: $text,
+            roleTitle: roleTitle,
+            selectionTint: model.themeTextSelectionUIColor,
+            actions: actions
+        )
+            .ignoresSafeArea(.all, edges: .bottom)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 12) {
+            Button(L10n.lookup(allowsSaveAndSend ? "保存" : "取消")) {
+                if allowsSaveAndSend { onSave(false) }
+                dismiss()
+            }
+            .buttonStyle(MessageEditButtonStyle(isPrimary: false))
+            .disabled(allowsSaveAndSend && !canSave)
+
+            Button(L10n.lookup(allowsSaveAndSend ? "发送" : "保存")) {
+                dismiss()
+                onSave(allowsSaveAndSend)
+            }
+            .buttonStyle(MessageEditButtonStyle(isPrimary: true))
+            .disabled(!canSave)
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+    }
+}
+
+/// One native layout owns the editor and footer as the sheet and keyboard move.
+/// This avoids a second keyboard-inset animation inside the SwiftUI content.
+private struct MessageEditKeyboardLayout<Actions: View>: UIViewControllerRepresentable {
+    @Binding var text: String
+    let roleTitle: String
+    let selectionTint: UIColor
+    let actions: Actions
+
+    func makeUIViewController(context: Context) -> MessageEditKeyboardLayoutController<Actions> {
+        MessageEditKeyboardLayoutController(text: $text, roleTitle: roleTitle, selectionTint: selectionTint, actions: actions)
+    }
+
+    func updateUIViewController(_ controller: MessageEditKeyboardLayoutController<Actions>, context: Context) {
+        controller.update(text: $text, roleTitle: roleTitle, selectionTint: selectionTint, actions: actions)
+    }
+}
+
+private final class MessageEditKeyboardLayoutController<Actions: View>: UIViewController {
+    private let textBinding: MultilineTextViewBinding
+    private let titleLabel = UILabel()
+    private let textView = UITextView()
+    private let actionsHost: UIHostingController<Actions>
+
+    init(text: Binding<String>, roleTitle: String, selectionTint: UIColor, actions: Actions) {
+        textBinding = MultilineTextViewBinding(text)
+        actionsHost = UIHostingController(rootView: actions)
+        super.init(nibName: nil, bundle: nil)
+        // The keyboard guide below is the sole owner of keyboard avoidance.
+        actionsHost.safeAreaRegions = []
+        actionsHost.sizingOptions = .intrinsicContentSize
+        titleLabel.text = roleTitle
+        textBinding.attach(to: textView)
+        textView.tintColor = selectionTint
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    #if DEBUG || TOP_EDGE_DIAGNOSTICS
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        ChatBottomTrace.log("EDIT_SHEET_WILL_DISAPPEAR")
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        ChatBottomTrace.log("EDIT_SHEET_DID_DISAPPEAR")
+    }
+    #endif
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        titleLabel.font = UIFontMetrics(forTextStyle: .title3).scaledFont(for: .systemFont(ofSize: 20, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.numberOfLines = 0
+        titleLabel.textColor = .label
+        titleLabel.accessibilityTraits.insert(.header)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        textView.font = .systemFont(ofSize: 17)
+        textView.textColor = .label
+        textView.backgroundColor = UIColor { traits in
+            // Keep the editor surface consistent in the floating and expanded sheet.
+            UIColor.secondarySystemBackground.resolvedColor(
+                with: UITraitCollection(userInterfaceStyle: traits.userInterfaceStyle)
+            )
+        }
+        textView.layer.cornerRadius = 18
+        textView.layer.cornerCurve = .continuous
+        textView.clipsToBounds = true
+        textView.textContainerInset = UIEdgeInsets(top: 22, left: 14, bottom: 22, right: 14)
+        textView.contentInsetAdjustmentBehavior = .never
+        textView.keyboardDismissMode = .interactive
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        for child in [titleLabel, textView] {
+            child.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(child)
+        }
+        addChild(actionsHost)
+        actionsHost.view.backgroundColor = .clear
+        actionsHost.view.translatesAutoresizingMaskIntoConstraints = false
+        actionsHost.view.setContentHuggingPriority(.required, for: .vertical)
+        view.addSubview(actionsHost.view)
+        actionsHost.didMove(toParent: self)
+
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
+            // Match the text container's 14 pt inset plus 5 pt line padding.
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 39),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -39),
+            textView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            textView.bottomAnchor.constraint(equalTo: actionsHost.view.topAnchor, constant: -12),
+            actionsHost.view.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            actionsHost.view.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            actionsHost.view.heightAnchor.constraint(greaterThanOrEqualToConstant: 46),
+            actionsHost.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -6)
+        ])
+    }
+
+    func update(text: Binding<String>, roleTitle: String, selectionTint: UIColor, actions: Actions) {
+        titleLabel.text = roleTitle
+        textView.tintColor = selectionTint
+        textBinding.update(text, in: textView)
+        actionsHost.rootView = actions
+    }
+}
+
+private struct MessageEditButtonStyle: ButtonStyle {
+    let isPrimary: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(isPrimary ? .semibold : .medium))
+            .foregroundStyle(isPrimary ? Color.white : Color.primary)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, minHeight: 46)
+            .background {
+                if isPrimary {
+                    TintedGlassCapsule(background: .black)
+                } else {
+                    GlassSurface(shape: Capsule())
+                }
+            }
+            .frame(minHeight: 46)
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
     }
 }
 
@@ -18920,41 +19892,48 @@ private struct ConversationDrawer: View {
     let settleProgress: DrawerDetachedMainPanelProgress
     let backgroundTrailingExtension: CGFloat
     let safeAreaInsets: EdgeInsets
-    let isDrawerGestureActive: Bool
+    let gestureActivity: DrawerGestureActivity
     let topReturnCoordinator: DrawerListTopReturnCoordinator
     let onRequestClose: () -> Void
     let onRequestCloseAfterConversationReady: (UUID) -> Void
+    var isPinnedLayout = false
+    var sidebarIsVisible = false
 
     var body: some View {
-        let contentProgress = min(max(progress, 0), 1)
-
-        ConversationDrawerContent(
-            width: width,
-            safeAreaInsets: safeAreaInsets,
-            topReturnCoordinator: topReturnCoordinator,
-            onRequestClose: onRequestClose,
-            onRequestCloseAfterConversationReady: onRequestCloseAfterConversationReady
+        let motion = DrawerContentMotionModifier(
+            progress: min(max(progress, 0), 1), settleProgress: settleProgress
         )
-        .equatable()
-        // Keep the gesture-only environment gate outside the stable drawer
-        // content. This preserves the proven on-device vertical lock without
-        // sending the transient value through the long chat transcript.
-        .scrollDisabled(isDrawerGestureActive)
-        .modifier(
-            DrawerContentMotionModifier(
-                progress: contentProgress,
-                settleProgress: settleProgress
-            )
-        )
-        // Keep the drawer surface fixed while only the contents fade and
-        // translate during a drag. A custom image therefore never becomes a
-        // second per-frame motion layer.
-        .background(alignment: .leading) {
-            SidebarBackgroundView(
-                referenceWidth: width + backgroundTrailingExtension
-            )
+        Group {
+            if PadSidebar.isEnabled {
+                NativeAdaptiveSidebarContent(
+                    motion: motion,
+                    width: width,
+                    isPinnedLayout: isPinnedLayout,
+                    sidebarIsVisible: sidebarIsVisible,
+                    gestureActivity: gestureActivity,
+                    topReturnCoordinator: topReturnCoordinator,
+                    onRequestClose: onRequestClose,
+                    onRequestCloseAfterConversationReady: onRequestCloseAfterConversationReady
+                )
                 .equatable()
+            } else {
+                ConversationDrawerContent(
+                    width: width,
+                    safeAreaInsets: safeAreaInsets,
+                    gestureActivity: gestureActivity,
+                    topReturnCoordinator: topReturnCoordinator,
+                    onRequestClose: onRequestClose,
+                    onRequestCloseAfterConversationReady: onRequestCloseAfterConversationReady
+                )
+                .equatable()
+                .modifier(motion)
+                .background(alignment: .leading) {
+                    SidebarBackgroundView(referenceWidth: width + backgroundTrailingExtension)
+                        .equatable()
+                }
+            }
         }
+        .scrollDisabled(gestureActivity.active)
     }
 }
 
@@ -19113,7 +20092,7 @@ private struct DrawerBottomActionsPalette {
     }
 }
 
-private struct DrawerBottomActionsSurface: View {
+private struct TintedGlassCapsule: View {
     let background: Color
 
     var body: some View {
@@ -19178,17 +20157,23 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     @State private var drawerTapGate = DrawerTapGate()
     let width: CGFloat
     let safeAreaInsets: EdgeInsets
+    let gestureActivity: DrawerGestureActivity
     let topReturnCoordinator: DrawerListTopReturnCoordinator
     let onRequestClose: () -> Void
     let onRequestCloseAfterConversationReady: (UUID) -> Void
+    var usesNativeSidebarNavigation = false
+    var nativeSidebarIsVisible = true
 
     static func == (lhs: ConversationDrawerContent, rhs: ConversationDrawerContent) -> Bool {
         lhs.width == rhs.width
+            && lhs.usesNativeSidebarNavigation == rhs.usesNativeSidebarNavigation
+            && lhs.nativeSidebarIsVisible == rhs.nativeSidebarIsVisible
             && lhs.safeAreaInsets.top == rhs.safeAreaInsets.top
             && lhs.safeAreaInsets.bottom == rhs.safeAreaInsets.bottom
             && lhs.safeAreaInsets.leading == rhs.safeAreaInsets.leading
             && lhs.safeAreaInsets.trailing == rhs.safeAreaInsets.trailing
             && lhs.topReturnCoordinator === rhs.topReturnCoordinator
+            && lhs.gestureActivity === rhs.gestureActivity
     }
 
     private var sourceConversations: [Conversation] {
@@ -19227,7 +20212,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     private var contentSearchRequest: ContentSearchRequest {
         ContentSearchRequest(
             query: normalizedQuery,
-            isActive: isSearchModeActive
+            isActive: (isSearchModeActive || (usesNativeSidebarNavigation && nativeSidebarIsVisible))
                 && isContentSearchActive,
             groupChatMode: groupChatMode
         )
@@ -19272,6 +20257,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
 
         GeometryReader { geometry in
         VStack(spacing: 0) {
+            if !usesNativeSidebarNavigation {
             HStack {
                 Text("Mocca")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
@@ -19314,8 +20300,9 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             // footprint below the safe area and the search button's center X.
             .padding(.top, safeAreaInsets.top + 8)
             .padding(.bottom, 6)
+            }
 
-            if isSearchModeActive {
+            if isSearchModeActive || usesNativeSidebarNavigation {
                 HStack(spacing: 9) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 17, weight: .regular))
@@ -19373,6 +20360,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                         .stroke(Color.primary.opacity(0.065), lineWidth: 0.6)
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, usesNativeSidebarNavigation ? 10 : 0)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
 
@@ -19388,7 +20376,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                 }
             } label: {
                 HStack(spacing: 12) {
-                    AssistantAvatarView(profile: model.currentAssistant, size: 40)
+                    AssistantAvatarView(profile: model.currentAssistant, size: usesNativeSidebarNavigation ? 32 : 40)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.currentAssistant.name)
                             .font(.system(size: 16, weight: .semibold))
@@ -19442,7 +20430,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(Color.primary.opacity(0.82))
-                        .frame(width: 40, height: 36)
+                        .frame(width: usesNativeSidebarNavigation ? 32 : 40, height: 36)
                     Text(L10n.lookup("群聊"))
                         .font(.system(size: 16, weight: .semibold))
                     Spacer()
@@ -19468,6 +20456,12 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             .padding(.horizontal, 16)
             .padding(.bottom, 5)
             .accessibilityIdentifier("drawer.group.toggle")
+
+            if usesNativeSidebarNavigation {
+                Divider()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+            }
 
             ZStack(alignment: .bottom) {
                 DrawerConversationListPositionOwner(
@@ -19572,6 +20566,28 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                 // but replacing a scroll identity must not cross-fade two lists.
                 .animation(nil, value: groupChatMode)
 
+                if usesNativeSidebarNavigation {
+                    NativeSidebarFooter(
+                        showsGroupCreator: groupChatMode,
+                        onCreateGroup: {
+                            guard !isDrawerTapSuppressed else { return }
+                            isSearchFocused = false
+                            model.openNewGroupChatCreator()
+                        },
+                        onFavorites: {
+                            guard !isDrawerTapSuppressed else { return }
+                            isSearchFocused = false
+                            model.performListItemHaptic()
+                            model.isFavoritesPresented = true
+                        },
+                        onSettings: {
+                            guard !isDrawerTapSuppressed else { return }
+                            isSearchFocused = false
+                            model.performListItemHaptic()
+                            model.isSettingsPresented = true
+                        }
+                    )
+                } else {
                 HStack(spacing: 0) {
                     if groupChatMode {
                         Button {
@@ -19628,7 +20644,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                     .frame(height: 52)
                     .foregroundStyle(bottomActionsPalette.foreground)
                     .background {
-                        DrawerBottomActionsSurface(
+                        TintedGlassCapsule(
                             background: bottomActionsPalette.background
                         )
                     }
@@ -19637,12 +20653,19 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
                 .padding(.top, 6)
                 .padding(.bottom, safeAreaInsets.bottom + 8)
                 .zIndex(1)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
+        .onChange(of: nativeSidebarIsVisible) { _, visible in
+            if usesNativeSidebarNavigation, !visible { endDrawerSearch() }
+        }
+        .onDisappear {
+            if usesNativeSidebarNavigation { endDrawerSearch() }
+        }
         // The drawer intentionally stays mounted for smooth dragging. Reset
         // local search state on every real close so reopening starts as the
         // normal conversation list instead of restoring a hidden keyboard or
@@ -19707,7 +20730,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         // Keep the drawer header, group entry, conversation area and bottom
         // actions visible, including on shorter or keyboard-reduced screens.
         let reservedHeight = safeAreaInsets.top + safeAreaInsets.bottom + 64 + 75 + 57 + 144 + 12
-            + (isSearchModeActive ? 58 : 0)
+            + ((isSearchModeActive || usesNativeSidebarNavigation) ? 58 : 0)
         let preferredHeight: CGFloat = 7 * 44 + 6 * 5
         let maximumHeight = max(44, min(preferredHeight, viewportHeight - reservedHeight))
         return ScrollViewReader { proxy in
@@ -19738,6 +20761,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
             return groupChatMode ? L10n.lookup("搜索群聊内容") : L10n.lookup("搜索全部聊天内容")
         }
         if groupChatMode { return L10n.lookup("搜索群聊标题") }
+        if usesNativeSidebarNavigation { return L10n.lookup("搜索聊天") }
         return L10n.lookup("搜索当前助手标题")
     }
 
@@ -19760,7 +20784,8 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         }
         Task { @MainActor in
             await Task.yield()
-            guard isSearchModeActive, model.isDrawerPresented else { return }
+            guard isSearchModeActive,
+                  model.isDrawerPresented || (usesNativeSidebarNavigation && nativeSidebarIsVisible) else { return }
             isSearchFocused = true
         }
     }
@@ -19825,7 +20850,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         let availableAssistantIDs = Set(assistantsByID.keys)
         let userAvatar = SearchResultAvatarDescriptor.user(
             name: model.userProfile.nickname,
-            imageSource: SearchResultAvatarImageSource.userJPEG(model.userProfile.avatarJPEGData)
+            imageSource: model.userProfile.avatarImageSource
         )
 
         var results: [ConversationContentSearchResult] = []
@@ -19861,7 +20886,8 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     }
 
     private var isDrawerTapSuppressed: Bool {
-        Date() < drawerTapGate.suppressedUntil
+        gestureActivity.active || Date() < drawerTapGate.suppressedUntil
+            || (usesNativeSidebarNavigation && !DrawerInlineActionTapGate.allowsAction)
     }
 
     private func suppressDrawerTaps(for seconds: TimeInterval) {
@@ -19872,7 +20898,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
         Button {
             guard !isDrawerTapSuppressed else { return }
             model.performListItemHaptic()
-            let shouldClose = !model.preferences.keepSidebarOpenOnAssistantTap
+            let shouldClose = usesNativeSidebarNavigation || !model.preferences.keepSidebarOpenOnAssistantTap
             withAnimation(.easeOut(duration: 0.22)) {
                 assistantsExpanded = false
             }
@@ -20029,7 +21055,7 @@ private struct ConversationDrawerContent: View, @preconcurrency Equatable {
     private func selectConversationFromDrawer(_ conversation: Conversation) {
         guard !isDrawerTapSuppressed else { return }
         model.performListItemHaptic()
-        let shouldClose = !model.preferences.keepSidebarOpenOnTopicTap
+        let shouldClose = usesNativeSidebarNavigation || !model.preferences.keepSidebarOpenOnTopicTap
         // Reopening the mounted conversation preserves its history window and
         // reading position. Other navigation entry points still select normally.
         if model.selectedConversationID == conversation.id {
@@ -20450,12 +21476,17 @@ private struct DrawerInteractionMainPanelHost: View {
     let onCloseDrawer: () -> Void
     let isConversationDrawerClosePending: (UUID) -> Bool
     let onConversationContentReady: (UUID) -> Void
+    var isPinnedLayout = false
+    var sidebarIsVisible = false
+    var isSettling = false
 
     var body: some View {
         DrawerLiveMainPanelHost(model: model, drawerWidth: drawerWidth,
-            cornerRadius: cornerRadius, isInteractionBlocked: model.isDrawerPresented || activity.active,
+            cornerRadius: cornerRadius, isInteractionBlocked: isPinnedLayout
+                ? (activity.active || isSettling) : (model.isDrawerPresented || activity.active),
             tracker: tracker, onOpenDrawer: onOpenDrawer, onCloseDrawer: onCloseDrawer,
             isConversationDrawerClosePending: isConversationDrawerClosePending,
-            onConversationContentReady: onConversationContentReady)
+            onConversationContentReady: onConversationContentReady,
+            isPinnedLayout: isPinnedLayout, sidebarIsVisible: sidebarIsVisible)
     }
 }

@@ -126,7 +126,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var groupID: String?
     var versionGroupID: String?
     var version: Int
-    var translation: String?
+    // Read only when importing question-linked history from builds 5341–5343.
+    var userEditParentID: UUID?
+    var isUserEditVersion: Bool?
     var reactions: MessageReactions
     var schemaVersion: Int
     var migrationMetadata: MigrationMetadata?
@@ -184,7 +186,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         groupID: String? = nil,
         versionGroupID: String? = nil,
         version: Int = 0,
-        translation: String? = nil,
+        isUserEditVersion: Bool? = nil,
         reactions: MessageReactions = MessageReactions(),
         schemaVersion: Int = ConversationStore.currentSchemaVersion,
         migrationMetadata: MigrationMetadata? = nil
@@ -212,7 +214,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.groupID = groupID ?? id.uuidString
         self.versionGroupID = versionGroupID
         self.version = version
-        self.translation = translation
+        self.isUserEditVersion = isUserEditVersion
         self.reactions = reactions
         self.schemaVersion = schemaVersion
         self.migrationMetadata = migrationMetadata
@@ -401,6 +403,9 @@ struct TokenUsage: Codable, Hashable {
     var promptTokens: Int?
     var completionTokens: Int?
     var cachedTokens: Int?
+    var cacheWriteTokens: Int?
+    var cacheWrite30mTokens: Int?
+    var cacheWrite12hTokens: Int?
     var totalTokens: Int?
     var durationMilliseconds: Int?
 }
@@ -456,6 +461,104 @@ struct ConversationSnapshot: Codable, Hashable {
         self.conversations = conversations
         self.messagesByConversation = messagesByConversation
         self.destructiveReductionAuthorized = destructiveReductionAuthorized
+    }
+}
+
+// Builds 5341–5343 stored the immediate answer to each wording in its own
+// group. Only those immediate answers are alternatives to the same question.
+// A later, independently written follow-up keeps its own group and identity.
+extension ConversationSnapshot {
+    @discardableResult
+    mutating func detachLegacyUserReplies() -> Bool {
+        var changed = false
+        for index in conversations.indices {
+            let id = conversations[index].id
+            guard var rows = messagesByConversation[id],
+                  rows.contains(where: { $0.userEditParentID != nil }) else { continue }
+            Self.detachLegacyUserReplies(in: &rows, conversation: &conversations[index])
+            messagesByConversation[id] = rows
+            changed = true
+        }
+        return changed
+    }
+
+    private struct ReplyPosition: Hashable {
+        let question: String
+        let author: String?
+        let occurrence: Int
+    }
+
+    private static func detachLegacyUserReplies(in rows: inout [ChatMessage], conversation: inout Conversation) {
+        let selections = conversation.versionSelections
+        let groups = Dictionary(grouping: rows.indices, by: { rows[$0].versionGroupKey })
+        let ordered = groups.values.sorted { $0[0] < $1[0] }
+        func precedes(_ i: Int, _ j: Int) -> Bool {
+            if rows[i].version != rows[j].version { return rows[i].version < rows[j].version }
+            if rows[i].createdAt != rows[j].createdAt { return rows[i].createdAt < rows[j].createdAt }
+            return rows[i].id.uuidString < rows[j].id.uuidString
+        }
+        func selected(_ group: [Int]) -> Int {
+            let indices = group.sorted(by: precedes)
+            let value = selections[rows[group[0]].versionGroupKey]
+            return indices.first(where: { rows[$0].version == value }) ?? indices[indices.count - 1]
+        }
+        let questionRows = rows.indices.filter { rows[$0].isUserEditVersion == true }
+        let questions = Dictionary(questionRows.map { (rows[$0].id, rows[$0].versionGroupKey) },
+                                   uniquingKeysWith: { first, _ in first })
+        var visibleOwners = Set<UUID>()
+        var countByOwner: [UUID: [String?: Int]] = [:]
+        var ended = Set<UUID>()
+        var alternatives: [ReplyPosition: [[Int]]] = [:]
+        var formerlyHiddenGroups = Set<String>()
+        for group in ordered {
+            let row = rows[selected(group)]
+            let parentVisible = row.userEditParentID.map { visibleOwners.contains($0) } ?? true
+            if row.isUserEditVersion == true, parentVisible { visibleOwners.insert(row.id) }
+            if !parentVisible { formerlyHiddenGroups.insert(row.versionGroupKey) }
+            guard let owner = row.userEditParentID, let question = questions[owner] else { continue }
+            guard row.role == .assistant else { ended.insert(owner); continue }
+            guard !ended.contains(owner) else { continue }
+            let author = conversation.groupAssistantIDs.count >= 2 ? row.groupID : nil
+            let occurrence = countByOwner[owner]?[author] ?? 0
+            countByOwner[owner, default: [:]][author] = occurrence + 1
+            let position = ReplyPosition(question: question, author: author, occurrence: occurrence)
+            alternatives[position, default: []].append(group)
+        }
+
+        for siblings in alternatives.values where siblings.count > 1 {
+            // The original answer normally predates the edited answer even when
+            // its raw record follows a later historical insertion.
+            let byCreation = siblings.sorted {
+                let left = $0.map { rows[$0].createdAt }.min()!
+                let right = $1.map { rows[$0].createdAt }.min()!
+                return left == right ? $0[0] < $1[0] : left < right
+            }
+            let canonical = rows[byCreation[0][0]].versionGroupKey
+            let active = byCreation.first { group in
+                rows[group[0]].userEditParentID.map { visibleOwners.contains($0) } == true
+            }
+            let selectedIndex = selected(active ?? byCreation[0])
+            let indices = byCreation.flatMap { $0.sorted(by: precedes) }
+            for group in byCreation {
+                let oldKey = rows[group[0]].versionGroupKey
+                conversation.versionSelections.removeValue(forKey: oldKey)
+                if active != nil { formerlyHiddenGroups.remove(oldKey) }
+            }
+            for (version, index) in indices.enumerated() {
+                rows[index].versionGroupID = canonical
+                rows[index].version = version
+            }
+            conversation.versionSelections[canonical] = rows[selectedIndex].version
+        }
+        for index in rows.indices where rows[index].userEditParentID != nil { rows[index].userEditParentID = nil }
+        if !formerlyHiddenGroups.isEmpty {
+            // The new linear transcript can include additional old follow-ups.
+            // A summary of the previously visible path cannot cover them.
+            if conversation.summary?.isEmpty == false { conversation.truncateIndex = -1 }
+            conversation.summary = nil
+            conversation.lastSummarizedMessageCount = 0
+            conversation.chatSuggestions = []
+        }
     }
 }
 
@@ -1938,7 +2041,7 @@ struct LegacyConversationStore {
     }
 
     fileprivate func normalizeAfterColdStart(_ snapshot: inout ConversationSnapshot) -> Bool {
-        var changed = false
+        var changed = snapshot.detachLegacyUserReplies()
         for conversation in snapshot.conversations {
             // Most histories contain no unfinished reply. Avoid mutating their
             // arrays merely to discover that there is nothing to normalize:

@@ -41,6 +41,14 @@ private enum MoccaCalendarDateText {
     }
 }
 
+private extension AppModel {
+    var calendarNavigationTint: Color {
+        preferences.themePaletteID == .defaultPalette
+            ? .primary
+            : Color(uiColor: themeActionUIColor)
+    }
+}
+
 struct MoccaCalendarView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -52,7 +60,7 @@ struct MoccaCalendarView: View {
     @State private var settingsPresented = false
 
     private var accent: Color { Color(uiColor: model.themeAccentUIColor) }
-    private var controlTint: Color { Color(uiColor: model.themeSwitchUIColor) }
+    private var controlTint: Color { Color(uiColor: model.themeActionUIColor) }
 
     var body: some View {
         NavigationStack {
@@ -80,6 +88,7 @@ struct MoccaCalendarView: View {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 16, weight: .semibold))
                     }
+                    .foregroundStyle(model.calendarNavigationTint)
                     .accessibilityLabel(L10n.lookup("返回"))
                 }
 
@@ -89,6 +98,7 @@ struct MoccaCalendarView: View {
                     } label: {
                         Image(systemName: "ellipsis")
                     }
+                    .foregroundStyle(model.calendarNavigationTint)
                     .accessibilityLabel(L10n.lookup("日历设置"))
 
                     Button {
@@ -96,6 +106,7 @@ struct MoccaCalendarView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .foregroundStyle(model.calendarNavigationTint)
                     .accessibilityLabel(L10n.lookup("添加日历事项"))
                 }
             }
@@ -496,7 +507,7 @@ struct MoccaCalendarEventEditorView: View {
         _event = State(initialValue: event ?? MoccaCalendarEvent(title: "", startAt: baseDate))
     }
 
-    private var controlTint: Color { Color(uiColor: model.themeSwitchUIColor) }
+    private var controlTint: Color { Color(uiColor: model.themeActionUIColor) }
     private var surface: Color { Color(uiColor: model.themeSurfaceUIColor) }
 
     var body: some View {
@@ -625,12 +636,13 @@ struct MoccaCalendarEventEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(L10n.lookup("保存")) { save() }
-                        .foregroundStyle(controlTint)
+                        .foregroundStyle(model.calendarNavigationTint)
                         .fontWeight(.semibold)
                         .disabled(event.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .tint(controlTint)
+            .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
         }
         .onChange(of: event.kind) { oldValue, newValue in
             guard oldValue != newValue, event.recurrence == .none else { return }
@@ -728,7 +740,7 @@ struct MoccaCalendarSettingsView: View {
     @State private var restoreConfirmationPresented = false
 
     private var accent: Color { Color(uiColor: model.themeAccentUIColor) }
-    private var controlTint: Color { Color(uiColor: model.themeSwitchUIColor) }
+    private var controlTint: Color { Color(uiColor: model.themeActionUIColor) }
     private var action: Color { controlTint }
     private var surface: Color { Color(uiColor: model.themeSurfaceUIColor) }
 
@@ -799,10 +811,11 @@ struct MoccaCalendarSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(L10n.lookup("完成")) { dismiss() }
-                        .foregroundStyle(controlTint)
+                        .foregroundStyle(model.calendarNavigationTint)
                 }
             }
             .tint(controlTint)
+            .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
         }
         .alert(L10n.lookup("恢复默认节日？"), isPresented: $restoreConfirmationPresented) {
             Button(L10n.lookup("取消"), role: .cancel) {}

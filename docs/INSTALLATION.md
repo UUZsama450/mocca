@@ -1,8 +1,14 @@
-# Install the GitHub IPA / 安装 GitHub IPA
+# Build and install / 编译与安装
 
-The release contains an **unsigned** iPhone IPA. It requires your own Apple signing identity and a compatible signing workflow; downloading it does not install it automatically. The main app and Live Activity extension both need valid signing. An App Store release uses a separate Apple-reviewed distribution build.
+Download the [1.0.11 source](https://github.com/UUZsama450/mocca/releases/tag/v1.0.11) and open `Mocca.xcodeproj` in Xcode. The deployment target is iOS 17 or iPadOS 17 and later. [Build and signing instructions](BUILD_CONFIGURATION.md).
 
-Release 内提供的是**未签名** iPhone IPA，需要使用自己的 Apple 签名和兼容的重签工具，下载后不能直接点开安装。主应用和实时活动扩展都需要有效签名。App Store 版本使用另外签名、经 Apple 审核的分发包。
+下载 [1.0.11 源码](https://github.com/UUZsama450/mocca/releases/tag/v1.0.11)，使用 Xcode 打开 `Mocca.xcodeproj`，可编译安装到 iOS 17、iPadOS 17 或更高版本的设备。[构建与签名说明](BUILD_CONFIGURATION.md)。
+
+## Earlier IPA preview / 旧版 IPA 预览
+
+The [1.0.5 (5237) preview](RELEASE_1.0.5_5237.md) includes an **unsigned** iPhone IPA. It requires your own Apple signing identity and a compatible signing workflow; downloading it does not install it automatically. The main app and Live Activity extension both need valid signing. An App Store release uses a separate Apple-reviewed distribution build.
+
+1.0.5（5237）的预览包是**未签名** iPhone IPA，需要使用自己的 Apple 签名和兼容的重签工具，下载后不能直接点开安装。主应用和实时活动扩展都需要有效签名。App Store 版本使用另外签名、经 Apple 审核的分发包。
 
 - Requires iOS 17 or later. / 需要 iOS 17 或更高版本。
 - Verify the download against `SHA256SUMS.txt`. / 可用校验文件核对下载是否完整。

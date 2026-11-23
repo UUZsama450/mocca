@@ -16,6 +16,13 @@ struct MoccaApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .background {
+                    AppWindowBridge(
+                        replyBanners: model.replyBanners,
+                        usesDefaultTheme: model.preferences.themePaletteID == .defaultPalette
+                    )
+                    .frame(width: 0, height: 0)
+                }
                 .environment(model)
                 .environment(\.locale, AppLocalization.shared.locale)
                 // Theme color is applied explicitly to selection surfaces and
@@ -25,6 +32,7 @@ struct MoccaApp: App {
                 .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
                 .appFontEnvironment(model.preferences.appFontPostScriptName)
                 .onChange(of: scenePhase) { _, phase in
+                    if phase != .active { model.replyBanners.clear() }
                     if phase == .background {
                         model.pauseAllUserBatches()
                         model.flushStreamingProgress()
@@ -113,6 +121,64 @@ struct MoccaApp: App {
                     }
                 }
                 #endif
+        }
+    }
+}
+
+/// Uses the chat's own window for transient reply banners and native field tint.
+private struct AppWindowBridge: UIViewRepresentable {
+    let replyBanners: ReplyBannerPresenter
+    let usesDefaultTheme: Bool
+
+    func makeUIView(context: Context) -> WindowTintView {
+        let view = WindowTintView()
+        view.replyBanners = replyBanners
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        return view
+    }
+
+    func updateUIView(_ view: WindowTintView, context: Context) {
+        view.configure(usesDefaultTheme: usesDefaultTheme)
+    }
+
+    static func dismantleUIView(_ view: WindowTintView, coordinator: ()) {
+        view.restoreTint()
+    }
+
+    final class WindowTintView: UIView {
+        weak var replyBanners: ReplyBannerPresenter?
+        private var usesDefaultTheme = false
+        private weak var tintedWindow: UIWindow?
+
+        func configure(usesDefaultTheme: Bool) {
+            guard self.usesDefaultTheme != usesDefaultTheme else { return }
+            self.usesDefaultTheme = usesDefaultTheme
+            applyTint()
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if let window { replyBanners?.window = window }
+            applyTint()
+        }
+
+        private func applyTint() {
+            guard usesDefaultTheme, let window else {
+                restoreTint()
+                return
+            }
+            guard tintedWindow !== window else { return }
+            restoreTint()
+            tintedWindow = window
+            window.tintColor = .systemBlue
+        }
+
+        func restoreTint() {
+            // nil restores UIKit's inherited tint. Saving the getter's resolved
+            // color would turn an inherited color into a permanent override.
+            tintedWindow?.tintColor = nil
+            tintedWindow = nil
         }
     }
 }

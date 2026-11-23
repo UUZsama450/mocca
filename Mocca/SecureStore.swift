@@ -459,7 +459,6 @@ enum AssistantMessageInlineAction: String, Codable, CaseIterable, Identifiable, 
     case regenerate
     case reaction
     case speech
-    case translate
     case branch
     case edit
     case more
@@ -469,13 +468,12 @@ enum AssistantMessageInlineAction: String, Codable, CaseIterable, Identifiable, 
         .regenerate,
         .reaction,
         .speech,
-        .translate,
         .branch,
         .edit,
         .more
     ]
 
-    static let defaultHidden: Set<Self> = [.translate, .branch, .edit]
+    static let defaultHidden: Set<Self> = [.branch, .edit]
 
     var id: String { rawValue }
 
@@ -485,7 +483,6 @@ enum AssistantMessageInlineAction: String, Codable, CaseIterable, Identifiable, 
         case .regenerate: "重新生成"
         case .reaction: "回应"
         case .speech: "朗读"
-        case .translate: "翻译"
         case .branch: "创建分支"
         case .edit: "编辑"
         case .more: "更多"
@@ -498,7 +495,6 @@ enum AssistantMessageInlineAction: String, Codable, CaseIterable, Identifiable, 
         case .regenerate: "arrow.clockwise"
         case .reaction: "heart"
         case .speech: "speaker.wave.2"
-        case .translate: "character.book.closed"
         case .branch: "arrow.triangle.branch"
         case .edit: "pencil"
         case .more: "ellipsis"
@@ -522,7 +518,6 @@ enum AssistantMessageMoreAction: String, Codable, CaseIterable, Identifiable, Ha
     case bookmark
     case copy
     case share
-    case translate
     case branch
     case edit
     case regenerate
@@ -532,7 +527,6 @@ enum AssistantMessageMoreAction: String, Codable, CaseIterable, Identifiable, Ha
         .bookmark,
         .copy,
         .share,
-        .translate,
         .branch,
         .edit,
         .regenerate,
@@ -548,7 +542,6 @@ enum AssistantMessageMoreAction: String, Codable, CaseIterable, Identifiable, Ha
         case .bookmark: "收藏"
         case .copy: "复制"
         case .share: "分享"
-        case .translate: "翻译"
         case .branch: "创建对话分支"
         case .edit: "编辑"
         case .regenerate: "重新生成"
@@ -561,7 +554,6 @@ enum AssistantMessageMoreAction: String, Codable, CaseIterable, Identifiable, Ha
         case .bookmark: "bookmark"
         case .copy: "doc.on.doc"
         case .share: "square.and.arrow.up"
-        case .translate: "character.book.closed"
         case .branch: "arrow.triangle.branch"
         case .edit: "pencil"
         case .regenerate: "arrow.clockwise"
@@ -585,6 +577,8 @@ enum AssistantMessageMoreAction: String, Codable, CaseIterable, Identifiable, Ha
 enum AssistantMessageMoreActionItem: Identifiable, Hashable, Sendable {
     case standard(AssistantMessageMoreAction)
     case deleteAllVersions
+
+    static let deletionItems: [Self] = [.standard(.delete), .deleteAllVersions]
 
     var id: String {
         switch self {
@@ -640,6 +634,7 @@ enum ComposerModelEntryStyle: String, Codable, CaseIterable, Identifiable, Senda
 
 struct UserPreferences: Codable, Hashable, Sendable {
     static let defaultChatBubbleSpacing: Double = 12
+    static let messageActionSizeRange = 75...150
     static let defaultBatchUserMessageDelaySeconds = 7
     static let defaultOCRPrompt = """
     Read the supplied image and produce a faithful reference for the conversation.
@@ -665,10 +660,11 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var summaryModelSelection: ModelSelection?
     var suggestionModelSelection: ModelSelection?
     var compressionModelSelection: ModelSelection?
-    var translationModelSelection: ModelSelection?
     var autoScrollEnabled: Bool
     var autoScrollIdleSeconds: Int
     var chatFontScale: Double
+    var messageActionSizePercent = 100
+    var messageActionScale: CGFloat { CGFloat(messageActionSizePercent) / 100 }
     var customChatBubbleSpacingEnabled: Bool
     var chatBubbleSpacing: Double
     var effectiveChatBubbleSpacing: Double {
@@ -706,6 +702,7 @@ struct UserPreferences: Codable, Hashable, Sendable {
     var assistantMessageMoreActionOrder: [AssistantMessageMoreAction]
     var hiddenAssistantMessageMoreActions: Set<AssistantMessageMoreAction>
     var showDeleteAllMessageVersionsAction: Bool
+    // Older builds persist the individual position of Delete permanently.
     var deleteAllMessageVersionsActionIndex: Int
     var showChatHeaderAssistantPill: Bool
     var showModelIcon: Bool
@@ -808,7 +805,6 @@ struct UserPreferences: Codable, Hashable, Sendable {
         summaryModelSelection: ModelSelection? = nil,
         suggestionModelSelection: ModelSelection? = nil,
         compressionModelSelection: ModelSelection? = nil,
-        translationModelSelection: ModelSelection? = nil,
         autoScrollEnabled: Bool = true,
         autoScrollIdleSeconds: Int = 8,
         chatFontScale: Double = 1.0,
@@ -939,7 +935,6 @@ struct UserPreferences: Codable, Hashable, Sendable {
         self.summaryModelSelection = summaryModelSelection
         self.suggestionModelSelection = suggestionModelSelection
         self.compressionModelSelection = compressionModelSelection
-        self.translationModelSelection = translationModelSelection
         self.autoScrollEnabled = autoScrollEnabled
         self.autoScrollIdleSeconds = min(max(autoScrollIdleSeconds, 2), 64)
         self.chatFontScale = Self.clamp(chatFontScale, min: 0.5, max: 1.5)
@@ -1095,7 +1090,6 @@ struct UserPreferences: Codable, Hashable, Sendable {
         summaryModelSelection = try container.decodeIfPresent(ModelSelection.self, forKey: .summaryModelSelection)
         suggestionModelSelection = try container.decodeIfPresent(ModelSelection.self, forKey: .suggestionModelSelection)
         compressionModelSelection = try container.decodeIfPresent(ModelSelection.self, forKey: .compressionModelSelection)
-        translationModelSelection = try container.decodeIfPresent(ModelSelection.self, forKey: .translationModelSelection)
         autoScrollEnabled = true
         let idleSeconds = try container.decodeIfPresent(Int.self, forKey: .autoScrollIdleSeconds) ?? 8
         autoScrollIdleSeconds = min(max(idleSeconds, 2), 64)
@@ -1104,6 +1098,9 @@ struct UserPreferences: Codable, Hashable, Sendable {
             min: 0.5,
             max: 1.5
         )
+        let actionSize = try container.decodeIfPresent(Int.self, forKey: .messageActionSizePercent) ?? 100
+        messageActionSizePercent = min(max(actionSize, Self.messageActionSizeRange.lowerBound),
+                                       Self.messageActionSizeRange.upperBound)
         customChatBubbleSpacingEnabled = try container.decodeIfPresent(
             Bool.self, forKey: .customChatBubbleSpacingEnabled
         ) ?? false
@@ -1188,29 +1185,35 @@ struct UserPreferences: Codable, Hashable, Sendable {
             Bool.self,
             forKey: .assistantBlankLongPressReactionEnabled
         ) ?? true
+        // Retired action IDs in older backups must not invalidate all preferences.
+        // Decode persisted IDs first, retaining the known actions in their order.
         let decodedAssistantMessageActionOrder = try container.decodeIfPresent(
-            [AssistantMessageInlineAction].self,
+            [String].self,
             forKey: .assistantMessageActionOrder
-        ) ?? AssistantMessageInlineAction.defaultOrder
+        ).map { $0.compactMap(AssistantMessageInlineAction.init(rawValue:)) }
+            ?? AssistantMessageInlineAction.defaultOrder
         assistantMessageActionOrder = AssistantMessageInlineAction.normalizedOrder(decodedAssistantMessageActionOrder)
         var decodedHiddenAssistantMessageActions = try container.decodeIfPresent(
-            Set<AssistantMessageInlineAction>.self,
+            [String].self,
             forKey: .hiddenAssistantMessageActions
-        ) ?? AssistantMessageInlineAction.defaultHidden
+        ).map { Set($0.compactMap(AssistantMessageInlineAction.init(rawValue:))) }
+            ?? AssistantMessageInlineAction.defaultHidden
         if !decodedAssistantMessageActionOrder.contains(.edit) {
             decodedHiddenAssistantMessageActions.insert(.edit)
         }
         hiddenAssistantMessageActions = decodedHiddenAssistantMessageActions
         hiddenAssistantMessageActions.formIntersection(AssistantMessageInlineAction.allCases)
         let decodedAssistantMessageMoreActionOrder = try container.decodeIfPresent(
-            [AssistantMessageMoreAction].self,
+            [String].self,
             forKey: .assistantMessageMoreActionOrder
-        ) ?? AssistantMessageMoreAction.defaultOrder
+        ).map { $0.compactMap(AssistantMessageMoreAction.init(rawValue:)) }
+            ?? AssistantMessageMoreAction.defaultOrder
         assistantMessageMoreActionOrder = AssistantMessageMoreAction.normalizedOrder(decodedAssistantMessageMoreActionOrder)
         hiddenAssistantMessageMoreActions = try container.decodeIfPresent(
-            Set<AssistantMessageMoreAction>.self,
+            [String].self,
             forKey: .hiddenAssistantMessageMoreActions
-        ) ?? AssistantMessageMoreAction.defaultHidden
+        ).map { Set($0.compactMap(AssistantMessageMoreAction.init(rawValue:))) }
+            ?? AssistantMessageMoreAction.defaultHidden
         hiddenAssistantMessageMoreActions.formIntersection(AssistantMessageMoreAction.allCases)
         showDeleteAllMessageVersionsAction = try container.decodeIfPresent(
             Bool.self,
@@ -1388,18 +1391,16 @@ struct UserPreferences: Codable, Hashable, Sendable {
     }
 
     var visibleAssistantMessageMoreActions: [AssistantMessageMoreAction] {
-        assistantMessageMoreActionOrder.filter { !hiddenAssistantMessageMoreActions.contains($0) }
+        (reorderableAssistantMessageMoreActions + [.delete]).filter { !hiddenAssistantMessageMoreActions.contains($0) }
+    }
+
+    var reorderableAssistantMessageMoreActions: [AssistantMessageMoreAction] {
+        assistantMessageMoreActionOrder.filter { $0 != .delete }
     }
 
     var assistantMessageMoreActionItems: [AssistantMessageMoreActionItem] {
-        var items = assistantMessageMoreActionOrder.map {
-            AssistantMessageMoreActionItem.standard($0)
-        }
-        items.insert(
-            .deleteAllVersions,
-            at: min(max(deleteAllMessageVersionsActionIndex, 0), items.count)
-        )
-        return items
+        reorderableAssistantMessageMoreActions.map(AssistantMessageMoreActionItem.standard)
+            + AssistantMessageMoreActionItem.deletionItems
     }
 }
 

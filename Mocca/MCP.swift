@@ -863,6 +863,7 @@ private struct MCPToolEditorRow: View {
 }
 
 struct MCPServerSelectionView: View {
+    @Environment(ChatLayoutMetrics.self) private var layoutMetrics
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let assistantID: UUID
@@ -872,7 +873,9 @@ struct MCPServerSelectionView: View {
 
     private var compactDetent: PresentationDetent {
         // Match the tools menu: 29-point grabber area and 62-point header.
-        .height(min(contentHeight + 91, UIScreen.main.bounds.height * 0.72))
+        let height = contentHeight + 91
+        guard let windowHeight = layoutMetrics.windowHeight else { return .height(height) }
+        return .height(min(height, windowHeight * 0.72))
     }
 
     private var selectedIDs: Set<UUID> {
@@ -968,11 +971,11 @@ struct MCPServerSelectionView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onPreferenceChange(MCPSelectionContentHeight.self) { height in
             guard height.isFinite, height > 0, abs(height - contentHeight) > 1 else { return }
-            let previous = compactDetent
             contentHeight = height
-            if !isManagingServers, selectedDetent == previous {
-                withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = compactDetent }
-            }
+        }
+        .onChange(of: compactDetent) { previous, preferred in
+            guard !isManagingServers, selectedDetent == previous else { return }
+            withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = preferred }
         }
     }
 

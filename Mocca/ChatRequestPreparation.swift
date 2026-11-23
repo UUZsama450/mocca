@@ -35,6 +35,9 @@ enum ChatRequestPreparation {
             message.role == .user && (message.id == newestUser?.id
                 || (message.userSendBatchID != nil && message.userSendBatchID == newestUser?.userSendBatchID))
         }
+        let followsImageCapableModel = !assistant.usesCustomImageGeneration
+            && provider.supportsAutomaticImageGeneration(modelID: modelID)
+        let prepareImageReferences = assistant.usesCustomImageGeneration || followsImageCapableModel
         let ocrEnabled = preferences.ocrEnabled
         let ocrPrompt = preferences.ocrPrompt
         let historicalImageLimit = min(max(preferences.historicalImageResendLimit, 1), 10)
@@ -102,7 +105,7 @@ enum ChatRequestPreparation {
             if shouldTransmitImages && message.role == .user && ocrEnabled && ocrContext == nil {
                 throw DocumentReadError.detail(L10n.lookup("OCR 配置不可用，请重新选择识别模型或关闭 OCR。"))
             }
-            if shouldTransmitImages && message.role == .user && !ocrEnabled && !mainSupportsImages {
+            if shouldTransmitImages && message.role == .user && !ocrEnabled && !mainSupportsImages && !prepareImageReferences {
                 throw DocumentReadError.detail(L10n.lookup("当前聊天模型不支持图片，请启用 OCR 或选择支持图片的模型。"))
             }
             if shouldUseOCR, let ocrContext {
@@ -149,12 +152,17 @@ enum ChatRequestPreparation {
             } else {
                 preparedAttachments = try await ChatRequestAttachments.prepare(
                     message.attachments,
-                    imageIDs: didUseOCR ? [] : Set(transmittedImageAttachments.map(\.id)),
-                    documents: preparedDocuments
+                    imageIDs: didUseOCR || !mainSupportsImages ? [] : Set(transmittedImageAttachments.map(\.id)),
+                    documents: preparedDocuments,
+                    referenceImageIDs: prepareImageReferences ? Set(transmittedImageAttachments.map(\.id)) : [],
+                    includeDocumentReferences: prepareImageReferences
                 )
             }
             content += preparedAttachments.text
-            let images = preparedAttachments.images
+            // OCR may supplement an image request, but an image generator still
+            // needs the allowed original bytes to edit the actual reference.
+            let images = followsImageCapableModel && !preparedAttachments.referenceImages.isEmpty
+                ? preparedAttachments.referenceImages : preparedAttachments.images
             let wireRole: String
             if message.role == .assistant,
                groupConversation != nil {
@@ -175,7 +183,7 @@ enum ChatRequestPreparation {
             }
             if message.role == .assistant,
                groupConversation == nil || message.groupID == assistant.id.uuidString {
-                wireMessages.append(contentsOf: Self.retainedSearchToolMessages(
+                wireMessages.append(contentsOf: Self.retainedToolMessages(
                     for: message,
                     userTurnsAfter: userTurnsAfter[messageIndex],
                     retentionTurns: preferences.searchToolResultRetentionTurns,
@@ -187,6 +195,7 @@ enum ChatRequestPreparation {
                 role: wireRole,
                 content: content,
                 images: images,
+                imageGenerationReferences: preparedAttachments.referenceImages,
                 reasoning: wireRole == "assistant" ? message.reasoningSegments.map(\.text).joined() : nil
             ))
             if message.role == .user {
@@ -205,7 +214,8 @@ enum ChatRequestPreparation {
             wireMessages[lastUserIndex] = ChatRequestMessage(
                 role: original.role,
                 content: Self.applyMessageTemplate(template, role: "user", message: original.content),
-                images: original.images
+                images: original.images,
+                imageGenerationReferences: original.imageGenerationReferences
             )
         }
 
@@ -217,7 +227,8 @@ enum ChatRequestPreparation {
             wireMessages[time.index] = ChatRequestMessage(
                 role: original.role,
                 content: MessageTimeContext.appending(time.timestamp, to: original.content),
-                images: original.images
+                images: original.images,
+                imageGenerationReferences: original.imageGenerationReferences
             )
         }
 
@@ -240,16 +251,14 @@ enum ChatRequestPreparation {
         return counts
     }
 
-    private static func retainedSearchToolMessages(
+    private static func retainedToolMessages(
         for message: ChatMessage,
         userTurnsAfter: Int,
         retentionTurns: Int,
         providerType: ProviderType
     ) -> [ChatRequestMessage] {
         guard message.role == .assistant, !message.toolEvents.isEmpty else { return [] }
-        if retentionTurns >= 0 {
-            guard userTurnsAfter <= retentionTurns else { return [] }
-        }
+        let retainsSearch = retentionTurns < 0 || userTurnsAfter <= retentionTurns
 
         let retained = message.toolEvents.enumerated().compactMap { offset, event -> (
             id: String,
@@ -257,7 +266,10 @@ enum ChatRequestPreparation {
             arguments: [String: Any],
             result: String
         )? in
-            guard isSearchToolEvent(event.name),
+            // Keep receipts at their original message until ordinary context
+            // trimming removes it; do not rewrite old prefixes as turns pass.
+            guard (MemoryToolRequest.names.contains(event.name)
+                    || (retainsSearch && isSearchToolEvent(event.name))),
                   let rawResult = event.resultText?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !rawResult.isEmpty else { return nil }
             let rawID = event.providerEventID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -386,11 +398,14 @@ enum ChatRequestAttachments {
     struct Prepared: Sendable {
         var text = ""
         var images: [ChatRequestImage] = []
+        var referenceImages: [ChatRequestImage] = []
     }
 
     static func prepare(
         _ attachments: [MessageAttachment], imageIDs: Set<UUID>,
-        documents: [UUID: PreparedDocumentContent] = [:]
+        documents: [UUID: PreparedDocumentContent] = [:],
+        referenceImageIDs: Set<UUID> = [],
+        includeDocumentReferences: Bool = false
     ) async throws -> Prepared {
         try Task.checkCancellation()
         guard !attachments.isEmpty else { return Prepared() }
@@ -400,7 +415,7 @@ enum ChatRequestAttachments {
                 try Task.checkCancellation()
                 switch attachment.kind {
                 case .image:
-                    if imageIDs.contains(attachment.id) {
+                    if imageIDs.contains(attachment.id) || referenceImageIDs.contains(attachment.id) {
                         guard let url = attachment.localURL, let data = try? Data(contentsOf: url) else {
                             if attachment.metadata["mocca_zip_member"] == "true" {
                                 throw ZIPAttachmentError.unsupportedFile(attachment.fileName ?? "Image")
@@ -414,10 +429,9 @@ enum ChatRequestAttachments {
                             }
                             result.text += "\n\n[Image file: \(attachment.fileName ?? "Image"); attached image \(result.images.count + 1)]"
                         }
-                        result.images.append(ChatRequestImage(
-                            mimeType: attachment.mimeType ?? "image/jpeg",
-                            base64Data: data.base64EncodedString()
-                        ))
+                        let image = ChatRequestImage(mimeType: attachment.mimeType ?? "image/jpeg", base64Data: data.base64EncodedString())
+                        if imageIDs.contains(attachment.id) { result.images.append(image) }
+                        if referenceImageIDs.contains(attachment.id) { result.referenceImages.append(image) }
                     }
                 case .file:
                     let name = attachment.fileName ?? "未命名"
@@ -427,6 +441,7 @@ enum ChatRequestAttachments {
                         }
                         result.text += "\n\n" + prepared.text
                         result.images.append(contentsOf: prepared.images)
+                        if includeDocumentReferences { result.referenceImages.append(contentsOf: prepared.images) }
                     } else if AttachmentStore.isPastedText(attachment) {
                         let text = try await AttachmentStore.readPastedTextContent(of: attachment)
                         result.text += "\n\n[文件: \(name)]\n\(text)"
@@ -449,6 +464,47 @@ enum ChatRequestAttachments {
         } onCancel: {
             worker.cancel()
         }
+    }
+}
+
+enum ExternalImageReferencePreparation {
+    struct Prepared: Sendable {
+        let messages: [ChatRequestMessage]
+        let scope: ImageReferenceScope
+    }
+
+    static func prepare(_ messages: [ChatRequestMessage]) async throws -> Prepared {
+        let worker = Task.detached(priority: .userInitiated) {
+            var scope = ImageReferenceScope()
+            var result: [ChatRequestMessage] = []
+            for message in messages {
+                try Task.checkCancellation()
+                let originals = message.imageGenerationReferences
+                guard !originals.isEmpty else { result.append(message); continue }
+                let references = originals.map { ImageGenerationReference(mimeType: $0.mimeType, base64Data: $0.base64Data) }
+                for reference in references where !scope.images.contains(where: { $0.id == reference.id }) {
+                    scope.images.append(reference)
+                }
+                let visibility = message.images.isEmpty ? "Original images are available to the selected image generator; this chat model received text/OCR only." : "Images in this message can be used as generation references."
+                let annotation = "\n\n[\(visibility) Reference IDs in attachment order: \(references.map(\.id).joined(separator: ", ")).]"
+                result.append(ChatRequestMessage(
+                    role: message.role, content: message.content + annotation,
+                    images: message.images, imageGenerationReferences: originals,
+                    toolCallsJSON: message.toolCallsJSON, toolCallID: message.toolCallID,
+                    reasoning: message.reasoning, reasoningDetailsJSON: message.reasoningDetailsJSON,
+                    contentBlocks: message.contentBlocks, functionCalls: message.functionCalls,
+                    functionResponses: message.functionResponses, responseItems: message.responseItems,
+                    geminiParts: message.geminiParts
+                ))
+            }
+            try Task.checkCancellation()
+            return Prepared(messages: result, scope: scope)
+        }
+        return try await withTaskCancellationHandler {
+            let result = try await worker.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: { worker.cancel() }
     }
 }
 

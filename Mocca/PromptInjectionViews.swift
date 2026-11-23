@@ -185,6 +185,7 @@ struct WorldBookPage: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .modifier(LegacyNavigationTintModifier())
                 .accessibilityLabel(L10n.lookup("新建世界书"))
             }
         }

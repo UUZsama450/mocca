@@ -5,121 +5,16 @@ import Intents
 import UIKit
 import UserNotifications
 
-struct ExternalImageGenerationRequest: Hashable, Sendable {
-    let prompt: String
-}
-
-enum ExternalImageGenerationCodec {
-    struct Parsed: Sendable {
-        let displayText: String
-        let requests: [ExternalImageGenerationRequest]
-    }
-
-    private static let openingMarker = "<kg>"
-    private static let fullPattern = #"(?s)<kg>\s*(\{.*?\})\s*</kg>"#
-    private static let fullRegex = try! NSRegularExpression(pattern: fullPattern)
-
-    static func parse(_ text: String) -> Parsed {
-        // Finalization uses this parser too. Ordinary replies still receive
-        // the same whitespace cleanup without two full regular-expression scans.
-        guard text.contains(openingMarker) else {
-            return Parsed(displayText: cleanedDisplayText(text), requests: [])
-        }
-        let nsText = text as NSString
-        let matches = fullRegex.matches(
-            in: text,
-            range: NSRange(location: 0, length: nsText.length)
-        )
-        let requests = matches.compactMap { match -> ExternalImageGenerationRequest? in
-            guard match.numberOfRanges > 1,
-                  match.range(at: 1).location != NSNotFound else { return nil }
-            let json = nsText.substring(with: match.range(at: 1))
-            guard let data = json.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let rawPrompt = object["prompt"] as? String else { return nil }
-            let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            return prompt.isEmpty ? nil : ExternalImageGenerationRequest(prompt: prompt)
-        }
-        let stripped = fullRegex.stringByReplacingMatches(
-            in: text,
-            range: NSRange(location: 0, length: nsText.length),
-            withTemplate: ""
-        )
-        return Parsed(displayText: cleanedDisplayText(stripped), requests: requests)
-    }
-
-    /// Hides both completed control blocks and a trailing block that is still
-    /// arriving through the stream, so implementation JSON never flashes in chat.
-    static func stripForDisplay(_ text: String) -> String {
-        // Every complete or partial marker contains ASCII '<'. Whitespace
-        // cleanup cannot introduce it, so ordinary prose needs no marker scans.
-        guard text.utf8.contains(0x3C) else {
-            return cleanedDisplayText(text)
-        }
-        // A complete control block cannot match without its exact opening
-        // marker. Ordinary streaming text still goes through the established
-        // whitespace cleanup and partial-marker handling, but avoids the full
-        // regular expression and JSON request scan.
-        let parsed = text.contains(openingMarker)
-            ? parse(text).displayText
-            : cleanedDisplayText(text)
-        if let markerStart = parsed.range(of: openingMarker, options: .backwards)?.lowerBound {
-            return cleanedDisplayText(String(parsed[..<markerStart]))
-        }
-
-        guard let markerStart = parsed.range(of: "<", options: .backwards)?.lowerBound else {
-            return parsed
-        }
-        let trailingCandidate = parsed[markerStart...]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let isOpeningMarkerPrefix = openingMarker.hasPrefix(trailingCandidate)
-        guard isOpeningMarkerPrefix else {
-            return parsed
-        }
-        return cleanedDisplayText(String(parsed[..<markerStart]))
-    }
-
-    static func cleanedDisplayText(_ text: String) -> String {
-        // A single line only needs the final trim. Use the same newline set
-        // as components below, including Unicode line/paragraph separators.
-        if (text as NSString).rangeOfCharacter(from: .newlines).location == NSNotFound {
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        let lines = text.components(separatedBy: .newlines)
-        var result: [String] = []
-        var previousBlank = false
-        for line in lines {
-            let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
-            if blank, previousBlank { continue }
-            result.append(line)
-            previousBlank = blank
-        }
-        return result.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
 struct ExternalImageModel: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
+    var supportsReferenceImages: Bool? = nil
+    var maximumReferenceImages: Int? = nil
 }
 
 enum ExternalImageGenerationAPIStyle: Hashable, Sendable {
-    case openRouter
-    case openAICompatible
-
-    var modelListPath: String {
-        switch self {
-        case .openRouter: "images/models"
-        case .openAICompatible: "models"
-        }
-    }
-
-    var generationPath: String {
-        switch self {
-        case .openRouter: "images"
-        case .openAICompatible: "images/generations"
-        }
-    }
+    case openRouter, openAICompatible, openAIJSON, chatCompletions, gemini
+    var modelListPath: String { self == .openRouter ? "images/models" : "models" }
 }
 
 extension ProviderConfiguration {
@@ -127,21 +22,24 @@ extension ProviderConfiguration {
         switch imageGenerationMode {
         case .automatic:
             if isOpenRouter { return .openRouter }
-            let host = URL(string: baseURL)?.host?.lowercased()
-            return type == .openAI && host == "api.openai.com"
-                ? .openAICompatible
-                : nil
-        case .disabled:
+            if isOfficialOpenAI { return .openAIJSON }
+            if type == .google { return .gemini }
             return nil
-        case .openAICompatible:
-            return .openAICompatible
-        case .openRouter:
-            return .openRouter
+        case .disabled: return nil
+        case .openAICompatible: return .openAICompatible
+        case .openAIJSON: return .openAIJSON
+        case .openRouter: return .openRouter
+        case .chatCompletions: return .chatCompletions
+        case .gemini: return .gemini
         }
     }
+    var supportsExternalImageGeneration: Bool { externalImageGenerationAPIStyle != nil }
 
-    var supportsExternalImageGeneration: Bool {
-        externalImageGenerationAPIStyle != nil
+    func supportsAutomaticImageGeneration(modelID: String) -> Bool {
+        if isOfficialOpenAI && OpenAIRequestPolicy.supportsImageTool(modelID) { return true }
+        let model = models.first { $0.id == modelID } ?? ModelConfiguration(id: modelID)
+        return model.capabilities.output.contains(.image)
+            && (supportsExternalImageGeneration || type == .google || isOpenRouter)
     }
 }
 
@@ -173,151 +71,208 @@ enum ExternalImageGenerationError: LocalizedError {
 }
 
 enum ExternalImageGenerationService {
-    static func listModels(provider: ProviderConfiguration) async throws -> [ExternalImageModel] {
-        guard let apiStyle = provider.externalImageGenerationAPIStyle else {
-            throw ExternalImageGenerationError.unsupportedProvider
-        }
-        let endpoint = try endpointURL(provider: provider, path: apiStyle.modelListPath)
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "GET"
-        applyHeaders(provider: provider, to: &request)
-        let (data, response) = try await session(for: provider).data(for: request)
-        try validate(response: response, data: data)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ExternalImageGenerationError.invalidResponse
-        }
-        let rows = (object["data"] as? [[String: Any]]) ?? (object["models"] as? [[String: Any]]) ?? []
-        return rows.compactMap { row in
-            guard let id = row["id"] as? String,
-                  !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            let name = ((row["name"] as? String) ?? (row["display_name"] as? String))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return ExternalImageModel(id: id, name: name?.isEmpty == false ? name! : id)
+    static func transport(provider: ProviderConfiguration, modelID: String) throws -> ImageGenerationTransport {
+        guard let style = provider.externalImageGenerationAPIStyle else { throw ExternalImageGenerationError.unsupportedProvider }
+        switch style {
+        case .openRouter: return .openRouter
+        case .openAICompatible: return .openAIForm
+        case .openAIJSON: return .openAIJSON
+        case .chatCompletions: return .chatCompletions
+        case .gemini:
+            let id = modelID.lowercased().replacingOccurrences(of: "models/", with: "")
+            if id.hasPrefix("imagen-") { throw ExternalImageGenerationError.provider(ErrorLocalization.lookup("当前 Gemini 生图接口不提供这个 Imagen 模型，请选择可用的 Gemini 图像模型。")) }
+            if id.hasPrefix("gemini-nano-banana-") { return .geminiInteractions }
+            return .geminiContent
         }
     }
 
-    static func generate(
-        provider: ProviderConfiguration,
-        modelID: String,
-        prompt: String
-    ) async throws -> [GeneratedImagePayload] {
-        guard let apiStyle = provider.externalImageGenerationAPIStyle else {
-            throw ExternalImageGenerationError.unsupportedProvider
+    static func listModels(provider: ProviderConfiguration) async throws -> [ExternalImageModel] {
+        guard let style = provider.externalImageGenerationAPIStyle else { throw ExternalImageGenerationError.unsupportedProvider }
+        var request = URLRequest(url: try endpointURL(provider: provider, path: style.modelListPath))
+        request.httpMethod = "GET"
+        applyHeaders(provider: provider, modelID: nil, google: style == .gemini, to: &request)
+        let (data, response) = try await session(for: provider).data(for: request)
+        try validate(response: response, data: data)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ExternalImageGenerationError.invalidResponse }
+        let rows = (object["data"] as? [[String: Any]]) ?? (object["models"] as? [[String: Any]]) ?? []
+        return rows.compactMap { row in
+            guard var id = (row["id"] as? String) ?? (style == .gemini ? row["name"] as? String : nil), !id.isEmpty else { return nil }
+            if style == .gemini, id.hasPrefix("models/") { id = String(id.dropFirst(7)) }
+            let lower = id.lowercased()
+            if style == .gemini, lower.hasPrefix("imagen-") || (!lower.contains("image") && !lower.contains("banana")) { return nil }
+            if provider.isOfficialOpenAI, !lower.contains("gpt-image"), !lower.contains("chatgpt-image"), !lower.hasPrefix("dall-e") { return nil }
+            let name = ((row["displayName"] as? String) ?? (row["name"] as? String) ?? (row["display_name"] as? String))?.trimmingCharacters(in: .whitespacesAndNewlines)
+            var referenceSupport: Bool?
+            var maximum: Int?
+            if let parameters = row["supported_parameters"] as? [String: Any] {
+                referenceSupport = parameters["input_references"] != nil
+                maximum = (parameters["input_references"] as? [String: Any])?["max"] as? Int
+            } else if let parameters = row["supported_parameters"] as? [String] {
+                referenceSupport = parameters.contains("input_references")
+            } else if style == .gemini { referenceSupport = !lower.hasPrefix("imagen-") }
+            else if lower.contains("gpt-image") || lower.contains("chatgpt-image") { referenceSupport = true; maximum = 16 }
+            else if lower == "dall-e-3" { referenceSupport = false }
+            return ExternalImageModel(id: id, name: name?.isEmpty == false ? name! : id,
+                supportsReferenceImages: referenceSupport, maximumReferenceImages: maximum)
         }
-        let endpoint = try endpointURL(provider: provider, path: apiStyle.generationPath)
-        var request = URLRequest(url: endpoint)
+    }
+
+    static func makeRequest(provider: ProviderConfiguration, modelID: String, prompt: String,
+                            references: [ImageGenerationReference] = []) throws -> URLRequest {
+        try Task.checkCancellation()
+        let route = try transport(provider: provider, modelID: modelID)
+        if !references.isEmpty && modelID.lowercased() == "dall-e-3" { throw ImageGenerationProtocolError.unsupportedReferences }
+        var extras: [String: Any] = [:]
+        let modelFields = provider.models.first(where: { $0.id == modelID })?.customBody ?? []
+        for field in provider.customBody + modelFields {
+            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            extras[name] = field.value.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) } ?? field.value
+        }
+        let encoded = try ImageGenerationProtocol.encode(transport: route, model: modelID, prompt: prompt,
+            references: references, extras: extras,
+            chatPath: provider.chatPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "/chat/completions" : provider.chatPath)
+        var request = URLRequest(url: try endpointURL(provider: provider, path: encoded.path))
         request.httpMethod = "POST"
         request.timeoutInterval = 300
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        applyHeaders(provider: provider, to: &request)
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: ["model": modelID, "prompt": prompt],
-            options: [.sortedKeys]
-        )
+        let google = [.geminiContent, .geminiInteractions].contains(route)
+        applyHeaders(provider: provider, modelID: modelID, google: google, to: &request)
+        request.setValue(encoded.contentType, forHTTPHeaderField: "Content-Type")
+        if route == .geminiInteractions { request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision") }
+        request.httpBody = encoded.data
+        try Task.checkCancellation()
+        return request
+    }
+
+    static func generate(provider: ProviderConfiguration, modelID: String, prompt: String,
+                         references: [ImageGenerationReference] = []) async throws -> [GeneratedImagePayload] {
+        let worker = Task.detached(priority: .userInitiated) {
+            try makeRequest(provider: provider, modelID: modelID, prompt: prompt, references: references)
+        }
+        let request = try await withTaskCancellationHandler {
+            let value = try await worker.value
+            try Task.checkCancellation()
+            return value
+        } onCancel: { worker.cancel() }
         let data: Data
         let response: URLResponse
-        do {
-            (data, response) = try await session(for: provider).data(for: request)
-        } catch let error as URLError where error.code == .timedOut {
+        do { (data, response) = try await session(for: provider).data(for: request) }
+        catch let error as URLError where error.code == .timedOut {
             throw ExternalImageGenerationError.timedOut("NSURLErrorDomain \(error.code.rawValue)：\(error.localizedDescription)")
         }
+        try Task.checkCancellation()
         try validate(response: response, data: data)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ExternalImageGenerationError.invalidResponse
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ExternalImageGenerationError.invalidResponse }
+        return try await decodeImages(object, provider: provider)
+    }
+
+    static func decodeImages(_ object: [String: Any], provider: ProviderConfiguration) async throws -> [GeneratedImagePayload] {
+        var rows = object["data"] as? [[String: Any]] ?? []
+        for prediction in object["predictions"] as? [[String: Any]] ?? [] {
+            rows.append(["b64_json": prediction["bytesBase64Encoded"] ?? "", "media_type": prediction["mimeType"] ?? "image/png"])
         }
-        let rows = (object["data"] as? [[String: Any]]) ?? []
-        var images: [GeneratedImagePayload] = []
-        for row in rows {
-            if let encoded = row["b64_json"] as? String,
-               let payload = decodeBase64Image(encoded, fallbackMIMEType: row["media_type"] as? String) {
-                images.append(payload)
-                continue
-            }
-            if let rawURL = row["url"] as? String,
-               let url = URL(string: rawURL) {
-                let (remoteData, remoteResponse) = try await session(for: provider).data(from: url)
-                let mimeType = (remoteResponse as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")
-                    ?? "image/png"
-                if !remoteData.isEmpty {
-                    images.append(GeneratedImagePayload(data: remoteData, mimeType: mimeType))
+        for candidate in object["candidates"] as? [[String: Any]] ?? [] {
+            let content = candidate["content"] as? [String: Any] ?? [:]
+            for part in content["parts"] as? [[String: Any]] ?? [] where part["thought"] as? Bool != true {
+                if let image = (part["inlineData"] ?? part["inline_data"]) as? [String: Any] {
+                    rows.append(["b64_json": image["data"] ?? "", "media_type": image["mimeType"] ?? image["mime_type"] ?? "image/png"])
                 }
             }
         }
-        guard !images.isEmpty else { throw ExternalImageGenerationError.emptyImage }
+        var interactionImages = (object["steps"] as? [[String: Any]] ?? [])
+            .filter { $0["type"] as? String == "model_output" }
+            .flatMap { $0["content"] as? [[String: Any]] ?? [] }
+            .filter { $0["type"] as? String == "image" }
+        if interactionImages.isEmpty {
+            interactionImages = ((object["outputs"] ?? object["output"]) as? [[String: Any]] ?? []).filter { $0["type"] as? String == "image" }
+        }
+        if interactionImages.isEmpty, let image = object["output_image"] as? [String: Any] { interactionImages.append(image) }
+        for image in interactionImages {
+            rows.append(["b64_json": image["data"] ?? "", "media_type": image["mime_type"] ?? "image/png"])
+        }
+        for choice in object["choices"] as? [[String: Any]] ?? [] {
+            let message = choice["message"] as? [String: Any] ?? [:]
+            let images = (message["images"] as? [[String: Any]] ?? []) + (message["content"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "image_url" }
+            for image in images {
+                if let url = (image["image_url"] as? [String: Any])?["url"] as? String ?? image["image_url"] as? String ?? image["url"] as? String {
+                    rows.append(url.hasPrefix("data:") ? ["b64_json": url] : ["url": url])
+                }
+            }
+        }
+        var images: [GeneratedImagePayload] = []
+        let format = object["output_format"] as? String
+        let fallbackMIME = format == "jpeg" ? "image/jpeg" : (format == "webp" ? "image/webp" : "image/png")
+        for row in rows {
+            try Task.checkCancellation()
+            if let encoded = row["b64_json"] as? String,
+               let payload = decodeBase64Image(encoded, fallbackMIMEType: row["media_type"] as? String ?? fallbackMIME) {
+                images.append(payload); continue
+            }
+            if let rawURL = row["url"] as? String, let url = URL(string: rawURL), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                let (remoteData, response) = try await session(for: provider).data(from: url)
+                try Task.checkCancellation()
+                try validate(response: response, data: remoteData)
+                let mime = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? fallbackMIME
+                if !remoteData.isEmpty { images.append(GeneratedImagePayload(data: remoteData, mimeType: ImageGenerationProtocol.detectedMIME(remoteData) ?? mime)) }
+            }
+        }
+        guard !images.isEmpty else {
+            if let feedback = object["promptFeedback"] as? [String: Any], let reason = feedback["blockReason"] as? String {
+                throw ExternalImageGenerationError.provider(ErrorLocalization.format("图像服务没有返回图片（%@）", [reason]))
+            }
+            throw ExternalImageGenerationError.emptyImage
+        }
         return images
     }
 
-    private static func decodeBase64Image(
-        _ encoded: String,
-        fallbackMIMEType: String?
-    ) -> GeneratedImagePayload? {
-        if encoded.hasPrefix("data:"),
-           let comma = encoded.firstIndex(of: ",") {
+    private static func decodeBase64Image(_ encoded: String, fallbackMIMEType: String?) -> GeneratedImagePayload? {
+        if encoded.hasPrefix("data:"), let comma = encoded.firstIndex(of: ",") {
             let header = String(encoded[..<comma])
-            let raw = String(encoded[encoded.index(after: comma)...])
-            guard let data = Data(base64Encoded: raw) else { return nil }
-            let mimeType = header.dropFirst(5).split(separator: ";").first.map(String.init) ?? "image/png"
-            return GeneratedImagePayload(data: data, mimeType: mimeType)
+            guard header.hasSuffix(";base64"), let data = Data(base64Encoded: String(encoded[encoded.index(after: comma)...])), !data.isEmpty else { return nil }
+            let mime = header.dropFirst(5).split(separator: ";").first.map(String.init) ?? "image/png"
+            guard mime.hasPrefix("image/") else { return nil }
+            return GeneratedImagePayload(data: data, mimeType: ImageGenerationProtocol.detectedMIME(data) ?? mime)
         }
-        guard let data = Data(base64Encoded: encoded) else { return nil }
-        return GeneratedImagePayload(data: data, mimeType: fallbackMIMEType ?? "image/png")
+        guard let data = Data(base64Encoded: encoded), !data.isEmpty else { return nil }
+        return GeneratedImagePayload(data: data, mimeType: ImageGenerationProtocol.detectedMIME(data) ?? fallbackMIMEType ?? "image/png")
     }
 
     private static func endpointURL(provider: ProviderConfiguration, path: String) throws -> URL {
-        let base = provider.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: base + "/" + path) else {
-            throw ExternalImageGenerationError.invalidEndpoint
-        }
+        let base = provider.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: base + "/" + path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { throw ExternalImageGenerationError.invalidEndpoint }
         return url
     }
 
-    private static func applyHeaders(provider: ProviderConfiguration, to request: inout URLRequest) {
-        let key: String
-        if provider.multiKeyEnabled, let selected = provider.enabledAPIKeys.randomElement() {
-            key = selected.key.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            key = provider.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
-        for header in provider.customHeaders {
-            let name = header.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { continue }
-            request.setValue(header.value, forHTTPHeaderField: name)
+    private static func applyHeaders(provider: ProviderConfiguration, modelID: String?, google: Bool, to request: inout URLRequest) {
+        let key = (provider.multiKeyEnabled ? provider.enabledAPIKeys.randomElement()?.key : nil) ?? provider.apiKey
+        let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalized.isEmpty { request.setValue(google ? normalized : "Bearer " + normalized, forHTTPHeaderField: google ? "x-goog-api-key" : "Authorization") }
+        let modelHeaders = modelID.flatMap { id in provider.models.first(where: { $0.id == id })?.customHeaders } ?? []
+        for field in provider.customHeaders + modelHeaders {
+            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !["content-type", "content-length"].contains(name.lowercased()) else { continue }
+            request.setValue(field.value, forHTTPHeaderField: name)
         }
     }
 
     private static func validate(response: URLResponse, data: Data) throws {
-        guard let http = response as? HTTPURLResponse else {
-            throw ExternalImageGenerationError.invalidResponse
-        }
+        guard let http = response as? HTTPURLResponse else { throw ExternalImageGenerationError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             let error = object?["error"] as? [String: Any]
-            let message = (error?["message"] as? String)
-                ?? (object?["message"] as? String)
+            let message = error?["message"] as? String ?? object?["message"] as? String
                 ?? ErrorLocalization.format("图像生成失败（HTTP %@）", [String(http.statusCode)])
             throw ExternalImageGenerationError.provider(message)
         }
     }
 
     private static func session(for provider: ProviderConfiguration) -> URLSession {
-        let proxy = provider.proxy.isUsable
-            ? ProxySettings(enabled: true, host: provider.proxy.host, port: provider.proxy.port)
-            : AppPreferences.loadProxySettings()
+        let proxy = provider.proxy.isUsable ? ProxySettings(enabled: true, host: provider.proxy.host, port: provider.proxy.port) : AppPreferences.loadProxySettings()
         guard proxy.isUsable, let port = Int(proxy.port) else { return .shared }
-        let configuration = URLSessionConfiguration.default
-        configuration.connectionProxyDictionary = [
-            "HTTPEnable": true,
-            "HTTPProxy": proxy.host.trimmingCharacters(in: .whitespacesAndNewlines),
-            "HTTPPort": port,
-            "HTTPSEnable": true,
-            "HTTPSProxy": proxy.host.trimmingCharacters(in: .whitespacesAndNewlines),
-            "HTTPSPort": port
-        ]
-        return URLSession(configuration: configuration)
+        let config = URLSessionConfiguration.default
+        config.connectionProxyDictionary = ["HTTPEnable": true, "HTTPProxy": proxy.host.trimmingCharacters(in: .whitespacesAndNewlines), "HTTPPort": port,
+            "HTTPSEnable": true, "HTTPSProxy": proxy.host.trimmingCharacters(in: .whitespacesAndNewlines), "HTTPSPort": port]
+        return URLSession(configuration: config)
     }
 }
 
@@ -1023,6 +978,11 @@ final class MoccaAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Retire only explicitly named files from past diagnostic builds.
+        // No touch hooks, timers, observers, or new persistent cleanup marker.
+        DispatchQueue.global(qos: .utility).async {
+            _ = RetiredDiagnosticCleanup.run(container: URL(fileURLWithPath: NSHomeDirectory()), defaults: .standard)
+        }
         IOSBackgroundGenerationManager.shared.registerBackgroundTasks()
         return true
     }

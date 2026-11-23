@@ -131,6 +131,8 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
     var recentContextSummaryInstruction: String?
     /// 助手可以通过单独选择的图像供应商与模型生成图片。
     var imageGenerationEnabled: Bool
+    var imageGenerationSource: AssistantImageGenerationSource
+    var imageGenerationRoutingVersion: Int
     var imageGenerationProviderID: UUID?
     var imageGenerationModelID: String?
     var schemaVersion: Int
@@ -171,6 +173,7 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         files: [AssistantFile] = [],
         recentContextSummaryInstruction: String? = nil,
         imageGenerationEnabled: Bool = false,
+        imageGenerationSource: AssistantImageGenerationSource = .selectedModel,
         imageGenerationProviderID: UUID? = nil,
         imageGenerationModelID: String? = nil,
         schemaVersion: Int = AssistantProfile.currentSchemaVersion,
@@ -212,6 +215,8 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         self.files = files
         self.recentContextSummaryInstruction = recentContextSummaryInstruction
         self.imageGenerationEnabled = imageGenerationEnabled
+        self.imageGenerationSource = imageGenerationSource
+        self.imageGenerationRoutingVersion = 1
         self.imageGenerationProviderID = imageGenerationProviderID
         self.imageGenerationModelID = imageGenerationModelID
         self.schemaVersion = schemaVersion
@@ -276,6 +281,8 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
             forKey: .recentContextSummaryInstruction
         )
         imageGenerationEnabled = try container.decodeIfPresent(Bool.self, forKey: .imageGenerationEnabled) ?? false
+        imageGenerationSource = try container.decodeIfPresent(AssistantImageGenerationSource.self, forKey: .imageGenerationSource) ?? .selectedModel
+        imageGenerationRoutingVersion = try container.decodeIfPresent(Int.self, forKey: .imageGenerationRoutingVersion) ?? (container.contains(.imageGenerationSource) ? 1 : 0)
         imageGenerationProviderID = try container.decodeIfPresent(UUID.self, forKey: .imageGenerationProviderID)
         imageGenerationModelID = try container.decodeIfPresent(String.self, forKey: .imageGenerationModelID)
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
@@ -382,17 +389,25 @@ struct AssistantProfile: Codable, Identifiable, Hashable, Sendable {
         return encoded
     }
 
+    /// Legacy fields remain Codable so existing explicit model choices survive.
+    /// Without an active override, image generation follows the chat model.
+    var usesCustomImageGeneration: Bool {
+        imageGenerationEnabled && imageGenerationSource == .selectedModel
+    }
+
     var imageGenerationPrompt: String? {
-        guard imageGenerationEnabled,
+        guard imageGenerationEnabled, imageGenerationSource == .selectedModel,
               imageGenerationProviderID != nil,
               let modelID = imageGenerationModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !modelID.isEmpty else { return nil }
         return """
         ## Image generation
-        The user has enabled an image generator for you. When they ask you to create or draw an image, use it now by outputting:
-        <kg>{"prompt":"a complete, standalone image prompt"}</kg>
+        The user has enabled an image generator for you. For a new image with no reference, output:
+        <kg>{"prompt":"a complete, standalone image prompt","reference_images":[]}</kg>
 
-        This block performs the image generation. Do not merely give the user a prompt, ask them to switch models, or mention the tool. If essential details are missing, ask briefly; otherwise generate immediately.
+        For an edit or a generation based on provided images, put the exact available image reference IDs in reference_images. Put the image to edit first, followed by any style or composition references. The client sends the original image bytes along with your prompt. Always specify reference_images explicitly; never replace a requested image edit with a text-only redraw. Use only reference IDs supplied for this request, never URLs, file paths, or invented IDs. If the requested image is unavailable, ask the user to reattach it or include it in the image context. Do not output a generation block in that case.
+
+        This block performs the image generation. Do not repeat the same block or place it inside a code fence. Do not merely give the user a prompt, ask them to switch models, or mention the tool. If essential details are missing, ask briefly; otherwise generate immediately.
         """
     }
 
@@ -621,5 +636,35 @@ enum AssistantMediaStore {
         let directory = root.appendingPathComponent("AssistantMedia", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+}
+
+
+extension AssistantProfile {
+    /// Preserve an explicitly enabled legacy model tool, without enabling images
+    /// for new assistants or overwriting a selected external generator.
+    static func migrateLegacyImageGeneration(
+        in profiles: inout [AssistantProfile],
+        providers: [ProviderConfiguration], globalSelection: ModelSelection?
+    ) -> Bool {
+        var changed = false
+        func resolve(_ selection: ModelSelection?) -> (ProviderConfiguration, ModelConfiguration)? {
+            guard let selection,
+                  let provider = providers.first(where: { $0.id == selection.providerID && $0.enabled }),
+                  let model = provider.models.first(where: { $0.id == selection.modelID }) else { return nil }
+            return (provider, model)
+        }
+        for index in profiles.indices where profiles[index].imageGenerationRoutingVersion < 1 {
+            profiles[index].imageGenerationRoutingVersion = 1
+            changed = true
+            guard !profiles[index].imageGenerationEnabled,
+                  let (provider, model) = resolve(profiles[index].chatModel) ?? resolve(globalSelection),
+                  provider.isOfficialOpenAI,
+                  model.builtInTools.contains(.imageGeneration),
+                  OpenAIRequestPolicy.supportsImageTool(model.id) else { continue }
+            profiles[index].imageGenerationEnabled = true
+            profiles[index].imageGenerationSource = .currentModel
+        }
+        return changed
     }
 }

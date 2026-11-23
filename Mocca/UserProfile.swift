@@ -5,7 +5,21 @@ struct UserProfile: Codable, Hashable, Sendable {
     static let defaultNickname = "用户"
 
     var nickname: String
-    var avatarJPEGData: Data?
+    var avatarJPEGData: Data? {
+        didSet {
+            if avatarJPEGData != oldValue {
+                avatarImageKey = AvatarImageSource.userJPEG(avatarJPEGData)?.key
+            }
+        }
+    }
+    // Derived once on image changes, excluded from persistence. Copies used by
+    // the editor retain the key; unrelated profile edits do not rehash the JPEG.
+    private(set) var avatarImageKey: String?
+
+    var avatarImageSource: AvatarImageSource? {
+        guard let key = avatarImageKey, let data = avatarJPEGData else { return nil }
+        return AvatarImageSource(key: key, storage: .data(data))
+    }
     var isEnabled: Bool
     var allowsAssistantEditing: Bool
     var noteTopics: [UserNoteTopic]
@@ -21,6 +35,7 @@ struct UserProfile: Codable, Hashable, Sendable {
     ) {
         self.nickname = nickname
         self.avatarJPEGData = avatarJPEGData
+        self.avatarImageKey = AvatarImageSource.userJPEG(avatarJPEGData)?.key
         self.isEnabled = isEnabled
         self.allowsAssistantEditing = allowsAssistantEditing
         self.noteTopics = noteTopics
@@ -40,6 +55,7 @@ struct UserProfile: Codable, Hashable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         nickname = try values.decodeIfPresent(String.self, forKey: .nickname) ?? Self.defaultNickname
         avatarJPEGData = try values.decodeIfPresent(Data.self, forKey: .avatarJPEGData)
+        avatarImageKey = AvatarImageSource.userJPEG(avatarJPEGData)?.key
         isEnabled = try values.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
         allowsAssistantEditing = try values.decodeIfPresent(Bool.self, forKey: .allowsAssistantEditing) ?? false
         notesRevision = max(0, try values.decodeIfPresent(Int.self, forKey: .notesRevision) ?? 0)

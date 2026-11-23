@@ -1,5 +1,21 @@
 # 更新记录 / Changelog
 
+## 1.0.11 (5372) — 2026-11-23
+
+### 简体中文
+
+- iPad 可并排显示侧栏和对话。iPhone Duo 的侧栏按钮和输入框会随屏幕布局调整。
+- 提问和回复可以分别切换版本。编辑旧提问后可直接重发，也能在消息菜单里选择删除当前版本或全部版本。
+- 在其他对话收到回复时，轻点应用内横幅即可打开对应的聊天。
+- 改进了编辑消息时的光标和中文输入，以及重发、重新生成回复和收起键盘时的聊天位置。再次打开用量统计时会复用已有结果。
+
+### English
+
+- On iPad, the sidebar and conversation can appear side by side. The sidebar control and composer adapt to the screen layout on iPhone Duo.
+- Switch between question and reply versions independently. Edit and resend an earlier question, or use the message menu to delete one version or all versions.
+- Tap an in-app reply banner to open the conversation that received a new reply.
+- Improved cursor handling and Chinese text input in the message editor, and chat positioning when resending, regenerating a reply, or dismissing the keyboard. Usage statistics reuse earlier results when you reopen the page.
+
 ## 1.0.9 (5323) — 2026-11-10
 
 - 多行输入超过可见高度后，输入框内的文字跟随系统光标滚动，上方聊天正文继续独立抬升。

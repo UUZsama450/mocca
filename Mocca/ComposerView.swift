@@ -734,6 +734,7 @@ struct GroupChatMembersView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(L10n.lookup("完成")) { dismiss() }
+                        .modifier(LegacyNavigationTintModifier())
                 }
             }
         }

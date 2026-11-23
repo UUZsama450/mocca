@@ -55,28 +55,12 @@ struct AssistantSelectorView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    ForEach(model.assistants) { assistant in
-                        assistantRow(assistant)
-                            .deleteDisabled(model.assistants.count <= 1)
-                            .listRowBackground(Color.primary.opacity(0.045))
-                    }
-                    .onMove(perform: model.moveAssistants)
-                    .onDelete(perform: deleteAssistants)
-                } header: {
-                    Text(L10n.lookup("助手列表"))
-                        .textCase(nil)
-                } footer: {
-                    Text(L10n.lookup("点按助手即可切换；进入编辑模式后可以调整顺序或删除。"))
-                }
-            }
-            .listStyle(.insetGrouped)
-            .listSectionSpacing(18)
-            .scrollContentBackground(.hidden)
-            .contentMargins(.top, 12, for: .scrollContent)
-            .background(Color.clear)
-            .environment(\.editMode, $editMode)
+            AssistantProfileList(
+                model: model, assistants: model.assistants, isEditing: editMode == .active,
+                showsDeleteControls: true,
+                footer: L10n.lookup("点按助手即可切换；进入编辑模式后可以调整顺序或删除。"),
+                onDelete: { assistantToDelete = $0 }, row: assistantRow
+            )
             .navigationTitle(L10n.lookup("选择助手"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -98,11 +82,13 @@ struct AssistantSelectorView: View {
                             editMode = editMode == .active ? .inactive : .active
                         }
                     }
+                    .modifier(LegacyNavigationTintModifier())
                     Button {
                         editingAssistant = AssistantProfile(name: L10n.lookup("新助手"), temperature: 0.6)
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .modifier(LegacyNavigationTintModifier())
                     .accessibilityLabel(L10n.lookup("新建助手"))
                 }
             }
@@ -184,13 +170,6 @@ struct AssistantSelectorView: View {
         }
     }
 
-    private func deleteAssistants(at offsets: IndexSet) {
-        guard let offset = offsets.first,
-              model.assistants.indices.contains(offset)
-        else { return }
-        assistantToDelete = model.assistants[offset]
-    }
-
     private var deleteBinding: Binding<Bool> {
         Binding(
             get: { assistantToDelete != nil },
@@ -200,6 +179,109 @@ struct AssistantSelectorView: View {
                 }
             }
         )
+    }
+}
+
+/// The table's local editing handle moves one opaque row and provides edge
+/// scrolling and VoiceOver reordering. The model saves the final move once.
+struct AssistantProfileList<Row: View>: UIViewRepresentable {
+    let model: AppModel
+    var assistants: [AssistantProfile]
+    let isEditing: Bool
+    let showsDeleteControls: Bool
+    let footer: String
+    let onDelete: (AssistantProfile) -> Void
+    @ViewBuilder let row: (AssistantProfile) -> Row
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITableView {
+        let table = UITableView(frame: .zero, style: .insetGrouped)
+        table.backgroundColor = .clear
+        table.dragInteractionEnabled = false
+        table.allowsSelectionDuringEditing = true
+        table.estimatedRowHeight = 84
+        table.register(UITableViewCell.self, forCellReuseIdentifier: "assistant")
+        table.dataSource = context.coordinator
+        table.delegate = context.coordinator
+        return table
+    }
+
+    func updateUIView(_ table: UITableView, context: Context) {
+        let coordinator = context.coordinator
+        let orderChanged = !assistants.elementsEqual(coordinator.list.assistants, by: { $0.id == $1.id })
+        coordinator.list = self
+        if table.isEditing != isEditing {
+            table.setEditing(isEditing, animated: table.window != nil)
+        }
+        if orderChanged {
+            table.reloadData()
+        } else {
+            for path in table.indexPathsForVisibleRows ?? [] {
+                if let cell = table.cellForRow(at: path) { coordinator.configure(cell, at: path) }
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
+        var list: AssistantProfileList
+        init(_ list: AssistantProfileList) { self.list = list }
+
+        func tableView(_ table: UITableView, numberOfRowsInSection section: Int) -> Int { list.assistants.count }
+        func tableView(_ table: UITableView, titleForHeaderInSection section: Int) -> String? { L10n.lookup("助手列表") }
+        func tableView(_ table: UITableView, titleForFooterInSection section: Int) -> String? { list.footer }
+
+        func tableView(_ table: UITableView, cellForRowAt path: IndexPath) -> UITableViewCell {
+            let cell = table.dequeueReusableCell(withIdentifier: "assistant", for: path)
+            configure(cell, at: path)
+            return cell
+        }
+
+        func configure(_ cell: UITableViewCell, at path: IndexPath) {
+            let assistant = list.assistants[path.row]
+            cell.selectionStyle = .none
+            cell.accessibilityLabel = assistant.name
+            cell.contentConfiguration = UIHostingConfiguration { [list] in
+                list.row(assistant).environment(list.model)
+            }.margins(.vertical, 8)
+            var background = UIBackgroundConfiguration.listGroupedCell()
+            background.backgroundColor = list.showsDeleteControls ? .secondarySystemBackground : .secondarySystemGroupedBackground
+            cell.backgroundConfiguration = background
+        }
+
+        func tableView(_ table: UITableView, canMoveRowAt path: IndexPath) -> Bool { list.assistants.count > 1 }
+
+        func tableView(_ table: UITableView, moveRowAt source: IndexPath, to destination: IndexPath) {
+            guard source != destination else { return }
+            let from = IndexSet(integer: source.row)
+            let to = destination.row + (source.row < destination.row ? 1 : 0)
+            list.assistants.move(fromOffsets: from, toOffset: to)
+            list.model.moveAssistants(fromOffsets: from, toOffset: to)
+        }
+
+        func tableView(_ table: UITableView, editingStyleForRowAt path: IndexPath) -> UITableViewCell.EditingStyle {
+            list.showsDeleteControls && list.assistants.count > 1 ? .delete : .none
+        }
+
+        func tableView(_ table: UITableView, shouldIndentWhileEditingRowAt path: IndexPath) -> Bool {
+            list.showsDeleteControls && list.assistants.count > 1
+        }
+
+        func tableView(_ table: UITableView, trailingSwipeActionsConfigurationForRowAt path: IndexPath) -> UISwipeActionsConfiguration? {
+            guard list.assistants.count > 1, !table.isEditing || list.showsDeleteControls else { return nil }
+            let assistant = list.assistants[path.row]
+            let delete = UIContextualAction(style: .destructive, title: L10n.lookup("删除")) { [weak self] _, _, finish in
+                finish(false)
+                self?.list.onDelete(assistant)
+            }
+            let actions = UISwipeActionsConfiguration(actions: [delete])
+            actions.performsFirstActionWithFullSwipe = list.showsDeleteControls
+            return actions
+        }
+
+        func tableView(_ table: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt path: IndexPath) {
+            if editingStyle == .delete { list.onDelete(list.assistants[path.row]) }
+        }
     }
 }
 
@@ -465,7 +547,8 @@ struct AssistantEditorView: View {
                 thinkingEnabled: $thinkingEnabled,
                 thinkingBudgetValue: $thinkingBudgetValue,
                 maxTokensEnabled: $maxTokensEnabled,
-                maxTokensValue: $maxTokensValue
+                maxTokensValue: $maxTokensValue,
+                officialReasoningModelID: officialReasoningModelID
             )
         }
         .sheet(isPresented: $isChatModelSelectorPresented) {
@@ -482,9 +565,10 @@ struct AssistantEditorView: View {
         }
         .sheet(isPresented: $isImageModelSelectorPresented) {
             AssistantImageGenerationPicker(
-                selectedProviderID: profile.imageGenerationProviderID,
-                selectedModelID: profile.imageGenerationModelID
+                selectedProviderID: profile.usesCustomImageGeneration ? profile.imageGenerationProviderID : nil,
+                selectedModelID: profile.usesCustomImageGeneration ? profile.imageGenerationModelID : nil
             ) { providerID, modelID in
+                profile.imageGenerationSource = providerID == nil ? .currentModel : .selectedModel
                 profile.imageGenerationProviderID = providerID
                 profile.imageGenerationModelID = modelID
                 profile.imageGenerationEnabled = providerID != nil
@@ -704,7 +788,7 @@ struct AssistantEditorView: View {
                 )
                 detailButton(
                     .thinking,
-                    title: L10n.lookup("思考预算"),
+                    title: L10n.lookup(officialReasoningModelID == nil ? "思考预算" : "思考强度"),
                     value: thinkingSummary,
                     systemImage: "brain.head.profile"
                 )
@@ -729,34 +813,22 @@ struct AssistantEditorView: View {
             }
 
             Section {
-                Toggle(isOn: Binding(
-                    get: { profile.imageGenerationEnabled },
-                    set: { enabled in
-                        let isConfigured = profile.imageGenerationProviderID != nil
-                            && profile.imageGenerationModelID?
-                                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                        if enabled, !isConfigured {
-                            isImageModelSelectorPresented = true
-                        }
-                        profile.imageGenerationEnabled = enabled && isConfigured
-                    }
-                )) {
-                    AssistantEditorIconLabel(title: L10n.lookup("图像生成"), systemImage: "photo.badge.plus")
-                }
-                Button {
-                    isImageModelSelectorPresented = true
-                } label: {
-                    AssistantEditorValueRow(
-                        title: L10n.lookup("图像生成模型"),
-                        value: imageGenerationModelSummary,
-                        systemImage: "sparkles"
-                    )
+                Button { isImageModelSelectorPresented = true } label: {
+                    AssistantEditorValueRow(title: L10n.lookup("生图模型"),
+                        value: imageGenerationModelSummary, systemImage: "photo.badge.plus")
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("assistant.imageGeneration.model")
             } header: {
-                Text(L10n.lookup("图像生成"))
+                HStack(spacing: 5) {
+                    Text(L10n.lookup("图像生成"))
+                    SettingsInfoButton(title: L10n.lookup("图像生成"), identifier: "assistant.imageGeneration.info") {
+                        SettingsInfoText(title: L10n.lookup("跟随聊天模型"), text: L10n.lookup("支持生图的模型可直接生成和编辑图片，无需再开启开关。只在需要另一模型负责画图时单独指定；指定后优先使用该模型。"))
+                        SettingsInfoText(title: L10n.lookup("参考图"), text: L10n.lookup("本轮图片和允许发送的历史图片会按现有规则传递。不支持参考图时会提示，不会自动换模型或改成文字重画。生成图片可能单独计费。"))
+                    }
+                }
             } footer: {
-                Text(L10n.lookup("开启后，助手会调用单独选择的图像供应商与模型；图片会直接显示在助手消息里。"))
+                Text(L10n.lookup("默认跟随聊天模型；也可以指定其他模型负责生图。"))
             }
 
             Section {
@@ -825,8 +897,17 @@ struct AssistantEditorView: View {
         return preview
     }
 
+    private var officialReasoningModelID: String? {
+        guard let context = model.modelContext(for: profile), context.provider.isOfficialOpenAI,
+              OpenAIRequestPolicy.supportsReasoning(context.selection.modelID) else { return nil }
+        return context.selection.modelID
+    }
+
     private var thinkingSummary: String {
         guard thinkingEnabled else { return L10n.lookup("已关闭") }
+        if let modelID = officialReasoningModelID {
+            return L10n.lookup(OpenAIReasoningPresentation.title(model: modelID, budget: thinkingBudgetValue))
+        }
         return thinkingBudgetValue < 0 ? L10n.lookup("自动") : "\(thinkingBudgetValue) tokens"
     }
 
@@ -845,6 +926,7 @@ struct AssistantEditorView: View {
     }
 
     private var imageGenerationModelSummary: String {
+        guard profile.usesCustomImageGeneration else { return L10n.lookup("跟随聊天模型") }
         guard let providerID = profile.imageGenerationProviderID,
               let modelID = profile.imageGenerationModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !modelID.isEmpty else { return L10n.lookup("选择模型") }
@@ -1162,7 +1244,7 @@ private struct AssistantEditorIconLabel: View {
                 .foregroundStyle(color)
                 .frame(width: 30)
             Text(title)
-                .fontWeight(.medium)
+                .font(.body.weight(.regular))
                 .foregroundStyle(color)
         }
         .contentShape(Rectangle())
@@ -1205,6 +1287,7 @@ private struct AssistantBasicDetailSheet: View {
     @Binding var thinkingBudgetValue: Int
     @Binding var maxTokensEnabled: Bool
     @Binding var maxTokensValue: Int
+    var officialReasoningModelID: String? = nil
 
     @State private var customInputText = ""
     @State private var isCustomInputPresented = false
@@ -1233,7 +1316,7 @@ private struct AssistantBasicDetailSheet: View {
                     .frame(maxWidth: .infinity)
 
                 HStack(spacing: 16) {
-                    Text(detail.title)
+                    Text(detail == .thinking && officialReasoningModelID != nil ? L10n.lookup("思考强度") : detail.title)
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(.primary)
 
@@ -1259,6 +1342,17 @@ private struct AssistantBasicDetailSheet: View {
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .fill(Color.secondary.opacity(0.08))
                         )
+                }
+
+                if officialReasoningModelID != nil {
+                    HStack {
+                        Text(L10n.lookup("OpenAI 参数说明")).font(.footnote).foregroundStyle(.secondary)
+                        SettingsInfoButton(title: L10n.lookup("OpenAI 参数"), identifier: "assistant.openai.reasoningInfo") {
+                            SettingsInfoText(title: L10n.lookup("自动"), text: L10n.lookup("自动会跟随当前模型默认强度；有些模型默认不思考，有些默认开启思考。关闭只对支持关闭思考的模型生效。"))
+                            SettingsInfoText(title: L10n.lookup("强度与采样"), text: L10n.lookup("客户端会把已有思考设置转换成模型支持的档位；超出支持范围时使用最高支持档位。温度和 Top P 与当前思考模式不兼容时不发送，已设置的数值会保留。自定义 Body 中的思考参数优先。"))
+                        }
+                        Spacer()
+                    }
                 }
 
                 Text(detailDescription)
@@ -1374,6 +1468,21 @@ private struct AssistantBasicDetailSheet: View {
                 onValueTap: beginCustomInput
             )
         case .thinking:
+            if let modelID = officialReasoningModelID {
+                Picker(L10n.lookup("思考强度"), selection: Binding(
+                    get: { OpenAIRequestPolicy.normalizedBudget(model: modelID, budget: thinkingBudgetValue) },
+                    set: { thinkingBudgetValue = $0 }
+                )) {
+                    Text(L10n.lookup("自动")).tag(-1)
+                    if !modelID.lowercased().contains("-pro") { Text(L10n.lookup("低")).tag(1_024) }
+                    if !OpenAIRequestPolicy.matches(modelID.lowercased(), "gpt-5-pro") { Text(L10n.lookup("中")).tag(4_096) }
+                    Text(L10n.lookup("高")).tag(8_192)
+                    if OpenAIRequestPolicy.supportsExtraHigh(modelID) {
+                        Text(L10n.lookup("极高")).tag(16_384)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } else {
             VStack(alignment: .leading, spacing: 16) {
                 Picker(L10n.lookup("思考预算模式"), selection: thinkingModeBinding) {
                     ForEach(AssistantThinkingBudgetMode.allCases) { mode in
@@ -1409,6 +1518,7 @@ private struct AssistantBasicDetailSheet: View {
                         onValueTap: beginCustomInput
                     )
                 }
+            }
             }
         case .maxTokens:
             AssistantParameterSlider(
@@ -1581,7 +1691,10 @@ private struct AssistantBasicDetailSheet: View {
     }
 
     @MainActor private var detailDescription: String {
-        switch detail {
+        if officialReasoningModelID != nil, detail == .thinking {
+            return L10n.lookup("思考强度会按当前模型的能力发送；自动跟随模型默认，实际档位可因模型而异。")
+        }
+        return switch detail {
         case .temperature:
             L10n.lookup("控制输出随机性；数值越高，回答通常越多样。")
         case .topP:
@@ -3815,6 +3928,7 @@ private struct AssistantRecentContextSummarySheet: View {
                             errorMessage = L10n.lookup("长期记忆保存失败，请稍后重试。")
                         }
                     }
+                    .modifier(LegacyNavigationTintModifier())
                     .disabled(output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityLabel(L10n.lookup("保存为长期记忆"))
                 }
@@ -3953,6 +4067,7 @@ private struct AssistantImageGenerationPicker: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
 
+    @State private var followsChatModel: Bool
     let onSave: (UUID?, String?) -> Void
 
     init(
@@ -3962,6 +4077,7 @@ private struct AssistantImageGenerationPicker: View {
     ) {
         _providerID = State(initialValue: selectedProviderID)
         _modelID = State(initialValue: selectedModelID ?? "")
+        _followsChatModel = State(initialValue: selectedProviderID == nil)
         self.onSave = onSave
     }
 
@@ -3975,7 +4091,20 @@ private struct AssistantImageGenerationPicker: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            Form {
+                Section {
+                    Button {
+                        onSave(nil, nil)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(L10n.lookup("跟随聊天模型")).foregroundStyle(.primary)
+                            Spacer()
+                            if followsChatModel { Image(systemName: "checkmark").foregroundStyle(Color(uiColor: appModel.themeActionUIColor)) }
+                        }
+                    }
+                    .accessibilityIdentifier("assistant.imageGeneration.follow")
+                }
                 if providers.isEmpty {
                     ContentUnavailableView(
                         L10n.lookup("还没有可用的图像供应商"),
@@ -3983,7 +4112,6 @@ private struct AssistantImageGenerationPicker: View {
                         description: Text(L10n.lookup("请先在供应商设置里启用图像生成接口，并填写对应 API Key。"))
                     )
                 } else {
-                    Form {
                         Section(L10n.lookup("provider.field.label")) {
                             Picker(L10n.lookup("provider.field.label"), selection: $providerID) {
                                 ForEach(providers) { provider in
@@ -3994,9 +4122,13 @@ private struct AssistantImageGenerationPicker: View {
                         }
 
                         Section {
-                            TextField(L10n.lookup("例如 openai/gpt-image-1"), text: $modelID)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
+                            DisclosureGroup(L10n.lookup("手动填写模型 ID")) {
+                                TextField(L10n.lookup("模型 ID"), text: $modelID)
+                                    .modifier(DefaultControlTintModifier())
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                            }
+                            .onChange(of: modelID) { _, _ in followsChatModel = false }
                             if isLoading {
                                 HStack(spacing: 10) {
                                     ProgressView()
@@ -4021,6 +4153,10 @@ private struct AssistantImageGenerationPicker: View {
                                                         .font(.caption)
                                                         .foregroundStyle(.secondary)
                                                 }
+                                                if let supported = imageModel.supportsReferenceImages {
+                                                    Text(L10n.lookup(supported ? "支持参考图" : "仅文字生图"))
+                                                        .font(.caption).foregroundStyle(.secondary)
+                                                }
                                             }
                                             Spacer()
                                             if modelID == imageModel.id {
@@ -4038,11 +4174,10 @@ private struct AssistantImageGenerationPicker: View {
                         } footer: {
                             Text(L10n.lookup("接口格式由供应商设置决定；模型列表不可用时也可以手动填写模型 ID。"))
                         }
-                    }
-                    .settingsGroupedPageStyle()
                 }
             }
-            .navigationTitle(L10n.lookup("图像生成"))
+            .settingsGroupedPageStyle()
+            .navigationTitle(L10n.lookup("生图模型"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -4184,6 +4319,7 @@ private struct AssistantQuickPhraseEditor: View {
                         .frame(minHeight: 150)
                 }
             }
+            .modifier(DefaultControlTintModifier())
             .navigationTitle(L10n.lookup("快捷短语"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

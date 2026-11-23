@@ -77,10 +77,14 @@ private struct DocumentAttachmentOptionsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .modifier(DefaultControlTintModifier())
             .navigationTitle(L10n.lookup("文档读取"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(L10n.lookup("取消")) { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.lookup("取消")) { dismiss() }
+                        .modifier(LegacyNavigationTintModifier())
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(L10n.lookup("保存")) {
                         do {
@@ -90,6 +94,7 @@ private struct DocumentAttachmentOptionsView: View {
                             else { error = L10n.lookup("当前无法修改附件，请停止生成后重试。") }
                         } catch { self.error = error.localizedDescription }
                     }
+                    .modifier(LegacyNavigationTintModifier())
                 }
             }
             .task {

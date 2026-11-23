@@ -451,10 +451,26 @@ enum ToolDefinitionBuilder {
 
 typealias ToolCallHandler = @Sendable (String, [String: Any], String?) async -> String
 
+enum MemoryToolRequest: Sendable {
+    case create(content: String)
+    case edit(id: UUID, content: String)
+    case delete(id: UUID)
+
+    static let names: Set<String> = ["create_memory", "edit_memory", "delete_memory"]
+
+    var toolName: String {
+        switch self {
+        case .create: "create_memory"
+        case .edit: "edit_memory"
+        case .delete: "delete_memory"
+        }
+    }
+}
+
 enum ToolCallExecutor {
     static func buildHandler(
         assistant: AssistantProfile,
-        memoryUpdater: (@Sendable (AssistantProfile) async -> Void)?,
+        memoryExecutor: (@Sendable (MemoryToolRequest) async -> String)?,
         conversationSearcher: (@Sendable (String, Int) async -> String)?,
         searchExecutor: (@Sendable (String, Bool) async -> String)? = nil,
         calendarExecutor: (@Sendable (String, [String: JSONValue]) async -> String?)? = nil,
@@ -508,7 +524,7 @@ enum ToolCallExecutor {
                     ?? SearchToolConstants.queryLooksImageOriented(query))
                 return await executor(query, includeImages)
             }
-            if let execute = handleMemoryTool(name: name, args: args, assistant: assistant, memoryUpdater: memoryUpdater) {
+            if let execute = handleMemoryTool(name: name, args: args, assistant: assistant, memoryExecutor: memoryExecutor) {
                 return await execute()
             }
             if MoccaCalendarAssistantBridge.toolNames.contains(name),
@@ -541,54 +557,27 @@ enum ToolCallExecutor {
         name: String,
         args: [String: Any],
         assistant: AssistantProfile,
-        memoryUpdater: (@Sendable (AssistantProfile) async -> Void)?
+        memoryExecutor: (@Sendable (MemoryToolRequest) async -> String)?
     ) -> (() async -> String)? {
-        guard assistant.enableMemory else { return nil }
-        guard name == "create_memory" || name == "edit_memory" || name == "delete_memory" else { return nil }
-
-        return {
-            var mutableAssistant = assistant
-
-            switch name {
-            case "create_memory":
-                let content = (args["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !content.isEmpty else {
-                    return toolError(error: "invalid_memory_content", message: "Memory content must not be empty.", tool: name)
-                }
-                let memory = AssistantMemory(content: content)
-                mutableAssistant.memories.append(memory)
-                await memoryUpdater?(mutableAssistant)
-                return content
-
-            case "edit_memory":
-                let idString = "\(args["id"] ?? "")"
-                let content = (args["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !content.isEmpty else {
-                    return toolError(error: "invalid_memory_content", message: "Memory content must not be empty.", tool: name)
-                }
-                guard let targetID = UUID(uuidString: idString),
-                      let idx = mutableAssistant.memories.firstIndex(where: { $0.id == targetID }) else {
-                    return toolError(error: "memory_not_found", message: "No memory record was found for id \(idString).", tool: name)
-                }
-                mutableAssistant.memories[idx].content = content
-                mutableAssistant.memories[idx].updatedAt = .now
-                await memoryUpdater?(mutableAssistant)
-                return content
-
-            case "delete_memory":
-                let idString = "\(args["id"] ?? "")"
-                guard let targetID = UUID(uuidString: idString),
-                      let idx = mutableAssistant.memories.firstIndex(where: { $0.id == targetID }) else {
-                    return toolError(error: "memory_not_found", message: "No memory record was found for id \(idString).", tool: name)
-                }
-                let deleted = mutableAssistant.memories.remove(at: idx)
-                await memoryUpdater?(mutableAssistant)
-                return toolResultJSONString(["deleted": true, "id": idString, "content": deleted.content])
-
-            default:
-                return toolError(error: "unknown_tool", message: "Unknown memory tool.", tool: name)
-            }
+        guard MemoryToolRequest.names.contains(name) else { return nil }
+        guard assistant.enableMemory, let memoryExecutor else {
+            return { toolError(error: "unavailable", message: "Memory tools are not enabled.", tool: name) }
         }
+        let content = (args["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if name != "delete_memory", content.isEmpty {
+            return { toolError(error: "invalid_memory_content", message: "Memory content must not be empty.", tool: name) }
+        }
+        let request: MemoryToolRequest
+        if name == "create_memory" {
+            request = .create(content: content)
+        } else {
+            guard let idString = args["id"] as? String,
+                  let id = UUID(uuidString: idString) else {
+                return { toolError(error: "invalid_memory_id", message: "Supply a valid memory UUID.", tool: name) }
+            }
+            request = name == "edit_memory" ? .edit(id: id, content: content) : .delete(id: id)
+        }
+        return { await memoryExecutor(request) }
     }
 
     // MARK: Local Tools

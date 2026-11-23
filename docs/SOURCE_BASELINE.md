@@ -1,6 +1,12 @@
 # Source baseline
 
-## Current release 1.0.9 (5323)
+## Current release 1.0.11 (5372)
+
+Build 5372 uses the product sources from phone build 5371. Both targets declare 1.0.11 (5372). The public configuration takes the optional QQ invitation from a local build setting. The device build and the GitHub source share the same 169 product files. [SHA-256 manifest](SOURCE_5372_SHA256.json) · [Release notes](../CHANGELOG.md).
+
+5372 基于手机构建 5371，主应用与实时活动扩展均为 1.0.11（5372）。QQ 邀请链接由本地构建配置提供。真机版与 GitHub 源码使用同一份已校验的 169 个产品文件。
+
+## Historical release 1.0.9 (5323)
 
 The portable source derives from phone build 5321. It removes touch recording, its Settings entry, and the build-time activation settings. The public source continues to use configurable signing. [SHA-256 manifest](SOURCE_5323_SHA256.json) · [Release notes](../CHANGELOG.md).
 

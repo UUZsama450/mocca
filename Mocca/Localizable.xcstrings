@@ -1,6 +1,28 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "附件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attachment"
+          }
+        }
+      }
+    },
+    "打开这条回复所在的聊天": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens the chat containing this reply."
+          }
+        }
+      }
+    },
     "ZIP 文件损坏或内容不完整，请重新压缩后添加。": {
       "extractionState": "manual",
       "localizations": {
@@ -1996,6 +2018,39 @@
         }
       }
     },
+    "上一版提问": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previous question version"
+          }
+        }
+      }
+    },
+    "下一版提问": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next question version"
+          }
+        }
+      }
+    },
+    "只删除这个提问版本？回答和后续对话会保留。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this question version? Replies and later messages will be kept."
+          }
+        }
+      }
+    },
     "下一版回答": {
       "extractionState": "manual",
       "localizations": {
@@ -3435,17 +3490,6 @@
         }
       }
     },
-    "保存并发送": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save & Send"
-          }
-        }
-      }
-    },
     "保存并离开": {
       "extractionState": "manual",
       "localizations": {
@@ -4121,6 +4165,237 @@
           "stringUnit": {
             "state": "translated",
             "value": "About & Support"
+          }
+        }
+      }
+    },
+    "关于 Mocca": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "About Mocca"
+          }
+        }
+      }
+    },
+    "开源许可与声明": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "License and Notices"
+          }
+        }
+      }
+    },
+    "使用帮助": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Help"
+          }
+        }
+      }
+    },
+    "项目与社区": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project and Community"
+          }
+        }
+      }
+    },
+    "隐私与许可": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privacy and Licensing"
+          }
+        }
+      }
+    },
+    "功能指南": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Feature Guides"
+          }
+        }
+      }
+    },
+    "联系支持": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contact Support"
+          }
+        }
+      }
+    },
+    "版本 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
+          }
+        }
+      }
+    },
+    "前往“设置 → 供应商”，选择预设或添加兼容服务，填写自己的 API Key。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In Settings → Providers, choose a preset or add a compatible service and enter your API key."
+          }
+        }
+      }
+    },
+    "通知和实时活动可以显示生成进度。iOS 可能因电量、温度、内存或网络暂停后台任务，服务连接也可能中断。回到对话查看结果，必要时重新生成；重要回复可保持 App 在前台。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications and Live Activities show generation progress. iOS may pause background tasks depending on battery, temperature, memory, or network conditions. The service may also disconnect. Open the chat to check the result and regenerate if needed. For important replies, keep the app in the foreground."
+          }
+        }
+      }
+    },
+    "用记忆保留对话信息，用世界书补充背景，用指令约定助手的回复方式。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use memories to retain conversation details, world books to add context, and instructions to guide how an assistant replies."
+          }
+        }
+      }
+    },
+    "在“设置 → 搜索服务”配置服务，再从输入框的工具菜单打开“联网搜索”。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configure a provider in Settings → Search Services, then turn on Web Search in the composer’s tools menu."
+          }
+        }
+      }
+    },
+    "在“设置 → MCP”添加服务器，再从聊天工具中选择当前助手可用的服务器。执行工具前请核对服务器地址和权限。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a server in Settings → MCP, then select the servers available to the current assistant from chat tools. Check the server address and permissions before running a tool."
+          }
+        }
+      }
+    },
+    "在“设置 → 权限与系统功能”查看授权状态。需要更改授权时，前往系统设置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check authorization in Settings → Permissions & System Features. To change access, open the system Settings app."
+          }
+        }
+      }
+    },
+    "点回复下方的朗读按钮播放文字。语音相关配置在“设置 → 语音服务”，当前版本不采集麦克风录音。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap the read-aloud button below a reply to play its text. Voice options are in Settings → Voice Services. This version does not record from the microphone."
+          }
+        }
+      }
+    },
+    "这条调用记录没有保存这段原文。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This tool call did not save this text."
+          }
+        }
+      }
+    },
+    "记忆操作失败": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memory operation failed"
+          }
+        }
+      }
+    },
+    "正在处理记忆": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Processing memory"
+          }
+        }
+      }
+    },
+    "记忆内容未变": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memory unchanged"
+          }
+        }
+      }
+    },
+    "修改前：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Before: %@"
+          }
+        }
+      }
+    },
+    "修改后：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After: %@"
           }
         }
       }
@@ -5715,6 +5990,17 @@
         }
       }
     },
+    "发送": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send"
+          }
+        }
+      }
+    },
     "发送前还差一步": {
       "extractionState": "manual",
       "localizations": {
@@ -7089,17 +7375,6 @@
         }
       }
     },
-    "在“设置 → 默认模型”选择聊天模型；标题、摘要、压缩和翻译模型可以单独设置或跟随当前对话。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose a chat model in Settings → Default Model. Title, summary, context compression, and translation models can be selected separately or use the current chat model."
-          }
-        }
-      }
-    },
     "在回复中生成并保存图片": {
       "extractionState": "manual",
       "localizations": {
@@ -8252,6 +8527,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Permanently delete all %@ versions of this reply? Earlier user messages and other messages are kept. This cannot be undone."
+          }
+        }
+      }
+    },
+    "将永久删除这条提问的全部 %@ 个版本。回答和后续消息会保留。此操作无法撤销。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permanently delete all %@ versions of this question? Replies and later messages will be kept. This cannot be undone."
           }
         }
       }
@@ -16259,6 +16545,28 @@
         }
       }
     },
+    "消息操作大小": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message action size"
+          }
+        }
+      }
+    },
+    "调整回复下方的操作图标，以及提问和回复的版本数字与箭头。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adjust the action icons below replies and the version numbers and arrows below questions and replies."
+          }
+        }
+      }
+    },
     "消息操作按钮": {
       "extractionState": "manual",
       "localizations": {
@@ -17339,17 +17647,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Take a photo and send it to an assistant."
-          }
-        }
-      }
-    },
-    "用于翻译消息内容，适合选择快速且准确的模型。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "For translating messages. Choose a fast, accurate model."
           }
         }
       }
@@ -19116,39 +19413,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Group Chat Settings"
-          }
-        }
-      }
-    },
-    "翻译": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Translate to Chinese"
-          }
-        }
-      }
-    },
-    "翻译失败：%@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Translation failed: %@"
-          }
-        }
-      }
-    },
-    "翻译模型": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Translation Model"
           }
         }
       }
@@ -22654,13 +22918,13 @@
         }
       }
     },
-    "这里单独控制点开助手回答“更多”后出现的项目及顺序。“完全删除”只会在同一回答存在多个版本时出现。用户消息操作请长按用户气泡的空白处打开；回复版本选择器只会在产生多个回复时自动出现，不属于可配置操作。": {
+    "点“编辑”可调整常用操作的顺序。删除操作固定在“消息详情”下方，可分别开关。有多个版本时才会出现“完全删除”和版本选择器。长按用户气泡的空白处可打开提问操作。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Configure the items and order in an assistant reply's More menu. Delete Permanently appears only when a reply has multiple versions. Touch and hold empty space in a user bubble for user-message actions. The version picker appears automatically when multiple replies exist and is not a configurable action."
+            "value": "Tap Edit to reorder the other actions. The delete actions appear below Message Details and can be turned on or off individually. Delete permanently and the version selector appear when there are multiple versions. Touch and hold the space inside a user bubble to open its actions."
           }
         }
       }
@@ -24115,6 +24379,1122 @@
           "stringUnit": {
             "state": "translated",
             "value": "Hide API Key"
+          }
+        }
+      }
+    },
+    "跟随项目": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow project"
+          }
+        }
+      }
+    },
+    "标准": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standard"
+          }
+        }
+      }
+    },
+    "省钱 · Flex": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Economy · Flex"
+          }
+        }
+      }
+    },
+    "加速 · Fast": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast"
+          }
+        }
+      }
+    },
+    "跟随官方默认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API default"
+          }
+        }
+      }
+    },
+    "内存缓存": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In-memory cache"
+          }
+        }
+      }
+    },
+    "最长 24 小时": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to 24 hours"
+          }
+        }
+      }
+    },
+    "至少 30 分钟": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "At least 30 minutes"
+          }
+        }
+      }
+    },
+    "至少 12 小时": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "At least 12 hours"
+          }
+        }
+      }
+    },
+    "指定生图模型": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected image model"
+          }
+        }
+      }
+    },
+    "当前模型能力": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current model capability"
+          }
+        }
+      }
+    },
+    "当前模型生图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current model image generation"
+          }
+        }
+      }
+    },
+    "服务档位": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Service tier"
+          }
+        }
+      }
+    },
+    "提示缓存": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt caching"
+          }
+        }
+      }
+    },
+    "缓存策略": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache policy"
+          }
+        }
+      }
+    },
+    "跟随服务商": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider default"
+          }
+        }
+      }
+    },
+    "OpenAI 官方设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Official OpenAI settings"
+          }
+        }
+      }
+    },
+    "最低有效期与写入费用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimum lifetime and write costs"
+          }
+        }
+      }
+    },
+    "接口与高级设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API and advanced settings"
+          }
+        }
+      }
+    },
+    "生成方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generation source"
+          }
+        }
+      }
+    },
+    "图片与费用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images and costs"
+          }
+        }
+      }
+    },
+    "思考强度": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning effort"
+          }
+        }
+      }
+    },
+    "OpenAI 参数说明": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI parameter help"
+          }
+        }
+      }
+    },
+    "OpenAI 参数": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI parameters"
+          }
+        }
+      }
+    },
+    "强度与采样": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effort and sampling"
+          }
+        }
+      }
+    },
+    "缓存读取 Tokens": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache read tokens"
+          }
+        }
+      }
+    },
+    "缓存写入 Tokens": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache write tokens"
+          }
+        }
+      }
+    },
+    "其中：30 分钟写入": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Of which: 30-minute writes"
+          }
+        }
+      }
+    },
+    "其中：12 小时写入": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Of which: 12-hour writes"
+          }
+        }
+      }
+    },
+    "跟随项目会采用官网项目默认档位；标准使用正常价格。Flex 更便宜，但等待更久且可能暂时不可用；Fast 加速并提高费用。需要账号和模型支持，失败时不会自动改为更贵的档位。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow project uses the project’s API default. Standard uses regular pricing. Flex costs less but can be slower or temporarily unavailable; Fast costs more for faster processing. Account and model support is required. Failures never automatically switch to a more expensive tier."
+          }
+        }
+      }
+    },
+    "官方会自动缓存可复用的输入前缀。“最长 24 小时”是保留上限，不保证一直命中，也不是长期记忆。不同模型支持的缓存策略不同；不确定时保留官方默认。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI automatically caches reusable input prefixes. “Up to 24 hours” is a maximum retention policy, not a guaranteed hit or long-term memory. Supported policies vary by model; keep the API default when unsure."
+          }
+        }
+      }
+    },
+    "新模型支持至少 30 分钟或至少 12 小时；12 小时需要 Responses。按当前官方规则，写入总价分别为普通输入的 1.25 倍和 2.5 倍，读取另按缓存价格计算。保留越久不一定越省钱。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Newer models support a minimum of 30 minutes or 12 hours; 12 hours requires Responses. Current total write rates are 1.25× and 2.5× ordinary input, respectively. Reads use cached-input pricing. Longer retention does not always save money."
+          }
+        }
+      }
+    },
+    "服务档位与接口独立；缓存的 12 小时选项需要 Responses。模型高级设置可覆盖缓存策略，只显示该模型支持的选项。自定义 Body 的同名参数优先；稳定缓存标识由客户端管理。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Service tier is independent of API choice; the 12-hour cache option requires Responses. Model advanced settings can override the cache policy and show supported options. Matching custom Body fields take precedence. The client manages stable cache keys."
+          }
+        }
+      }
+    },
+    "仅用于 OpenAI 官方地址。不同模型支持范围不同，缓存命中可在用量统计中查看。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies only to the official OpenAI endpoint. Support varies by model. Cache reads are shown in usage statistics."
+          }
+        }
+      }
+    },
+    "只覆盖这个模型，选项按模型能力显示。12 小时最低有效期需要 Responses API，并有更高的缓存写入价格。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overrides this model only, with options based on its capabilities. A 12-hour minimum lifetime requires Responses and has a higher cache-write rate."
+          }
+        }
+      }
+    },
+    "图像生成统一在助手设置中开启，并选择当前模型能力或指定生图模型，避免重复调用。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable image generation in assistant settings and choose either the current model’s capability or a selected image model to avoid duplicate calls."
+          }
+        }
+      }
+    },
+    "使用当前聊天模型支持的图片输出或官方生图工具，不调用单独选择的生图模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uses the current chat model’s image output or its official image tool, without calling a separately selected image model."
+          }
+        }
+      }
+    },
+    "当前聊天模型没有已适配的生图能力，请选择指定生图模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current chat model has no supported image-generation route. Select a separate image model."
+          }
+        }
+      }
+    },
+    "指定生图模型：助手整理画图需求，再调用你选的供应商和模型。当前模型能力：使用当前聊天模型的原生图片输出；OpenAI 则调用其官方生图工具。两种额外生图路径不会同时开启。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected image model: the assistant prepares a prompt and calls your chosen provider and model. Current model capability: uses native image output, or OpenAI’s hosted image tool. These additional generation routes are mutually exclusive."
+          }
+        }
+      }
+    },
+    "这个开关默认关闭。关闭后不启用额外生图工具；如果聊天模型本身直接输出图片，仍会展示它返回的图片。开启 Responses 本身不会开启画图。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is off by default. When off, no additional image tools are enabled. Images returned directly by an image-capable chat model are still displayed. Enabling Responses alone does not enable image generation."
+          }
+        }
+      }
+    },
+    "生成图片可能单独收费。当前版本的指定生图模型只接收文字描述；需要参考图片连续修改时，请使用已支持的当前模型能力，并留意历史图片发送设置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image generation may incur separate charges. The selected-image-model route currently accepts text prompts only. For edits using reference images, use a supported current-model capability and check the image-history settings."
+          }
+        }
+      }
+    },
+    "开启后只使用所选生成方式。切换聊天模型后，会重新检查其支持的能力。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only the selected generation route is enabled. Capabilities are checked again when the chat model changes."
+          }
+        }
+      }
+    },
+    "自动会跟随当前模型默认强度；有些模型默认不思考，有些默认开启思考。关闭只对支持关闭思考的模型生效。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto follows the current model’s default effort. Some models default to no reasoning; others reason by default. Off takes effect only on models that support disabling reasoning."
+          }
+        }
+      }
+    },
+    "客户端会把已有思考设置转换成模型支持的档位；超出支持范围时使用最高支持档位。温度和 Top P 与当前思考模式不兼容时不发送，已设置的数值会保留。自定义 Body 中的思考参数优先。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Existing reasoning settings map to supported effort levels; values above the supported range use the highest supported level. Incompatible temperature and Top P parameters are omitted while saved values are retained. Custom Body reasoning parameters take precedence."
+          }
+        }
+      }
+    },
+    "这个模型不支持所选缓存策略，请在服务商设置中选择“跟随官方默认”。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model does not support the selected cache policy. Choose the API default in provider settings."
+          }
+        }
+      }
+    },
+    "这个模型不支持最低缓存有效期，请选择它支持的缓存策略或跟随官方默认。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model does not support minimum cache lifetimes. Choose a supported policy or the API default."
+          }
+        }
+      }
+    },
+    "12 小时最低缓存有效期需要 Responses API，请先在服务商设置中开启。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A 12-hour minimum cache lifetime requires Responses. Enable it in provider settings first."
+          }
+        }
+      }
+    },
+    "当前聊天模型没有已适配的生图能力，请在助手设置中选择指定生图模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current chat model has no supported image-generation route. Select a separate image model in assistant settings."
+          }
+        }
+      }
+    },
+    "当前聊天模型只能输出图片，请选择“当前模型能力”，或换用文字聊天模型调用指定生图模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current chat model only outputs images. Choose Current model capability, or use a text chat model to call your selected image generator."
+          }
+        }
+      }
+    },
+    "生图模型": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image model"
+          }
+        }
+      }
+    },
+    "思考强度会按当前模型的能力发送；自动跟随模型默认，实际档位可因模型而异。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning effort follows the current model’s capabilities. Auto uses its default; actual levels vary by model."
+          }
+        }
+      }
+    },
+    "OpenAI 兼容（表单编辑）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI compatible (form edits)"
+          }
+        }
+      }
+    },
+    "OpenAI 兼容（JSON 编辑）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI compatible (JSON edits)"
+          }
+        }
+      }
+    },
+    "聊天接口生图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat API image generation"
+          }
+        }
+      }
+    },
+    "Gemini 原生": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native Gemini"
+          }
+        }
+      }
+    },
+    "参考图不在本轮可用图片中，请重新添加图片后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reference image is not available in this request. Attach it again and retry."
+          }
+        }
+      }
+    },
+    "模型没有明确选择参考图，本次已停止生图。请重试并说明要使用哪张图片。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model did not select reference images explicitly, so generation was stopped. Retry and specify which image to use."
+          }
+        }
+      }
+    },
+    "参考图片数据或格式无效，请重新添加图片后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reference image data or format is invalid. Attach the image again and retry."
+          }
+        }
+      }
+    },
+    "参考图片总大小过大，请减少图片或压缩后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reference images are too large in total. Use fewer images or compress them and retry."
+          }
+        }
+      }
+    },
+    "这个图像接口一次最多接收 16 张参考图，请减少图片后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This image API accepts up to 16 reference images per request. Use fewer images and retry."
+          }
+        }
+      }
+    },
+    "所选模型或接口不支持参考图编辑，请选择支持图片输入的生图模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The selected model or API does not support reference image editing. Select an image generator that accepts images."
+          }
+        }
+      }
+    },
+    "当前 Gemini 生图接口不提供这个 Imagen 模型，请选择可用的 Gemini 图像模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Imagen model is not available through the current Gemini image API. Select an available Gemini image model."
+          }
+        }
+      }
+    },
+    "图像服务没有返回图片（%@）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The image service returned no image (%@)"
+          }
+        }
+      }
+    },
+    "已停止图片生成": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image generation stopped"
+          }
+        }
+      }
+    },
+    "接口选择": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API format"
+          }
+        }
+      }
+    },
+    "参考图编辑": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Editing with references"
+          }
+        }
+      }
+    },
+    "通常保持自动，可识别官方 OpenAI、OpenRouter 和 Gemini。其他服务按其文档选择 OpenAI 表单编辑、JSON 编辑或聊天接口生图。只有支持图片输出的模型才能用于生图。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic recognizes official OpenAI, OpenRouter, and Gemini services. For other services, select form edits, JSON edits, or chat image generation according to their documentation. The model must support image output."
+          }
+        }
+      }
+    },
+    "原图和修改要求一起发送给所选模型。模型或接口不支持时会报错，不会丢弃图片重画，也不会自动换模型重试。不同模型的参考图数量上限不同。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The original images and editing instructions are sent to the selected model. Unsupported models or APIs return an error; Mocca will not retry without the images or switch models. Reference image limits vary by model."
+          }
+        }
+      }
+    },
+    "生成和编辑图片可能单独收费。指定生图模型会收到本次选中的原图与修改要求；没有参考图时仍按文字生图。历史图片发送、折叠和数量限制同样生效，不支持参考图时会提示，不会自动改成文字重画。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image generation and editing may be billed separately. The selected generator receives the chosen original images and instructions; requests without references use text-to-image generation. Image history, collapse, and count limits still apply. Unsupported references produce an error instead of a text-only redraw."
+          }
+        }
+      }
+    },
+    "支持参考图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accepts reference images"
+          }
+        }
+      }
+    },
+    "仅文字生图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text-to-image only"
+          }
+        }
+      }
+    },
+    "最低有效期": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimum lifetime"
+          }
+        }
+      }
+    },
+    "12 小时最低有效期需要 Responses API，并有更高的缓存写入价格。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The 12-hour minimum lifetime requires the Responses API and has a higher cache-write price."
+          }
+        }
+      }
+    },
+    "当前设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current setting"
+          }
+        }
+      }
+    },
+    "服务端不支持当前缓存参数。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server does not support the current cache parameter."
+          }
+        }
+      }
+    },
+    "当前缓存策略无法用于「%@」的这次请求。是否改为跟随官方默认，并重新生成这条回复？只调整这个模型，其他模型保持原设置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current cache policy cannot be used for this request with “%@”. Use the official default and regenerate this reply? Only this model will change."
+          }
+        }
+      }
+    },
+    "自定义 Body 中的模型或缓存参数需要手动调整，修改缓存选项不会覆盖这些字段。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adjust the model or cache parameters in the custom body manually. Cache settings do not override those fields."
+          }
+        }
+      }
+    },
+    "无法保存重试状态，未重新发送请求。请稍后手动重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The retry state could not be saved, so no request was sent. Retry manually later."
+          }
+        }
+      }
+    },
+    "对话、模型或缓存设置已变化，未修改配置或重新发送。请检查后手动重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The conversation, model, or cache settings have changed. No settings were changed and no retry was sent. Review them and retry manually."
+          }
+        }
+      }
+    },
+    "缓存设置保存失败，原设置已保留，未重新发送请求。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache settings could not be saved. The original settings were kept and no retry was sent."
+          }
+        }
+      }
+    },
+    "缓存设置不兼容": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incompatible cache settings"
+          }
+        }
+      }
+    },
+    "改用官方默认并重试": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use official default and retry"
+          }
+        }
+      }
+    },
+    "保持设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep settings"
+          }
+        }
+      }
+    },
+    "跟随聊天模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow chat model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随聊天模型"
+          }
+        }
+      }
+    },
+    "支持生图的模型可直接生成图片；如需使用其他生图模型，可在助手设置中单独指定。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Models with image generation support work directly. You can choose a different image model in assistant settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "支持生图的模型可直接生成图片；如需使用其他生图模型，可在助手设置中单独指定。"
+          }
+        }
+      }
+    },
+    "支持生图，可直接在聊天中描述需求。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supports image generation. Describe what you want in chat."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "支持生图，可直接在聊天中描述需求。"
+          }
+        }
+      }
+    },
+    "模型能力自动识别，可在高级设置中修正。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model capabilities are detected automatically and can be corrected in advanced settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型能力自动识别，可在高级设置中修正。"
+          }
+        }
+      }
+    },
+    "支持生图的模型可直接生成和编辑图片，无需再开启开关。只在需要另一模型负责画图时单独指定；指定后优先使用该模型。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supported models generate and edit images directly. Choose another image model only when you want to use it instead; an explicit choice takes priority."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "支持生图的模型可直接生成和编辑图片，无需再开启开关。只在需要另一模型负责画图时单独指定；指定后优先使用该模型。"
+          }
+        }
+      }
+    },
+    "参考图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reference images"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参考图"
+          }
+        }
+      }
+    },
+    "本轮图片和允许发送的历史图片会按现有规则传递。不支持参考图时会提示，不会自动换模型或改成文字重画。生成图片可能单独计费。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current images and allowed history images follow your existing settings. Unsupported references produce an error without switching models or redrawing from text. Image generation may incur a separate charge."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本轮图片和允许发送的历史图片会按现有规则传递。不支持参考图时会提示，不会自动换模型或改成文字重画。生成图片可能单独计费。"
+          }
+        }
+      }
+    },
+    "默认跟随聊天模型；也可以指定其他模型负责生图。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uses the chat model by default. You can choose another model for image generation."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "默认跟随聊天模型；也可以指定其他模型负责生图。"
+          }
+        }
+      }
+    },
+    "指定的生图模型不可用，请重新选择，或改为跟随聊天模型。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The selected image model is unavailable. Choose another model or follow the chat model."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指定的生图模型不可用，请重新选择，或改为跟随聊天模型。"
+          }
+        }
+      }
+    },
+    "请在助手设置中选择跟随聊天模型，或使用文字聊天模型调用指定生图模型。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow the chat model in assistant settings, or use a text chat model with a separate image model."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在助手设置中选择跟随聊天模型，或使用文字聊天模型调用指定生图模型。"
+          }
+        }
+      }
+    },
+    "手动填写模型 ID": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter model ID manually"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手动填写模型 ID"
+          }
+        }
+      }
+    },
+    "手动修改会关闭自动推断；重新开启会按模型 ID 重选。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Editing a capability turns off automatic detection. Turn it on again to reselect capabilities by model ID."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手动修改会关闭自动推断；重新开启会按模型 ID 重选。"
+          }
+        }
+      }
+    },
+    "在“设置 → 默认模型”选择聊天模型；标题、摘要和压缩模型可以单独设置或跟随当前对话。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose the chat model in Settings → Default Models. Title, summary, and compression models can be set separately or follow the current conversation."
           }
         }
       }

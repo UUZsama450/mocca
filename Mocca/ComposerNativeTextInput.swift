@@ -437,14 +437,16 @@ final class ComposerInputTextView: UITextView {
         let previous = isChangingFirstResponder
         isChangingFirstResponder = true
         defer { isChangingFirstResponder = previous }
-        return super.becomeFirstResponder()
+        let result = super.becomeFirstResponder()
+        return result
     }
 
     override func resignFirstResponder() -> Bool {
         let previous = isChangingFirstResponder
         isChangingFirstResponder = true
         defer { isChangingFirstResponder = previous }
-        return super.resignFirstResponder()
+        let result = super.resignFirstResponder()
+        return result
     }
 
     override func layoutSubviews() {
@@ -533,6 +535,51 @@ final class ComposerInputTextView: UITextView {
         // Layout/external draft reconciliation must not write SwiftUI state
         // during a view update. A newer real edit supersedes this publication.
         if deferred { DispatchQueue.main.async(execute: publish) } else { publish() }
+    }
+
+    // UIKit remembers the scrolled text position and restores it whenever the
+    // content grows. Deleting an overflow line clamps the offset inside
+    // setContentSize without updating that memory, so the next new line jumps
+    // back to the stale position and skips UIKit's own caret-reveal slide.
+    // Re-record only after such a shrink clamp; typing never takes this path.
+    private var contentSizeUpdateDepth = 0
+    private var contentSizeClampedOffset = false
+    private var scrollPositionRefreshScheduled = false
+
+    override var contentSize: CGSize {
+        willSet { contentSizeUpdateDepth += 1 }
+        didSet {
+            contentSizeUpdateDepth -= 1
+            guard contentSizeUpdateDepth == 0, contentSizeClampedOffset else { return }
+            contentSizeClampedOffset = false
+            scheduleScrollPositionRefresh()
+        }
+    }
+
+    override var contentOffset: CGPoint {
+        didSet {
+            if contentSizeUpdateDepth > 0, contentOffset.y < oldValue.y - 0.5 {
+                contentSizeClampedOffset = true
+            }
+        }
+    }
+
+    private func scheduleScrollPositionRefresh() {
+        guard !scrollPositionRefreshScheduled else { return }
+        scrollPositionRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scrollPositionRefreshScheduled = false
+            guard !self.isRetired, self.window != nil,
+                  !self.isTracking, !self.isDragging, !self.isDecelerating else { return }
+            let offset = self.contentOffset
+            // The public setter records the position. Both assignments land
+            // in the same turn, so the half-point step is never rendered.
+            UIView.performWithoutAnimation {
+                self.setContentOffset(CGPoint(x: offset.x, y: offset.y + 0.5), animated: false)
+                self.setContentOffset(offset, animated: false)
+            }
+        }
     }
 
     override var intrinsicContentSize: CGSize {

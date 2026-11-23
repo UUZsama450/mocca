@@ -89,7 +89,10 @@ enum ProviderImageGenerationMode: String, Codable, CaseIterable, Identifiable, S
     case automatic
     case disabled
     case openAICompatible
+    case openAIJSON
     case openRouter
+    case chatCompletions
+    case gemini
 
     var id: String { rawValue }
 
@@ -97,8 +100,11 @@ enum ProviderImageGenerationMode: String, Codable, CaseIterable, Identifiable, S
         switch self {
         case .automatic: "自动识别"
         case .disabled: "关闭"
-        case .openAICompatible: "OpenAI 兼容"
+        case .openAICompatible: "OpenAI 兼容（表单编辑）"
+        case .openAIJSON: "OpenAI 兼容（JSON 编辑）"
         case .openRouter: "OpenRouter"
+        case .chatCompletions: "聊天接口生图"
+        case .gemini: "Gemini 原生"
         }
     }
 }
@@ -534,7 +540,7 @@ struct ModelCapabilities: Codable, Hashable, Sendable {
 /// 按模型 ID 推断能力，移植自旧 Kelivo 的 ModelRegistry（model_provider.dart）。
 enum ModelCapabilityRegistry {
     private static let vision = regex(
-        #"(gpt-4o|gpt-4\.1|gpt-5(?!-chat)|o\d|gemini|claude|qwen-?3([-.])5|kimi-k2([-.])(?:5|6|7)|doubao.+1([-.])(?:6|8)|grok-4|step-3|intern-s1|minimax-m3(?:$|[/_:@])|mimo-v2(?:-omni(?:$|[/_:@])|\.5(?:$|[/_:@]))|sensenova-6\.7-flash-lite)"#
+        #"(gpt-4o|gpt-4\.1|gpt-[56](?!-chat)|o\d|gemini|claude|qwen-?3([-.])5|kimi-k2([-.])(?:5|6|7)|doubao.+1([-.])(?:6|8)|grok-4|step-3|intern-s1|minimax-m3(?:$|[/_:@])|mimo-v2(?:-omni(?:$|[/_:@])|\.5(?:$|[/_:@]))|sensenova-6\.7-flash-lite)"#
     )
     private static let tool = regex(
         #"(gpt-4o|gpt-4\.1|gpt-oss|gpt-5(?!-chat)|o\d|gemini|claude|qwen-?3|doubao.+1([-.])(?:6|8)|grok-4|kimi-k2|step-3|intern-s1|glm-4([-.])(?:5|6|7)|glm-5|minimax-(?:m2|m3)|deepseek-(?:r1|v3|chat|v3\.1|v3\.2|v4)|deepseek-reasoner|mimo-v2|sensenova-6\.7-flash-lite)"#
@@ -563,7 +569,7 @@ enum ModelCapabilityRegistry {
             return normalized(result)
         }
 
-        if id.contains("image") {
+        if id.contains("image") || id.contains("gemini-nano-banana-") {
             if !result.input.contains(.image) { result.input.append(.image) }
             if !result.output.contains(.image) { result.output.append(.image) }
             result.abilities.removeAll { $0 == .tool || $0 == .reasoning }
@@ -622,6 +628,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
     var customBody: [KeyValueField]
     /// OpenAI Responses API 官方内置工具。
     var builtInTools: [ModelBuiltInTool]
+    var openAICacheRetentionOverride: OpenAICacheRetention?
     /// Provider catalog protocol metadata, independent of editable capabilities.
     /// Older saved models omit this and use conservative routing fallbacks.
     var supportedEndpoints: [String]?
@@ -634,6 +641,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         customHeaders: [KeyValueField] = [],
         customBody: [KeyValueField] = [],
         builtInTools: [ModelBuiltInTool] = [],
+        openAICacheRetentionOverride: OpenAICacheRetention? = nil,
         supportedEndpoints: [String]? = nil
     ) {
         self.id = id
@@ -643,6 +651,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         self.customHeaders = customHeaders
         self.customBody = customBody
         self.builtInTools = builtInTools
+        self.openAICacheRetentionOverride = openAICacheRetentionOverride
         self.supportedEndpoints = supportedEndpoints
     }
 
@@ -655,6 +664,7 @@ struct ModelConfiguration: Codable, Identifiable, Hashable, Sendable {
         customHeaders = try container.decodeIfPresent([KeyValueField].self, forKey: .customHeaders) ?? []
         customBody = try container.decodeIfPresent([KeyValueField].self, forKey: .customBody) ?? []
         builtInTools = try container.decodeIfPresent([ModelBuiltInTool].self, forKey: .builtInTools) ?? []
+        openAICacheRetentionOverride = try container.decodeIfPresent(OpenAICacheRetention.self, forKey: .openAICacheRetentionOverride)
         supportedEndpoints = try container.decodeIfPresent([String].self, forKey: .supportedEndpoints)
     }
 
@@ -924,6 +934,12 @@ struct ProviderConfiguration: Codable, Identifiable, Hashable, Sendable {
     var group: String
     /// OpenAI 兼容供应商是否使用 /responses。
     var useResponsesAPI: Bool
+    var openAIServiceTier: OpenAIServiceTier
+    var openAICacheRetention: OpenAICacheRetention
+
+    var isOfficialOpenAI: Bool {
+        type == .openAI && URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines))?.host?.lowercased() == "api.openai.com"
+    }
     /// 独立图像生成接口；自动模式只启用已确认的 OpenRouter 与官方 OpenAI。
     var imageGenerationMode: ProviderImageGenerationMode
     /// 从多个已启用 Key 中按请求随机选择。
@@ -954,6 +970,8 @@ struct ProviderConfiguration: Codable, Identifiable, Hashable, Sendable {
         customBody: [KeyValueField] = [],
         group: String = "",
         useResponsesAPI: Bool = false,
+        openAIServiceTier: OpenAIServiceTier = .automatic,
+        openAICacheRetention: OpenAICacheRetention = .automatic,
         imageGenerationMode: ProviderImageGenerationMode = .automatic,
         multiKeyEnabled: Bool = false,
         apiKeys: [ProviderAPIKey] = [],
@@ -978,6 +996,8 @@ struct ProviderConfiguration: Codable, Identifiable, Hashable, Sendable {
         self.customBody = customBody
         self.group = group
         self.useResponsesAPI = useResponsesAPI
+        self.openAIServiceTier = openAIServiceTier
+        self.openAICacheRetention = openAICacheRetention
         self.imageGenerationMode = imageGenerationMode
         self.multiKeyEnabled = multiKeyEnabled
         self.apiKeys = apiKeys
@@ -1005,6 +1025,8 @@ struct ProviderConfiguration: Codable, Identifiable, Hashable, Sendable {
         customBody = try container.decodeIfPresent([KeyValueField].self, forKey: .customBody) ?? []
         group = try container.decodeIfPresent(String.self, forKey: .group) ?? ""
         useResponsesAPI = try container.decodeIfPresent(Bool.self, forKey: .useResponsesAPI) ?? false
+        openAIServiceTier = try container.decodeIfPresent(OpenAIServiceTier.self, forKey: .openAIServiceTier) ?? .automatic
+        openAICacheRetention = try container.decodeIfPresent(OpenAICacheRetention.self, forKey: .openAICacheRetention) ?? .automatic
         imageGenerationMode = try container.decodeIfPresent(
             ProviderImageGenerationMode.self,
             forKey: .imageGenerationMode

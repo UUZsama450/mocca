@@ -1,6 +1,6 @@
 <h1 align="center">Mocca</h1>
 
-<p align="center">A native AI chat app for iPhone.<br>Bring your own models. Keep your conversations on your device.</p>
+<p align="center">A native AI chat app for iPhone and iPad.<br>Bring your own models. Keep your conversations on your device.</p>
 
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.9">Latest release</a> · <a href="CHANGELOG.md">What’s new</a>
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.11">Latest release</a> · <a href="CHANGELOG.md">What’s new</a>
 </p>
 
 <p align="center">
@@ -46,15 +46,15 @@ Chats and attachments are stored locally. Requests send the data needed for the 
 
 ## Download
 
-The **1.0.9 (5323)** source release is based on phone build 5321, with touch diagnostics removed. [Source hashes](docs/SOURCE_5323_SHA256.json) · [Build and installation](docs/INSTALLATION.md). The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) follows Apple’s review and release schedule. An older, self-signed IPA preview is available under [1.0.5 (5237)](docs/RELEASE_1.0.5_5237.md).
+The **1.0.11 (5372)** source release supports iPhone and iPad. [Source hashes](docs/SOURCE_5372_SHA256.json) · [Build instructions](docs/BUILD_CONFIGURATION.md). The [App Store edition](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522) follows Apple’s review and release schedule. An older, self-signed IPA preview is available under [1.0.5 (5237)](docs/RELEASE_1.0.5_5237.md).
 
 
 ## Build locally
 
 Built with SwiftUI and UIKit.
 
-- iOS 17 or later
-- Xcode 26.3, the currently verified development toolchain
+- iOS 17 or iPadOS 17 or later
+- Verified with Xcode 27.2
 - Swift 6
 
 Open `Mocca.xcodeproj` in Xcode and select the `Mocca` scheme. Xcode resolves the pinned Swift package dependencies. Simulator builds use a placeholder app identity without a development team. For a device build, copy `Configuration/Local.xcconfig.example` to `Configuration/Local.xcconfig` and enter your own app identifier and team. The extension and background-task identifiers follow the app identifier automatically.

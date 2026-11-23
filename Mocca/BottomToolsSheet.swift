@@ -199,8 +199,11 @@ final class BottomToolsModel {
 }
 
 struct BottomToolsSheet: View {
+    @Environment(ChatLayoutMetrics.self) private var layoutMetrics
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var model: BottomToolsModel
     let onInstructionToggle: (UUID) -> Void
     let onWorldBookToggle: (UUID) -> Void
@@ -240,6 +243,8 @@ struct BottomToolsSheet: View {
     }
 
     var body: some View {
+        let rootScrolls = requiresScrolling(for: .root)
+        let moreScrolls = requiresScrolling(for: .more)
         VStack(spacing: 0) {
             Capsule(style: .continuous)
                 .fill(Color.secondary.opacity(0.44))
@@ -252,13 +257,14 @@ struct BottomToolsSheet: View {
                     navigationPage(at: 0, size: proxy.size) {
                         BottomToolsRootView(
                             model: model,
+                            scrolls: rootScrolls,
                             onSearchSettings: { isSearchSettingsPresented = true },
                             onWorldBookSettings: { isWorldBookSettingsPresented = true },
                             onAction: handleAction
                         )
                     }
 
-                    navigationPage(at: 1, size: proxy.size) { firstLevelView }
+                    navigationPage(at: 1, size: proxy.size) { firstLevelView(scrolls: moreScrolls) }
                     navigationPage(at: 2, size: proxy.size) { secondLevelView }
                 }
                 .clipped()
@@ -300,20 +306,17 @@ struct BottomToolsSheet: View {
             }
         }
         .onPreferenceChange(ToolsContentHeightPreference.self) { heights in
-            let previous = preferredDetent(for: model.route)
             var updated = contentHeights
             for (route, height) in heights where height.isFinite && height > 0 {
                 if abs((updated[route] ?? 0) - height) > 1 { updated[route] = ceil(height) }
             }
             guard updated != contentHeights else { return }
             contentHeights = updated
-            // Keep a user's manually expanded sheet expanded. Only its compact
-            // resting height follows measured content, including live edits.
-            if selectedDetent == previous, !isAttachmentHandoffActive {
-                withAnimation(.easeInOut(duration: 0.26)) {
-                    selectedDetent = preferredDetent(for: model.route)
-                }
-            }
+        }
+        .onChange(of: preferredDetent(for: model.route)) { previous, preferred in
+            // Follow content or window changes only while resting at the old preferred height.
+            guard selectedDetent == previous, !isAttachmentHandoffActive else { return }
+            withAnimation(.easeInOut(duration: 0.26)) { selectedDetent = preferred }
         }
         .onChange(of: appModel.selectedConversationID) {
             appModel.cancelContextManagementConfirmation()
@@ -378,7 +381,7 @@ struct BottomToolsSheet: View {
     }
 
     @ViewBuilder
-    private var firstLevelView: some View {
+    private func firstLevelView(scrolls: Bool) -> some View {
         switch model.route {
         case .root:
             Color.clear
@@ -386,6 +389,7 @@ struct BottomToolsSheet: View {
             // Keep the parent in the same structural branch for both children.
             MoreToolsView(
                 model: model,
+                scrolls: scrolls,
                 onMCP: { isMCPSelectionPresented = true }
             )
         case .worldBook:
@@ -432,7 +436,20 @@ struct BottomToolsSheet: View {
         case .groupChat: 460
         }
         let height = max(120, (contentHeights[route] ?? initialHeight) + 29)
-        return height > UIScreen.main.bounds.height * 0.70 ? detailDetent : .height(height)
+        if let windowHeight = layoutMetrics.windowHeight, height > windowHeight * 0.70 {
+            return detailDetent
+        }
+        return .height(height)
+    }
+
+    private func requiresScrolling(for route: BottomToolsRoute) -> Bool {
+        // Preserve the established path in accessibility/compact layouts.
+        // Use this page's settled detent, not the animated current sheet height,
+        // so ordinary navigation never swaps its content container mid-motion.
+        guard UIDevice.current.userInterfaceIdiom == .phone,
+              verticalSizeClass == .regular,
+              !dynamicTypeSize.isAccessibilitySize else { return true }
+        return preferredDetent(for: route) == detailDetent
     }
 
     private var availableDetents: Set<PresentationDetent> {
@@ -454,9 +471,31 @@ struct BottomToolsSheet: View {
     }
 }
 
+/// Compact pages use their intrinsic content directly. No duplicate measuring
+/// tree, per-frame state, or clock is introduced; the existing height preference
+/// continues to determine the sheet's settled detent.
+private struct ToolsPageContent<Content: View>: View {
+    let scrolls: Bool
+    let content: Content
+
+    init(scrolls: Bool, @ViewBuilder content: () -> Content) {
+        self.scrolls = scrolls
+        self.content = content()
+    }
+
+    var body: some View {
+        if scrolls {
+            ScrollView { content }
+        } else {
+            content.fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 private struct BottomToolsRootView: View {
     @Environment(AppModel.self) private var appModel
     @Bindable var model: BottomToolsModel
+    let scrolls: Bool
     let onSearchSettings: () -> Void
     let onWorldBookSettings: () -> Void
     let onAction: (BottomToolAction) -> Void
@@ -482,7 +521,7 @@ private struct BottomToolsRootView: View {
     }
 
     var body: some View {
-        ScrollView {
+        ToolsPageContent(scrolls: scrolls) {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     quickAction(.camera, systemName: "camera", title: L10n.lookup("拍照"))
@@ -520,6 +559,7 @@ private struct BottomToolsRootView: View {
                         .labelsHidden()
                         .toggleStyle(SwitchToggleStyle(tint: .green))
                         .accessibilityIdentifier("tools.search.toggle")
+                        .contentShape(Rectangle())
                         .padding(.trailing, 15)
                     }
 
@@ -718,6 +758,7 @@ private struct ToolsSearchGlobe: Shape {
 private struct MoreToolsView: View {
     @Environment(AppModel.self) private var appModel
     @Bindable var model: BottomToolsModel
+    let scrolls: Bool
     let onMCP: () -> Void
 
     private var themeAccent: Color {
@@ -728,7 +769,7 @@ private struct MoreToolsView: View {
         VStack(spacing: 0) {
             ToolsSheetHeader(title: L10n.lookup("更多工具"), back: model.back, titleWeight: .semibold)
 
-            ScrollView {
+            ToolsPageContent(scrolls: scrolls) {
                 VStack(spacing: 2) {
                     Button(action: onMCP) {
                         CompactToolRowLabel(

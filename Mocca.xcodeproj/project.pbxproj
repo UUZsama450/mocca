@@ -392,6 +392,7 @@
 			<array>
 				<string>C50580000000000000000002</string>
 				<string>E90C63C21E5097AAB65B237B</string>
+				<string>CADB53500000000000000002</string>
 				<string>C50770000000000000000002</string>
 				<string>C51900000000000000000002</string>
 				<string>E2A32D257C67EFBC3BFDB3AD</string>
@@ -458,6 +459,12 @@
 				<string>C5D5CCEFCB37DA980A064457</string>
 				<string>CB5290000000000000000000</string>
 				<string>CB5290000000000000000001</string>
+				<string>5330AA000000000000000002</string>
+				<string>777B42BFB9364D09970A1968</string>
+				<string>72AA8915368F4B8582FED107</string>
+				<string>D53368000000000000000002</string>
+				<string>DE7322247C839A373058F03E</string>
+				<string>C7F91797F7F6555781CD4C07</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>
@@ -631,6 +638,17 @@
 			<key>name</key>
 			<string>Debug</string>
 		</dict>
+		<key>2C799938D5C4D7AC85CAF018</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>UsageStatistics.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>2DEAAE6DA895033BED4503C2</key>
 		<dict>
 			<key>buildConfigurations</key>
@@ -749,6 +767,24 @@
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
+		<key>5330AA000000000000000001</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>DrawerPanGesture.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>5330AA000000000000000002</key>
+		<dict>
+			<key>fileRef</key>
+			<string>5330AA000000000000000001</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>5769666635B0E581D7481780</key>
 		<dict>
 			<key>includeInIndex</key>
@@ -791,7 +827,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5327</string>
+				<string>5372</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -803,7 +839,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.9</string>
+				<string>1.0.11</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -821,7 +857,7 @@
 				<key>SWIFT_VERSION</key>
 				<string>6.0</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
-				<string>1</string>
+				<string>1,2</string>
 				<key>VALIDATE_PRODUCT</key>
 				<string>YES</string>
 			</dict>
@@ -990,7 +1026,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5327</string>
+				<string>5372</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1002,7 +1038,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.9</string>
+				<string>1.0.11</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -1020,12 +1056,19 @@
 				<key>SWIFT_VERSION</key>
 				<string>6.0</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
-				<string>1</string>
+				<string>1,2</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
 			<key>name</key>
 			<string>Debug</string>
+		</dict>
+		<key>72AA8915368F4B8582FED107</key>
+		<dict>
+			<key>fileRef</key>
+			<string>7641785EB0B44708A094D64F</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
 		</dict>
 		<key>757D0256A3C25A5676E516C9</key>
 		<dict>
@@ -1034,6 +1077,7 @@
 				<string>C50580000000000000000001</string>
 				<string>C50580000000000000000011</string>
 				<string>D65929F043A91AC7F097CC76</string>
+				<string>CADB53500000000000000001</string>
 				<string>C50770000000000000000001</string>
 				<string>C51900000000000000000001</string>
 				<string>39736C80662F903B8E18159D</string>
@@ -1109,6 +1153,12 @@
 				<string>2663753367423BD56C99F038</string>
 				<string>CA5290000000000000000000</string>
 				<string>CA5290000000000000000001</string>
+				<string>5330AA000000000000000001</string>
+				<string>B092124F7DEB4943B10F0AD5</string>
+				<string>7641785EB0B44708A094D64F</string>
+				<string>D53368000000000000000001</string>
+				<string>FB7AE1EB72858775D4C3C4AE</string>
+				<string>2C799938D5C4D7AC85CAF018</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>
@@ -1118,6 +1168,24 @@
 			<string>Mocca</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
+		</dict>
+		<key>7641785EB0B44708A094D64F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>ImageGenerationProtocol.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>777B42BFB9364D09970A1968</key>
+		<dict>
+			<key>fileRef</key>
+			<string>B092124F7DEB4943B10F0AD5</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
 		</dict>
 		<key>7F2C0B8B9E5F421EAC3D1041</key>
 		<dict>
@@ -1356,6 +1424,17 @@
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
+		<key>B092124F7DEB4943B10F0AD5</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>OpenAIRequestPolicy.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>B10000000000000000000001</key>
 		<dict>
 			<key>includeInIndex</key>
@@ -1570,7 +1649,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5327</string>
+				<string>5372</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1586,7 +1665,7 @@
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.9</string>
+				<string>1.0.11</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension</string>
 				<key>PRODUCT_NAME</key>
@@ -1606,7 +1685,7 @@
 				<key>SWIFT_VERSION</key>
 				<string>6.0</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
-				<string>1</string>
+				<string>1,2</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -1622,7 +1701,7 @@
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>5327</string>
+				<string>5372</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>$(MOCCA_DEVELOPMENT_TEAM)</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
@@ -1638,7 +1717,7 @@
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.9</string>
+				<string>1.0.11</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MOCCA_BUNDLE_IDENTIFIER).GenerationActivityExtension</string>
 				<key>PRODUCT_NAME</key>
@@ -1658,7 +1737,7 @@
 				<key>SWIFT_VERSION</key>
 				<string>6.0</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
-				<string>1</string>
+				<string>1,2</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -2503,10 +2582,73 @@ rm -f "${temporary_icon}"
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
+		<key>C7F91797F7F6555781CD4C07</key>
+		<dict>
+			<key>fileRef</key>
+			<string>2C799938D5C4D7AC85CAF018</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>CA08EE7EDE549B9D3EF38AAB</key>
 		<dict>
 			<key>fileRef</key>
 			<string>843BBBB24B7AD150C791BB3F</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
+		<key>CA5290000000000000000000</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>ToolMathExpression.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>CA5290000000000000000001</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>ToolHistoryContext.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>CADB53500000000000000001</key>
+		<dict>
+			<key>includeInIndex</key>
+			<string>1</string>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>ReplyBanner.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>CADB53500000000000000002</key>
+		<dict>
+			<key>fileRef</key>
+			<string>CADB53500000000000000001</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
+		<key>CB5290000000000000000000</key>
+		<dict>
+			<key>fileRef</key>
+			<string>CA5290000000000000000000</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
+		<key>CB5290000000000000000001</key>
+		<dict>
+			<key>fileRef</key>
+			<string>CA5290000000000000000001</string>
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
@@ -2594,6 +2736,24 @@ rm -f "${temporary_icon}"
 				<string>0.9.20</string>
 			</dict>
 		</dict>
+		<key>D53368000000000000000001</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>RetiredDiagnosticCleanup.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>D53368000000000000000002</key>
+		<dict>
+			<key>fileRef</key>
+			<string>D53368000000000000000001</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>D65929F043A91AC7F097CC76</key>
 		<dict>
 			<key>includeInIndex</key>
@@ -2636,6 +2796,13 @@ rm -f "${temporary_icon}"
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<string>0</string>
 		</dict>
+		<key>DE7322247C839A373058F03E</key>
+		<dict>
+			<key>fileRef</key>
+			<string>FB7AE1EB72858775D4C3C4AE</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>E2A32D257C67EFBC3BFDB3AD</key>
 		<dict>
 			<key>fileRef</key>
@@ -2677,41 +2844,16 @@ rm -f "${temporary_icon}"
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
-		<key>CA5290000000000000000000</key>
+		<key>FB7AE1EB72858775D4C3C4AE</key>
 		<dict>
 			<key>isa</key>
 			<string>PBXFileReference</string>
 			<key>lastKnownFileType</key>
 			<string>sourcecode.swift</string>
 			<key>path</key>
-			<string>ToolMathExpression.swift</string>
+			<string>MarkdownLiteralRanges.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
-		</dict>
-		<key>CB5290000000000000000000</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXBuildFile</string>
-			<key>fileRef</key>
-			<string>CA5290000000000000000000</string>
-		</dict>
-		<key>CA5290000000000000000001</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXFileReference</string>
-			<key>lastKnownFileType</key>
-			<string>sourcecode.swift</string>
-			<key>path</key>
-			<string>ToolHistoryContext.swift</string>
-			<key>sourceTree</key>
-			<string>&lt;group&gt;</string>
-		</dict>
-		<key>CB5290000000000000000001</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXBuildFile</string>
-			<key>fileRef</key>
-			<string>CA5290000000000000000001</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

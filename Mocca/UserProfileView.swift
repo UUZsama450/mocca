@@ -4,6 +4,7 @@ import UIKit
 
 struct UserProfileAvatarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.displayScale) private var displayScale
     let profile: UserProfile
     var size: CGFloat = 44
 
@@ -12,21 +13,20 @@ struct UserProfileAvatarView: View {
     }
 
     var body: some View {
-        Group {
-            if let data = profile.avatarJPEGData, let image = UIImage(data: data) {
-                Image(uiImage: image)
+        let request = profile.avatarImageSource.map {
+            AvatarImageRequest(source: $0,
+                               maximumPixelSize: max(1, Int((size * displayScale).rounded(.up))),
+                               sizing: .fillSquare)
+        }
+        CachedAvatarImage(request: request) {
+            ZStack {
+                Circle().fill(themeAccentColor.opacity(0.12))
+                Image("DefaultUserAvatar")
+                    .renderingMode(.template)
                     .resizable()
-                    .scaledToFill()
-            } else {
-                ZStack {
-                    Circle().fill(themeAccentColor.opacity(0.12))
-                    Image("DefaultUserAvatar")
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .foregroundStyle(themeAccentColor)
-                        .padding(size * 0.16)
-                }
+                    .scaledToFit()
+                    .foregroundStyle(themeAccentColor)
+                    .padding(size * 0.16)
             }
         }
         .frame(width: size, height: size)

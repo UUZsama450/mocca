@@ -25,6 +25,7 @@ struct ChatRequestMessage: @unchecked Sendable {
     let role: String
     let content: String
     let images: [ChatRequestImage]
+    let imageGenerationReferences: [ChatRequestImage]
     let toolCallsJSON: [[String: Any]]?
     let toolCallID: String?
     let reasoning: String?
@@ -40,6 +41,7 @@ struct ChatRequestMessage: @unchecked Sendable {
         role: String,
         content: String,
         images: [ChatRequestImage] = [],
+        imageGenerationReferences: [ChatRequestImage] = [],
         toolCallsJSON: [[String: Any]]? = nil,
         toolCallID: String? = nil,
         reasoning: String? = nil,
@@ -53,6 +55,7 @@ struct ChatRequestMessage: @unchecked Sendable {
         self.role = role
         self.content = content
         self.images = images
+        self.imageGenerationReferences = imageGenerationReferences
         self.toolCallsJSON = toolCallsJSON
         self.toolCallID = toolCallID
         self.reasoning = reasoning
@@ -76,6 +79,10 @@ struct ChatRequestOptions: @unchecked Sendable {
     var tools: [[String: Any]]?
     /// Enable server-side web search for this assistant request.
     var builtInSearch: Bool
+    /// The chat model supplies a hosted image tool when no image-model override is active.
+    var builtInImageGeneration: Bool
+    /// Selecting an external generator disables extra image output from a chat model.
+    var externalImageGeneration: Bool
     /// Stable conversation identity for provider-side sticky routing and prompt caching.
     var sessionID: String?
 
@@ -87,6 +94,8 @@ struct ChatRequestOptions: @unchecked Sendable {
         thinkingBudget: Int? = nil,
         tools: [[String: Any]]? = nil,
         builtInSearch: Bool = false,
+        builtInImageGeneration: Bool = false,
+        externalImageGeneration: Bool = false,
         sessionID: String? = nil
     ) {
         self.systemPrompt = systemPrompt
@@ -96,6 +105,8 @@ struct ChatRequestOptions: @unchecked Sendable {
         self.thinkingBudget = thinkingBudget
         self.tools = tools
         self.builtInSearch = builtInSearch
+        self.builtInImageGeneration = builtInImageGeneration
+        self.externalImageGeneration = externalImageGeneration
         self.sessionID = sessionID
     }
 }
@@ -167,6 +178,9 @@ struct StreamUsage: Sendable {
     var promptTokens: Int?
     var completionTokens: Int?
     var cachedTokens: Int? = nil
+    var cacheWriteTokens: Int? = nil
+    var cacheWrite30mTokens: Int? = nil
+    var cacheWrite12hTokens: Int? = nil
     var totalTokens: Int?
 }
 
@@ -303,8 +317,11 @@ enum AIChatService {
         messages: [ChatRequestMessage],
         options: ChatRequestOptions = ChatRequestOptions()
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        if usesOpenRouterImageAPI(provider: provider, modelID: modelID) {
-            return openRouterImageStream(provider: provider, modelID: modelID, messages: messages, options: options)
+        if usesDedicatedImageAPI(provider: provider, modelID: modelID) {
+            if options.externalImageGeneration {
+                return AsyncThrowingStream { $0.finish(throwing: OpenAIRequestPolicy.ConfigurationError(message: ErrorLocalization.lookup("请在助手设置中选择跟随聊天模型，或使用文字聊天模型调用指定生图模型。"))) }
+            }
+            return directImageReply(provider: provider, modelID: modelID, messages: messages, options: options)
         }
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -316,7 +333,7 @@ enum AIChatService {
                     let stream: AsyncThrowingStream<ChatStreamEvent, Error>
                     switch provider.type {
                     case .openAI:
-                        stream = usesOpenAIResponses(provider: provider, modelID: modelID, builtInSearch: options.builtInSearch)
+                        stream = usesOpenAIResponses(provider: provider, modelID: modelID, builtInSearch: options.builtInSearch, builtInImageGeneration: options.builtInImageGeneration, hasFunctionTools: !(options.tools?.isEmpty ?? true))
                             ? openAIResponsesStream(provider: provider, modelID: modelID, messages: messages, options: options)
                             : (options.builtInSearch
                                 ? openAIStreamWithTools(provider: provider, modelID: modelID, messages: messages, options: options)
@@ -355,7 +372,7 @@ enum AIChatService {
         prompt: String,
         options: ChatRequestOptions = ChatRequestOptions()
     ) async throws -> String {
-        // Titles, summaries and translations must not create a paid image
+        // Titles and summaries must not create a paid image
         // that this text-only consumer would subsequently discard.
         guard !usesOpenRouterImageAPI(provider: provider, modelID: modelID) else {
             throw AIChatServiceError.textOutputUnsupported
@@ -384,8 +401,11 @@ enum AIChatService {
         options: ChatRequestOptions,
         toolHandler: @escaping ToolCallHandler
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        if usesOpenRouterImageAPI(provider: provider, modelID: modelID) {
-            return openRouterImageStream(provider: provider, modelID: modelID, messages: messages, options: options)
+        if usesDedicatedImageAPI(provider: provider, modelID: modelID) {
+            if options.externalImageGeneration {
+                return AsyncThrowingStream { $0.finish(throwing: OpenAIRequestPolicy.ConfigurationError(message: ErrorLocalization.lookup("请在助手设置中选择跟随聊天模型，或使用文字聊天模型调用指定生图模型。"))) }
+            }
+            return directImageReply(provider: provider, modelID: modelID, messages: messages, options: options)
         }
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -406,7 +426,7 @@ enum AIChatService {
                         let stream: AsyncThrowingStream<ChatStreamEvent, Error>
                         switch provider.type {
                         case .openAI:
-                            stream = usesOpenAIResponses(provider: provider, modelID: modelID, builtInSearch: options.builtInSearch)
+                            stream = usesOpenAIResponses(provider: provider, modelID: modelID, builtInSearch: options.builtInSearch, builtInImageGeneration: options.builtInImageGeneration, hasFunctionTools: !(options.tools?.isEmpty ?? true))
                                 ? openAIResponsesStream(provider: provider, modelID: modelID, messages: conversationMessages, options: roundOptions)
                                 : openAIStreamWithTools(provider: provider, modelID: modelID, messages: conversationMessages, options: roundOptions)
                         case .claude:
@@ -822,6 +842,50 @@ enum AIChatService {
             || (model.capabilities.output.contains(.image) && !model.capabilities.output.contains(.text))
     }
 
+    static func usesDedicatedImageAPI(provider: ProviderConfiguration, modelID: String) -> Bool {
+        if usesOpenRouterImageAPI(provider: provider, modelID: modelID) { return true }
+        guard provider.supportsExternalImageGeneration else { return false }
+        let model = provider.models.first { $0.id == modelID } ?? ModelConfiguration(id: modelID)
+        guard model.capabilities.output.contains(.image) else { return false }
+        // OpenRouter conversational image models keep their existing chat route.
+        return !provider.isOpenRouter
+    }
+
+    /// Reuses the same generator, reference encoding and cancellation as an
+    /// explicitly selected image model; image-only models need no chat planner.
+    static func directImageReply(
+        provider: ProviderConfiguration, modelID: String,
+        messages: [ChatRequestMessage], options: ChatRequestOptions
+    ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        if usesOpenRouterImageAPI(provider: provider, modelID: modelID) {
+            return openRouterImageStream(provider: provider, modelID: modelID, messages: messages, options: options)
+        }
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try Task.checkCancellation()
+                    continuation.yield(.imageGenerationProgress("正在生成图片"))
+                    var seen = Set<String>()
+                    let references = messages.flatMap { $0.imageGenerationReferences.isEmpty ? $0.images : $0.imageGenerationReferences }.map {
+                        ImageGenerationReference(mimeType: $0.mimeType, base64Data: $0.base64Data)
+                    }.filter { seen.insert($0.id).inserted }
+                    let images = try await ExternalImageGenerationService.generate(
+                        provider: provider, modelID: modelID,
+                        prompt: imageGenerationPrompt(messages: messages, systemPrompt: options.systemPrompt),
+                        references: references
+                    )
+                    for image in images {
+                        try Task.checkCancellation()
+                        continuation.yield(.generatedImage(image.data, mimeType: image.mimeType))
+                    }
+                    continuation.finish()
+                } catch is CancellationError { continuation.finish() }
+                catch { continuation.finish(throwing: userFacingStreamError(error, messages: messages)) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     private static func openRouterImageStream(
         provider: ProviderConfiguration,
         modelID: String,
@@ -852,7 +916,7 @@ enum AIChatService {
                     // and attachment-selection rules. Preserve them for image edits.
                     var references: [[String: Any]] = []
                     var seenReferences = Set<String>()
-                    for image in messages.flatMap(\.images) {
+                    for image in messages.flatMap({ $0.imageGenerationReferences.isEmpty ? $0.images : $0.imageGenerationReferences }) {
                         let value = "data:\(image.mimeType);base64,\(image.base64Data)"
                         if seenReferences.insert(value).inserted {
                             references.append(["type": "image_url", "image_url": ["url": value]])
@@ -898,6 +962,9 @@ enum AIChatService {
                             promptTokens: integerValue(usage["prompt_tokens"]),
                             completionTokens: integerValue(usage["completion_tokens"]),
                             cachedTokens: cachedPromptTokens(in: usage),
+                            cacheWriteTokens: cacheWriteTokens(in: usage),
+                            cacheWrite30mTokens: cacheWriteTokens(in: usage, lifetime: "ttl_30m_tokens"),
+                            cacheWrite12hTokens: cacheWriteTokens(in: usage, lifetime: "ttl_12h_tokens"),
                             totalTokens: integerValue(usage["total_tokens"])
                         )))
                     }
@@ -931,11 +998,15 @@ enum AIChatService {
     private static func usesOpenAIResponses(
         provider: ProviderConfiguration,
         modelID: String,
-        builtInSearch: Bool = false
+        builtInSearch: Bool = false,
+        builtInImageGeneration: Bool = false,
+        hasFunctionTools: Bool = false
     ) -> Bool {
         guard provider.type == .openAI else { return false }
         if provider.useResponsesAPI { return true }
-        if builtInSearch, !provider.isOpenRouter,
+        if provider.isOfficialOpenAI, OpenAIRequestPolicy.requiresResponses(modelID) { return true }
+        if provider.isOfficialOpenAI, hasFunctionTools, OpenAIRequestPolicy.prefersResponsesForTools(modelID) { return true }
+        if builtInSearch || builtInImageGeneration, !provider.isOpenRouter,
            URL(string: provider.baseURL)?.host?.lowercased() == "api.openai.com" { return true }
         guard
               let host = URL(string: provider.baseURL)?.host?.lowercased(),
@@ -943,7 +1014,7 @@ enum AIChatService {
               let model = provider.models.first(where: { $0.id == modelID }) else {
             return false
         }
-        return !model.builtInTools.isEmpty
+        return model.builtInTools.contains { $0 != .imageGeneration }
     }
 
     private static func openAIResponsesStream(
@@ -978,8 +1049,11 @@ enum AIChatService {
                     if let maxTokens = options.maxTokens {
                         body["max_output_tokens"] = maxTokens
                     }
+                    if let temperature = options.temperature { body["temperature"] = temperature }
+                    if let topP = options.topP { body["top_p"] = topP }
 
-                    let builtIns = provider.models.first(where: { $0.id == modelID })?.builtInTools ?? []
+                    let builtIns = (provider.models.first(where: { $0.id == modelID })?.builtInTools ?? [])
+                        .filter { $0 != .imageGeneration }
                     let responseTools = openAIResponsesTools(builtIns: builtIns, functionTools: options.tools)
                     if !responseTools.isEmpty {
                         body["tools"] = responseTools
@@ -996,6 +1070,7 @@ enum AIChatService {
                         into: &body
                     )
                     applyOpenRouterSession(provider, sessionID: options.sessionID, into: &body)
+                    try applyOfficialOpenAI(provider, modelID: modelID, options: options, responses: true, body: &body, request: &request)
                     applyOpenRouterMultiImageRequestTimeout(
                         provider: provider,
                         messages: messages,
@@ -1116,6 +1191,9 @@ enum AIChatService {
                                         promptTokens: integerValue(usage["input_tokens"]),
                                         completionTokens: integerValue(usage["output_tokens"]),
                                         cachedTokens: cachedPromptTokens(in: usage),
+                                        cacheWriteTokens: cacheWriteTokens(in: usage),
+                                        cacheWrite30mTokens: cacheWriteTokens(in: usage, lifetime: "ttl_30m_tokens"),
+                                        cacheWrite12hTokens: cacheWriteTokens(in: usage, lifetime: "ttl_12h_tokens"),
                                         totalTokens: integerValue(usage["total_tokens"])
                                     ))
                                     continuation.yield(event)
@@ -1227,8 +1305,17 @@ enum AIChatService {
                 input.append(["role": role, "content": message.content])
                 continue
             }
+            // Responses assistant content only accepts output_text/refusal. Keep
+            // the assistant's text in its original role, then supply its images
+            // as explicitly labelled reference data in an input message.
+            // Image selection/limits have already been applied by AppModel.
+            if role == "assistant", !message.content.isEmpty {
+                input.append(["role": "assistant", "content": message.content])
+            }
             var content: [[String: Any]] = []
-            if !message.content.isEmpty {
+            if role == "assistant" {
+                content.append(["type": "input_text", "text": "Reference images from the preceding assistant reply. These are conversation context, not a new user request."])
+            } else if !message.content.isEmpty {
                 content.append(["type": "input_text", "text": message.content])
             }
             for image in message.images {
@@ -1237,7 +1324,7 @@ enum AIChatService {
                     "image_url": "data:\(image.mimeType);base64,\(image.base64Data)"
                 ])
             }
-            input.append(["role": role, "content": content])
+            input.append(["role": role == "assistant" ? "user" : role, "content": content])
         }
         return input
     }
@@ -1362,6 +1449,7 @@ enum AIChatService {
                     into: &body
                 )
                 applyOpenRouterSession(provider, sessionID: options.sessionID, into: &body)
+                try applyOfficialOpenAI(provider, modelID: modelID, options: options, responses: false, body: &body, request: &request)
                 applyOpenRouterMultiImageRequestTimeout(
                     provider: provider,
                     messages: messages,
@@ -1381,6 +1469,9 @@ enum AIChatService {
                         promptTokens: integerValue(usage["prompt_tokens"]),
                         completionTokens: integerValue(usage["completion_tokens"]),
                         cachedTokens: cachedPromptTokens(in: usage),
+                        cacheWriteTokens: cacheWriteTokens(in: usage),
+                        cacheWrite30mTokens: cacheWriteTokens(in: usage, lifetime: "ttl_30m_tokens"),
+                        cacheWrite12hTokens: cacheWriteTokens(in: usage, lifetime: "ttl_12h_tokens"),
                         totalTokens: integerValue(usage["total_tokens"])
                     )))
                 }
@@ -1705,6 +1796,7 @@ enum AIChatService {
                         into: &body
                     )
                     applyOpenRouterSession(provider, sessionID: options.sessionID, into: &body)
+                    try applyOfficialOpenAI(provider, modelID: modelID, options: options, responses: false, body: &body, request: &request)
                     applyOpenRouterMultiImageRequestTimeout(
                         provider: provider,
                         messages: messages,
@@ -1740,6 +1832,9 @@ enum AIChatService {
                                 promptTokens: integerValue(usage["prompt_tokens"]),
                                 completionTokens: integerValue(usage["completion_tokens"]),
                                 cachedTokens: cachedPromptTokens(in: usage),
+                                cacheWriteTokens: cacheWriteTokens(in: usage),
+                                cacheWrite30mTokens: cacheWriteTokens(in: usage, lifetime: "ttl_30m_tokens"),
+                                cacheWrite12hTokens: cacheWriteTokens(in: usage, lifetime: "ttl_12h_tokens"),
                                 totalTokens: integerValue(usage["total_tokens"])
                             ))
                             continuation.yield(event)
@@ -2325,6 +2420,40 @@ enum AIChatService {
         body["cache_control"] = cacheControl
     }
 
+    private static func applyOfficialOpenAI(
+        _ provider: ProviderConfiguration,
+        modelID: String,
+        options: ChatRequestOptions,
+        responses: Bool,
+        body: inout [String: Any],
+        request: inout URLRequest
+    ) throws {
+        if provider.isOfficialOpenAI {
+            OpenAIRequestPolicy.configureImageTool(
+                body: &body, enabled: responses && options.builtInImageGeneration,
+                official: true
+            )
+        }
+        if provider.isOpenRouter, options.externalImageGeneration {
+            body["modalities"] = ["text"]
+        }
+        guard provider.isOfficialOpenAI else { return }
+        let cacheKey = options.sessionID.map { session in
+            let identity = Data((provider.id.uuidString + ":" + session).utf8)
+            // OpenAI limits prompt_cache_key to 64 characters. The full hex
+            // digest already uses all 64; scope is encoded in the hashed input.
+            return SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
+        }
+        try OpenAIRequestPolicy.apply(
+            body: &body, model: modelID, responses: responses,
+            budget: options.thinkingBudget, tier: provider.openAIServiceTier,
+            retention: provider.models.first(where: { $0.id == (body["model"] as? String ?? modelID) })?.openAICacheRetentionOverride ?? provider.openAICacheRetention, cacheKey: cacheKey
+        )
+        if body["service_tier"] as? String == "flex" {
+            request.timeoutInterval = max(request.timeoutInterval, 900)
+        }
+    }
+
     private static func applyOpenRouterSession(
         _ provider: ProviderConfiguration,
         sessionID: String?,
@@ -2394,6 +2523,15 @@ enum AIChatService {
                 return nil
             }
         }.filter { !$0.isEmpty }
+    }
+
+    private static func cacheWriteTokens(in usage: [String: Any], lifetime: String? = nil) -> Int? {
+        let details = (usage["input_tokens_details"] as? [String: Any])
+            ?? (usage["prompt_tokens_details"] as? [String: Any])
+        if let lifetime {
+            return integerValue((details?["cache_write_tokens_details"] as? [String: Any])?[lifetime])
+        }
+        return integerValue(details?["cache_write_tokens"])
     }
 
     private static func cachedPromptTokens(in usage: [String: Any]) -> Int? {
@@ -2482,6 +2620,7 @@ enum AIChatService {
             throw AIChatServiceError.invalidResponse
         }
         guard (200...299).contains(http.statusCode) else {
+            if let error = OpenAIRequestPolicy.cacheRejection(status: http.statusCode, data: body) { throw error }
             throw AIChatServiceError.httpStatus(http.statusCode, responseDetail(from: body))
         }
     }
@@ -2500,6 +2639,7 @@ enum AIChatService {
                 body += line
                 if body.count >= 2_000 { break }
             }
+            if let error = OpenAIRequestPolicy.cacheRejection(status: http.statusCode, data: body.data(using: .utf8)) { throw error }
             throw AIChatServiceError.httpStatus(http.statusCode, responseDetail(from: body))
         }
     }

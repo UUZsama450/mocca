@@ -1,6 +1,6 @@
 <h1 align="center">Mocca</h1>
 
-<p align="center">原生 iPhone AI 聊天应用。<br>连接喜欢的模型，把对话留在自己的设备上。</p>
+<p align="center">为 iPhone 和 iPad 打造的原生 AI 聊天应用。<br>连接喜欢的模型，把对话留在自己的设备上。</p>
 
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.9">最新版本</a> · <a href="CHANGELOG.md">更新说明</a>
+  <a href="https://github.com/UUZsama450/mocca/releases/tag/v1.0.11">最新版本</a> · <a href="CHANGELOG.md">更新说明</a>
 </p>
 
 <p align="center">
@@ -46,15 +46,15 @@ Mocca 不附带 API Key 或第三方服务额度。模型能力、服务可用�
 
 ## 下载说明
 
-**1.0.9（5323）** 源码版基于手机 5321，已移除触摸诊断。[源码校验清单](docs/SOURCE_5323_SHA256.json) · [编译与安装](docs/INSTALLATION.md)。[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)单独审核和发布。[1.0.5（5237）](docs/RELEASE_1.0.5_5237.md) 提供需要自行签名的旧版 IPA 预览包。
+**1.0.11（5372）** 源码版支持 iPhone 和 iPad。[源码校验清单](docs/SOURCE_5372_SHA256.json) · [编译说明](docs/BUILD_CONFIGURATION.md)。[App Store 版本](https://apps.apple.com/us/app/mocca-ai-chat/id6807043522)单独审核和发布。[1.0.5（5237）](docs/RELEASE_1.0.5_5237.md) 提供需要自行签名的旧版 IPA 预览包。
 
 
 ## 本地构建
 
 使用 SwiftUI 和 UIKit 构建。
 
-- iOS 17 或更高版本
-- Xcode 26.3，目前核验过的开发工具版本
+- iOS 17、iPadOS 17 或更高版本
+- 已使用 Xcode 27.2 验证
 - Swift 6
 
 使用 Xcode 打开 `Mocca.xcodeproj`，选择 `Mocca` scheme，等待解析已锁定的 Swift 包依赖。模拟器构建默认使用占位应用标识，无需开发团队。真机构建时，将 `Configuration/Local.xcconfig.example` 复制为同目录的 `Local.xcconfig`，填入自己的应用标识与开发团队；扩展和后台任务标识会自动跟随。

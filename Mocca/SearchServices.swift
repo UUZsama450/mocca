@@ -543,22 +543,27 @@ enum SearchImageSelectionCodec {
         _ text: String,
         candidates: [SearchImageCandidate]
     ) -> Parsed {
-        // Every complete marker requires this literal byte, irrespective of
-        // the regex's case folding. Keep malformed/control-looking text on
-        // the existing parser path, and skip ordinary final prose entirely.
-        guard text.utf8.contains(0x3C) else { return Parsed(displayText: text, requests: []) }
+        // Consume only selections that resolve to this reply's image candidates.
+        // Unknown IDs and examples stay in the stored message as literal text.
+        guard !candidates.isEmpty, text.utf8.contains(0x3C) else { return Parsed(displayText: text, requests: []) }
         let nsText = text as NSString
-        let matches = fullRegex.matches(
-            in: text,
-            range: NSRange(location: 0, length: nsText.length)
-        )
-        guard !matches.isEmpty else {
-            return Parsed(displayText: text, requests: [])
-        }
+        let literals = MarkdownLiteralRanges(text, isStreaming: true)
         let candidatesByID = Dictionary(
             candidates.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        let matches = fullRegex.matches(
+            in: text,
+            range: NSRange(location: 0, length: nsText.length)
+        ).filter { match in
+            guard literals.allowsMarker(at: match.range.location),
+                  let object = try? JSONSerialization.jsonObject(with: Data(nsText.substring(with: match.range(at: 1)).utf8)) as? [String: Any],
+                  let id = object["id"] as? String else { return false }
+            return candidatesByID[id] != nil
+        }
+        guard !matches.isEmpty else {
+            return Parsed(displayText: text, requests: [])
+        }
         var seen = Set<String>()
         var requests: [SearchImageRequest] = []
         var display = ""
@@ -608,25 +613,14 @@ enum SearchImageSelectionCodec {
         return Parsed(displayText: display, requests: requests)
     }
 
-    static func stripForDisplay(_ text: String) -> String {
-        // Most replies never contain an image-selection control block. Avoid
-        // running the full regular expression over the growing stream unless
-        // its opening marker is actually present. The existing parser and
-        // trailing-marker behavior remain unchanged for matching input.
-        guard text.range(
-            of: openingMarker,
-            options: .caseInsensitive
-        ) != nil else {
-            return text
-        }
-        let parsed = parse(text, candidates: []).displayText
-        if let markerStart = parsed.range(
-            of: openingMarker,
-            options: [.caseInsensitive, .backwards]
-        )?.lowerBound {
-            return String(parsed[..<markerStart])
-        }
-        return parsed
+    static func stripForDisplay(_ text: String, candidates: [SearchImageCandidate] = []) -> String {
+        // Without image candidates there is no executable selection to hide.
+        // Partial-marker suppression applies only outside literal examples.
+        guard !candidates.isEmpty, text.utf8.contains(0x3C) else { return text }
+        let parsed = parse(text, candidates: candidates).displayText
+        return MarkdownLiteralRanges.hidingIncompleteMarker(
+            in: parsed, opening: openingMarker, closing: "</ks-image>", caseInsensitive: true
+        )
     }
 }
 

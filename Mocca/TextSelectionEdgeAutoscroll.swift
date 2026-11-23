@@ -68,8 +68,7 @@ final class TextSelectionEdgeAutoscroll: NSObject {
         // UIKit can host the selection handles above the transcript's view
         // subtree. Observe their original touch at the window, still admitting
         // only selection gestures in this controller's registered text views.
-        if !DrawerFeelComparison.noSelectionObserver,
-           let window = scrollView?.window, let touchObserver, touchObserver.view !== window {
+        if let window = scrollView?.window, let touchObserver, touchObserver.view !== window {
             touchObserver.view?.removeGestureRecognizer(touchObserver)
             window.addGestureRecognizer(touchObserver)
         }

@@ -50,47 +50,32 @@ struct NativeMultilineTextEditor: UIViewRepresentable {
         self.autocorrectionType = autocorrectionType
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
+    func makeCoordinator() -> MultilineTextViewBinding {
+        MultilineTextViewBinding($text)
     }
 
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView(usingTextLayoutManager: false)
-        textView.delegate = context.coordinator
         textView.backgroundColor = .clear
+        // Reapplying textColor can invalidate TextKit's layout and move the viewport.
+        textView.textColor = .label
+        textView.tintColor = .systemBlue
         textView.isScrollEnabled = true
-        textView.isEditable = isEnabled
-        textView.isSelectable = isEnabled
         textView.alwaysBounceVertical = true
         textView.adjustsFontForContentSizeCategory = true
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         configure(textView)
-        textView.text = text
+        context.coordinator.attach(to: textView)
         return textView
     }
 
     func updateUIView(_ textView: UITextView, context: Context) {
-        context.coordinator.parent = self
         configure(textView)
-
-        guard textView.text != text else { return }
-
-        // Never replace storage while an input method owns marked text. The
-        // delegate has already synchronised the current composition to SwiftUI.
-        guard textView.markedTextRange == nil else { return }
-
-        let oldSelection = textView.selectedRange
-        let oldOffset = textView.contentOffset
-        context.coordinator.isApplyingExternalText = true
-        textView.text = text
-        textView.selectedRange = Self.clamped(oldSelection, in: text)
-        textView.layoutIfNeeded()
-        textView.setContentOffset(Self.clamped(oldOffset, in: textView), animated: false)
-        context.coordinator.isApplyingExternalText = false
+        context.coordinator.update($text, in: textView)
     }
 
-    static func dismantleUIView(_ textView: UITextView, coordinator: Coordinator) {
+    static func dismantleUIView(_ textView: UITextView, coordinator: MultilineTextViewBinding) {
         textView.delegate = nil
     }
 
@@ -99,12 +84,50 @@ struct NativeMultilineTextEditor: UIViewRepresentable {
         if textView.font != resolvedFont {
             textView.font = resolvedFont
         }
-        textView.textColor = .label
-        textView.tintColor = .systemBlue
         textView.isEditable = isEnabled
         textView.isSelectable = isEnabled
         textView.autocapitalizationType = autocapitalizationType
         textView.autocorrectionType = autocorrectionType
+    }
+}
+
+/// Synchronizes a SwiftUI draft with one UIKit editor, including marked text and selection.
+@MainActor
+final class MultilineTextViewBinding: NSObject, UITextViewDelegate {
+    private var draft: Binding<String>
+    private var isApplyingExternalText = false
+
+    init(_ draft: Binding<String>) {
+        self.draft = draft
+    }
+
+    func attach(to textView: UITextView) {
+        textView.text = draft.wrappedValue
+        textView.delegate = self
+    }
+
+    func update(_ draft: Binding<String>, in textView: UITextView) {
+        self.draft = draft
+        // UIKit owns the composing range until the input method commits it.
+        guard textView.markedTextRange == nil else { return }
+        let text = draft.wrappedValue
+        guard textView.text != text else { return }
+
+        let oldSelection = textView.selectedRange
+        let oldOffset = textView.contentOffset
+        isApplyingExternalText = true
+        defer { isApplyingExternalText = false }
+        textView.text = text
+        textView.selectedRange = Self.clamped(oldSelection, in: text)
+        textView.layoutIfNeeded()
+        textView.setContentOffset(Self.clamped(oldOffset, in: textView), animated: false)
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        guard !isApplyingExternalText else { return }
+        let text = textView.text ?? ""
+        guard draft.wrappedValue != text else { return }
+        draft.wrappedValue = text
     }
 
     private static func clamped(_ range: NSRange, in text: String) -> NSRange {
@@ -118,21 +141,5 @@ struct NativeMultilineTextEditor: UIViewRepresentable {
         let minimumY = -inset.top
         let maximumY = max(minimumY, textView.contentSize.height - textView.bounds.height + inset.bottom)
         return CGPoint(x: offset.x, y: min(max(offset.y, minimumY), maximumY))
-    }
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: NativeMultilineTextEditor
-        var isApplyingExternalText = false
-
-        init(parent: NativeMultilineTextEditor) {
-            self.parent = parent
-        }
-
-        func textViewDidChange(_ textView: UITextView) {
-            guard !isApplyingExternalText else { return }
-            let updatedText = textView.text ?? ""
-            guard parent.text != updatedText else { return }
-            parent.text = updatedText
-        }
     }
 }

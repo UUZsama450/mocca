@@ -39,6 +39,11 @@ final class ConversationMessageStore: Observable {
         set { self[id] = newValue }
     }
 
+    var snapshotRevision: UInt64 {
+        registrar.access(self, keyPath: \.snapshot)
+        return nextRevision
+    }
+
     var snapshot: [UUID: [ChatMessage]] {
         registrar.access(self, keyPath: \.snapshot)
         return storage
@@ -743,9 +748,30 @@ struct MessageTargetNavigationRequest: Identifiable, Equatable, Sendable {
     let messageID: UUID
     let conversationPositionRequest: Int
     let regenerationSourceMessageID: UUID?
+    var sendsEditedMessageAfterLanding = false
     let usesCoveredViewportTransition: Bool
 }
 
+
+struct OpenAICacheRecoveryRequest {
+    struct Context: Equatable {
+        let providerID: UUID
+        let baseURL: String
+        let providerRetention: OpenAICacheRetention
+        let usesResponses: Bool
+        let providerBody: [KeyValueField]
+        let model: ModelConfiguration
+        init(provider: ProviderConfiguration, model: ModelConfiguration) {
+            providerID = provider.id; baseURL = provider.baseURL
+            providerRetention = provider.openAICacheRetention; usesResponses = provider.useResponsesAPI
+            providerBody = provider.customBody; self.model = model
+        }
+    }
+    let conversationID: UUID
+    let messageID: UUID
+    let assistantID: UUID
+    let context: Context
+}
 
 @MainActor
 @Observable
@@ -773,16 +799,17 @@ final class AppModel {
         "<kg>",
         "<ks-image>",
     ]
-    private static let streamDisplayControlMarkerMaximumPrefixCharacterCount =
-        streamDisplayControlMarkerPrefixes.map(\.count).max() ?? 0
-    static let translationPlaceholder = "翻译中…"
 
     var conversations: [Conversation] {
         didSet {
             conversationLookupCache = nil
+            usageStatisticsMetadataRevision &+= 1
         }
     }
+    private(set) var usageStatisticsMetadataRevision: UInt64 = 0
+    @ObservationIgnored let usageStatisticsCache = UsageStatisticsCache()
     private(set) var unreadReplyConversationIDs = Set<UUID>()
+    @ObservationIgnored lazy var replyBanners = ReplyBannerPresenter(model: self)
     private(set) var pendingUserBubbleSendAnimation: UserBubbleSendAnimationRequest?
     private(set) var pendingUserMessageSendPositionRequest: UserMessageSendPositionRequest?
     private(set) var sendPresentationGate: SendPresentationGate?
@@ -793,6 +820,7 @@ final class AppModel {
         didSet {
             if oldValue != selectedConversationID { pauseUserBatch(for: oldValue) }
             unreadReplyConversationIDs.remove(selectedConversationID)
+            replyBanners.didOpen(selectedConversationID)
             if pendingUserBubbleSendAnimation?.conversationID != selectedConversationID {
                 pendingUserBubbleSendAnimation = nil
             }
@@ -831,6 +859,7 @@ final class AppModel {
     var assistants: [AssistantProfile] {
         didSet {
             assistantLookupIndices = nil
+            usageStatisticsMetadataRevision &+= 1
         }
     }
     var currentAssistantID: UUID
@@ -864,9 +893,16 @@ final class AppModel {
     private(set) var pendingToolApproval: MCPApprovalRequest?
     let largeFileConfirmation = LargeFileConfirmation()
     private(set) var pendingDuplicateFileDecision: DuplicateFileDecisionRequest?
+    private enum BottomToolsEntry {
+        case menu, editGroup, newGroup
+    }
+
+    @ObservationIgnored private var isDismissingToolsAfterPicker = false
+    @ObservationIgnored private var pendingToolsEntry: (entry: BottomToolsEntry, conversationID: UUID)?
     var isBottomToolsPresented = false
     var isErrorPresented = false
     var errorMessage = ""
+    private(set) var pendingCacheRecovery: OpenAICacheRecoveryRequest?
     private(set) var recentMemoryRefreshingAssistantIDs = Set<UUID>()
     private var streamingConversationIDs = Set<UUID>()
     var isComposerFocused = false
@@ -1131,6 +1167,9 @@ final class AppModel {
             AssistantProfile.migrateLegacyBundledDefaultIdentity(
                 in: &loadedAssistants
             )
+        if AssistantProfile.migrateLegacyImageGeneration(in: &loadedAssistants, providers: loadedProviders, globalSelection: loadedSelection) {
+            loadedAssistantStateChanged = true
+        }
         if Self.migrateLegacyRecentMemoryManualOverrides(
                 profiles: &loadedAssistants,
                 userProfile: loadedUserProfile,
@@ -1668,7 +1707,7 @@ final class AppModel {
         conversation(for: selectedConversationID)
     }
 
-    private func conversation(for conversationID: UUID) -> Conversation? {
+    func conversation(for conversationID: UUID) -> Conversation? {
         let currentConversations = conversations
         if let cached = conversationLookupCache,
            cached.id == conversationID,
@@ -1763,7 +1802,6 @@ final class AppModel {
         reservation.attachments = []
         reservation.toolEvents = []
         reservation.tokenUsage = nil
-        reservation.translation = nil
         reservation.reactions = MessageReactions(
             assistantReaction: nil,
             userReaction: nil,
@@ -1912,6 +1950,7 @@ final class AppModel {
               let conversationIndex = conversations.firstIndex(where: {
                   $0.id == selected.conversationID
               }) else { return }
+        if selected.isUserEditVersion == true && isConversationStreaming(selected.conversationID) { return }
         let groupKey = selected.versionGroupKey
         guard conversations[conversationIndex].versionSelections[groupKey] != selected.version else {
             return
@@ -1919,6 +1958,7 @@ final class AppModel {
         let previousSummaryInput = conversationSummaryInputSnapshot(
             conversationID: selected.conversationID
         )
+        let before = conversations
         conversations[conversationIndex].versionSelections[groupKey] = selected.version
         let affectedAssistantIDs =
             invalidateConversationDerivedMemoryAfterTranscriptMutation(
@@ -1928,6 +1968,8 @@ final class AppModel {
         touchConversation(selected.conversationID)
         if saveImmediately() {
             requestTranscriptMutationRefreshes(affectedAssistantIDs)
+        } else {
+            conversations = before
         }
     }
 
@@ -2340,14 +2382,14 @@ final class AppModel {
     ) {
         guard projection.indices.contains(logicalIndex),
               let rawMessages = conversationMessageStore[conversationID] else { return }
-        let keptGroupKeys = Set(projection.prefix(logicalIndex + 1).map(\.groupKey))
+        let trailingGroups = Set(projection.dropFirst(logicalIndex + 1).map(\.groupKey))
         let removedEntries = rawMessages.enumerated().filter {
-            !keptGroupKeys.contains($0.element.versionGroupKey)
+            trailingGroups.contains($0.element.versionGroupKey)
         }
         guard !removedEntries.isEmpty else { return }
         let removedGroupKeys = Set(removedEntries.map { $0.element.versionGroupKey })
         conversationMessageStore[conversationID] = rawMessages.filter {
-            keptGroupKeys.contains($0.versionGroupKey)
+            !trailingGroups.contains($0.versionGroupKey)
         }
 
         if let conversationIndex = conversations.firstIndex(where: { $0.id == conversationID }),
@@ -5708,6 +5750,7 @@ final class AppModel {
         _ id: UUID,
         targeting messageID: UUID,
         regenerationSourceMessageID: UUID? = nil,
+        sendsEditedMessageAfterLanding: Bool = false,
         usesCoveredViewportTransition: Bool = false,
         closeDrawer: Bool? = nil
     ) -> Bool {
@@ -5738,31 +5781,37 @@ final class AppModel {
             return false
         }
 
-        let usesIsolatedFavoriteTargetWindow =
-            usesCoveredViewportTransition
-            && regenerationSourceMessageID == nil
-        // A covered favorite opens on one concrete target row followed by a
-        // normal history page. This removes every estimated historical row from
-        // above the landing coordinate without changing ordinary conversation
-        // opening, regeneration, or the shared paging size.
-        let startIndex = usesIsolatedFavoriteTargetWindow
-            ? targetIndex
-            : max(0, targetIndex - Self.messageWindowPageSize)
-        let endIndex = usesIsolatedFavoriteTargetWindow
-            ? min(
-                logicalMessages.count,
-                targetIndex + Self.messageWindowPageSize + 1
-            )
-            : regenerationSourceMessageID == nil
-                ? targetIndex + 1
-                : min(
+        let window = messageWindow(for: id, messages: logicalMessages)
+        // Regeneration starts from the open transcript. Keep its measured rows
+        // when the question is already loaded, including a newly edited version.
+        if regenerationSourceMessageID == nil || id != selectedConversationID
+            || !(window.startIndex..<window.endIndex).contains(targetIndex) {
+            let usesIsolatedFavoriteTargetWindow =
+                usesCoveredViewportTransition
+                && regenerationSourceMessageID == nil
+            // A covered favorite opens on one concrete target row followed by a
+            // normal history page. This removes every estimated historical row from
+            // above the landing coordinate without changing ordinary conversation
+            // opening, regeneration, or the shared paging size.
+            let startIndex = usesIsolatedFavoriteTargetWindow
+                ? targetIndex
+                : max(0, targetIndex - Self.messageWindowPageSize)
+            let endIndex = usesIsolatedFavoriteTargetWindow
+                ? min(
                     logicalMessages.count,
                     targetIndex + Self.messageWindowPageSize + 1
                 )
-        messageWindowsByConversation[id] = MessageWindowState(
-            startIndex: startIndex,
-            count: endIndex - startIndex
-        )
+                : regenerationSourceMessageID == nil
+                    ? targetIndex + 1
+                    : min(
+                        logicalMessages.count,
+                        targetIndex + Self.messageWindowPageSize + 1
+                    )
+            messageWindowsByConversation[id] = MessageWindowState(
+                startIndex: startIndex,
+                count: endIndex - startIndex
+            )
+        }
 
         // This selection owns a concrete message target, not the usual
         // return-to-bottom behavior.
@@ -5776,6 +5825,7 @@ final class AppModel {
             messageID: messageID,
             conversationPositionRequest: conversationBottomReturnRequest,
             regenerationSourceMessageID: regenerationSourceMessageID,
+            sendsEditedMessageAfterLanding: sendsEditedMessageAfterLanding,
             usesCoveredViewportTransition: usesCoveredViewportTransition
         )
 
@@ -5894,7 +5944,7 @@ final class AppModel {
                     groupID: source.role == .assistant ? source.groupID : nil,
                     versionGroupID: branchGroupKey,
                     version: version,
-                    translation: source.translation,
+                    isUserEditVersion: source.isUserEditVersion,
                     reactions: branchReactions,
                     schemaVersion: source.schemaVersion,
                     migrationMetadata: source.migrationMetadata
@@ -6794,6 +6844,8 @@ final class AppModel {
         mode: BackupRestoreMode,
         refreshExistingLegacyRecords: Bool = false
     ) -> Set<UUID> {
+        var snapshot = snapshot
+        snapshot.detachLegacyUserReplies()
         messageWindowsByConversation = [:]
         switch mode {
         case .overwrite:
@@ -6839,7 +6891,7 @@ final class AppModel {
             }
 
             for (conversationID, importedMessages) in snapshot.messagesByConversation {
-                let newMessages = importedMessages.compactMap { message -> ChatMessage? in
+                var newMessages = importedMessages.compactMap { message -> ChatMessage? in
                     guard !existingMessageIDs.contains(message.id) else { return nil }
                     var copy = message
                     if copy.status == .streaming {
@@ -6853,8 +6905,42 @@ final class AppModel {
                 ) ? conversationSummaryInputSnapshot(
                     conversationID: conversationID
                 ) : nil
-                conversationMessageStore[conversationID, default: []].append(contentsOf: newMessages)
-                conversationMessageStore[conversationID]?.sort { $0.createdAt < $1.createdAt }
+                var rows = conversationMessageStore[conversationID] ?? []
+                if let ownerIndex = conversations.firstIndex(where: { $0.id == conversationID }), !rows.isEmpty {
+                    // A backup may know a stable group for a message that predates
+                    // versioning on this device. Map imported siblings to the
+                    // existing local group and give conflicting ordinals fresh slots.
+                    let local = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                    var aliases: [String: String] = [:]
+                    var used: [String: Set<Int>] = [:]
+                    for row in rows { used[row.versionGroupKey, default: []].insert(row.version) }
+                    for row in importedMessages {
+                        if let existing = local[row.id] { aliases[row.versionGroupKey] = existing.versionGroupKey }
+                    }
+                    var editedKeys = Set<String>()
+                    for i in newMessages.indices {
+                        let importedKey = newMessages[i].versionGroupKey
+                        let key = aliases[importedKey] ?? importedKey
+                        if key != importedKey { newMessages[i].versionGroupID = key }
+                        if let ordinals = used[key], ordinals.contains(newMessages[i].version) {
+                            newMessages[i].version = (ordinals.max() ?? 0) + 1
+                        }
+                        used[key, default: []].insert(newMessages[i].version)
+                        if newMessages[i].isUserEditVersion == true { editedKeys.insert(key) }
+                    }
+                    for i in rows.indices where editedKeys.contains(rows[i].versionGroupKey) {
+                        let key = rows[i].versionGroupKey
+                        if rows[i].isUserEditVersion != true {
+                            conversations[ownerIndex].versionSelections[key] = rows[i].version
+                            rows[i].isUserEditVersion = true
+                        }
+                    }
+                }
+                rows.append(contentsOf: newMessages)
+                if existingConversationIDs.contains(conversationID) {
+                    rows.sort { $0.createdAt < $1.createdAt }
+                }
+                conversationMessageStore[conversationID] = rows
                 if let previousSummaryInput {
                     affectedAssistantIDs.formUnion(
                         invalidateConversationDerivedMemoryAfterTranscriptMutation(
@@ -7267,26 +7353,49 @@ final class AppModel {
     }
 
     func presentBottomTools() {
+        presentBottomTools(.menu)
+    }
+
+    func openGroupChatEditor() {
+        presentBottomTools(.editGroup)
+    }
+
+    func openNewGroupChatCreator() {
+        presentBottomTools(.newGroup)
+    }
+
+    private func presentBottomTools(_ entry: BottomToolsEntry) {
+        if isDismissingToolsAfterPicker {
+            pendingToolsEntry = (entry, selectedConversationID)
+            return
+        }
         bottomTools.reset()
-        if let conversation = selectedConversation, conversation.groupAssistantIDs.count >= 2 {
+        if entry != .newGroup, let conversation = selectedConversation, conversation.groupAssistantIDs.count >= 2 {
             bottomTools.selectedAssistantIDs = Set(conversation.groupAssistantIDs.compactMap(UUID.init(uuidString:)))
             bottomTools.isEditingGroupChat = true
         } else {
             bottomTools.selectedAssistantIDs = []
         }
+        if entry != .menu {
+            bottomTools.route = .groupChat
+        }
         isBottomToolsPresented = true
     }
 
-    func openGroupChatEditor() {
-        presentBottomTools()
-        bottomTools.route = .groupChat
+    func dismissBottomToolsAfterPicker() {
+        guard isBottomToolsPresented else { return }
+        // The one-point parent can still be onscreen after its binding becomes false.
+        isDismissingToolsAfterPicker = true
+        isBottomToolsPresented = false
     }
 
-    func openNewGroupChatCreator() {
-        presentBottomTools()
-        bottomTools.selectedAssistantIDs = []
-        bottomTools.isEditingGroupChat = false
-        bottomTools.route = .groupChat
+    func bottomToolsDidDismiss() {
+        isDismissingToolsAfterPicker = false
+        let pending = pendingToolsEntry
+        pendingToolsEntry = nil
+        if let pending, pending.conversationID == selectedConversationID {
+            presentBottomTools(pending.entry)
+        }
     }
 
     func routeBottomToolAction(_ action: BottomToolAction) {
@@ -7684,8 +7793,9 @@ final class AppModel {
     /// Pending rows form the tail of a single chat. Reading only that tail keeps
     /// composer updates independent of the length of the conversation history.
     func pendingUserBatch(for conversationID: UUID) -> [ChatMessage] {
-        Array((conversationMessageStore[conversationID] ?? []).reversed()
-            .prefix { $0.role == .user && $0.isPendingUserSend == true }.reversed())
+        selectedMessageProjection(for: conversationID).reversed()
+            .prefix { $0.message.role == .user && $0.message.isPendingUserSend == true }
+            .reversed().map(\.message)
     }
 
     func canQueueUserMessages(for conversationID: UUID) -> Bool {
@@ -7960,21 +8070,62 @@ final class AppModel {
         return true
     }
 
-    func editMessage(_ id: UUID, text: String, sendAfterSave: Bool = false) {
+    @discardableResult
+    func editMessage(_ id: UUID, text: String, sendAfterSave: Bool = false, keepUnchangedUserVersion: Bool = false) -> UUID? {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty,
               let location = messageLocation(for: id),
-              !isMessageStreaming(id) else { return }
+              !isMessageStreaming(id) else { return nil }
 
         pauseUserBatch(for: location.conversationID)
 
         var messages = conversationMessageStore[location.conversationID, default: []]
-        guard messages.indices.contains(location.index) else { return }
+        guard messages.indices.contains(location.index) else { return nil }
+        if keepUnchangedUserVersion, messages[location.index].role == .user,
+           messages[location.index].isPendingUserSend != true, messages[location.index].text == cleaned {
+            if sendAfterSave { sendEditedMessage(id) }
+            return id
+        }
         let previousSummaryInput = conversationSummaryInputSnapshot(
             conversationID: location.conversationID,
             rawMessages: messages
         )
-        let role = messages[location.index].role
+        let original = messages[location.index]
+        let role = original.role
+        if role == .user, original.isPendingUserSend != true, cleaned != original.text {
+            guard !isConversationStreaming(location.conversationID),
+                  let conversationIndex = conversations.firstIndex(where: { $0.id == location.conversationID })
+            else { return nil }
+            let projection = selectedMessageProjection(for: location.conversationID)
+            guard projection.contains(where: { $0.message.id == id }) else { return nil }
+            let previousConversations = conversations
+            let previousRows = messages
+            let key = original.versionGroupKey
+            messages[location.index].isUserEditVersion = true
+            let version = (messages.lazy.filter { $0.versionGroupKey == key }.map(\.version).max() ?? 0) + 1
+            var edited = ChatMessage(
+                conversationID: original.conversationID, role: .user, text: cleaned,
+                createdAt: original.createdAt, sentTimeZoneOffsetSeconds: original.sentTimeZoneOffsetSeconds,
+                userSendBatchID: original.userSendBatchID, attachments: original.attachments,
+                historicalImagesCollapsed: original.historicalImagesCollapsed, modelID: original.modelID,
+                providerID: original.providerID, versionGroupID: key, version: version
+            )
+            edited.isUserEditVersion = true
+            messages.append(edited)
+            conversationMessageStore[location.conversationID] = messages
+            conversations[conversationIndex].versionSelections[key] = version
+            let affected = invalidateConversationDerivedMemoryAfterTranscriptMutation(
+                conversationID: location.conversationID, previousInput: previousSummaryInput)
+            touchConversation(location.conversationID)
+            guard saveImmediately() else {
+                conversations = previousConversations
+                conversationMessageStore[location.conversationID] = previousRows
+                return nil
+            }
+            requestTranscriptMutationRefreshes(affected)
+            if sendAfterSave { sendEditedMessage(edited.id) }
+            return edited.id
+        }
         messages[location.index].text = cleaned
         if let segmentation = messages[location.index].replySegmentation, segmentation.isEnabled {
             var scanner = ReplySegmentScanner(maximumSegments: segmentation.maximumSegments)
@@ -7995,21 +8146,30 @@ final class AppModel {
             requestTranscriptMutationRefreshes(affectedAssistantIDs)
         }
 
-        guard didPersist, sendAfterSave else { return }
-        if messages[location.index].isPendingUserSend == true {
+        guard didPersist else { return nil }
+        if sendAfterSave { sendEditedMessage(id) }
+        return id
+    }
+
+    /// Shared by direct saves and the UI's verified edit/send landing. Keeping
+    /// dispatch here preserves pending batches and assistant-continuation rules.
+    func sendEditedMessage(_ id: UUID) {
+        guard let location = messageLocation(for: id),
+              let message = conversationMessageStore[location.conversationID]?[location.index] else { return }
+        if message.isPendingUserSend == true {
             sendUserBatchNow(for: location.conversationID)
-            return
-        }
-        if role == .assistant {
+        } else if message.role == .assistant {
             continueResponse(after: id)
-        } else {
-            regenerateResponse(around: id)
+        } else if message.role == .user {
+            regenerateResponse(around: id, preservingTrailingMessages: true)
         }
     }
 
     func deleteMessage(_ id: UUID) {
         guard let location = messageLocation(for: id) else { return }
         pauseUserBatch(for: location.conversationID)
+        if conversationMessageStore[location.conversationID]?[location.index].isUserEditVersion == true,
+           isConversationStreaming(location.conversationID) { return }
         if activeStreamingMessageIDsByConversation[location.conversationID] == id {
             stopStreaming(ifConversationID: location.conversationID)
         }
@@ -8082,7 +8242,9 @@ final class AppModel {
             return
         }
 
-        let groupKey = existingMessages[location.index].versionGroupKey
+        let message = existingMessages[location.index]
+        if message.isUserEditVersion == true && isConversationStreaming(location.conversationID) { return }
+        let groupKey = message.versionGroupKey
         let groupedMessageIDs = Set(
             existingMessages.lazy
                 .filter { $0.versionGroupKey == groupKey }
@@ -8197,51 +8359,6 @@ final class AppModel {
         saveImmediately()
     }
 
-    func translateMessage(_ id: UUID) {
-        guard let location = messageLocation(for: id) else { return }
-        var messages = conversationMessageStore[location.conversationID, default: []]
-        guard messages.indices.contains(location.index) else { return }
-        let source = messages[location.index].text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !source.isEmpty else { return }
-        let assistant = assistantForRegeneration(message: messages[location.index], conversationID: location.conversationID)
-        guard let context = translationModelContext(for: assistant) else { return }
-
-        messages[location.index].translation = Self.translationPlaceholder
-        messages[location.index].updatedAt = .now
-        conversationMessageStore[location.conversationID] = messages
-        touchConversation(location.conversationID)
-        saveImmediately()
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let translated = try await AIChatService.generateText(
-                    provider: context.provider,
-                    modelID: context.model.id,
-                    prompt: Self.translationPrompt(for: source)
-                )
-                let cleaned = translated.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let latestLocation = self.messageLocation(for: id) else { return }
-                var latestMessages = self.conversationMessageStore[latestLocation.conversationID, default: []]
-                guard latestMessages.indices.contains(latestLocation.index) else { return }
-                latestMessages[latestLocation.index].translation = cleaned.isEmpty ? nil : cleaned
-                latestMessages[latestLocation.index].updatedAt = .now
-                self.conversationMessageStore[latestLocation.conversationID] = latestMessages
-                self.touchConversation(latestLocation.conversationID)
-                self.saveImmediately()
-            } catch {
-                guard let latestLocation = self.messageLocation(for: id) else { return }
-                var latestMessages = self.conversationMessageStore[latestLocation.conversationID, default: []]
-                if latestMessages.indices.contains(latestLocation.index),
-                   latestMessages[latestLocation.index].translation == Self.translationPlaceholder {
-                    latestMessages[latestLocation.index].translation = nil
-                    self.conversationMessageStore[latestLocation.conversationID] = latestMessages
-                }
-                self.presentError(L10n.format("翻译失败：%@", [error.localizedDescription]))
-            }
-        }
-    }
-
     func regenerationUserMessageID(around id: UUID) -> UUID? {
         guard let location = messageLocation(for: id),
               let rawMessages = conversationMessageStore[location.conversationID],
@@ -8272,7 +8389,7 @@ final class AppModel {
         }
     }
 
-    func regenerateResponse(around id: UUID) {
+    func regenerateResponse(around id: UUID, preservingTrailingMessages: Bool = false) {
         guard let location = messageLocation(for: id),
               let rawMessages = conversationMessageStore[location.conversationID],
               rawMessages.indices.contains(location.index) else { return }
@@ -8346,7 +8463,8 @@ final class AppModel {
             (sortedVersions(in: rawMessages, groupKey: groupKey).map(\.version).max() ?? -1) + 1
         } ?? 0
 
-        if preferences.regenerateDeleteTrailingMessages {
+        let deleteTrailingMessages = preferences.regenerateDeleteTrailingMessages && !preservingTrailingMessages
+        if deleteTrailingMessages {
             removeLogicalGroups(
                 after: replyGroupLogicalIndex,
                 projection: projection,
@@ -8369,10 +8487,13 @@ final class AppModel {
         touchConversation(location.conversationID)
         selectedConversationID = location.conversationID
         let didPersist = saveImmediately(
-            allowDestructiveMessageReduction: preferences.regenerateDeleteTrailingMessages
+            allowDestructiveMessageReduction: deleteTrailingMessages
         )
         if didPersist {
             requestTranscriptMutationRefreshes(affectedAssistantIDs)
+        } else if preservingTrailingMessages {
+            presentError(L10n.lookup("无法保存重试状态，未重新发送请求。请稍后手动重试。"))
+            return
         }
 
         startAssistantStream(
@@ -8653,7 +8774,8 @@ final class AppModel {
                 self.markReplyUnreadIfNeeded(for: conversationID)
             } catch {
                 self.finishUnsuccessfulStreamingRun(
-                    conversationID: conversationID, runID: runID, error: error
+                    conversationID: conversationID, runID: runID, error: error,
+                    provider: provider, selection: selection
                 )
             }
         }
@@ -8731,7 +8853,8 @@ final class AppModel {
                     runningMessages.append(completed)
                 } catch {
                     self.finishUnsuccessfulStreamingRun(
-                        conversationID: conversationID, runID: runID, error: error
+                        conversationID: conversationID, runID: runID, error: error,
+                        provider: context.provider, selection: context.selection
                     )
                     return
                 }
@@ -8742,7 +8865,8 @@ final class AppModel {
     }
 
     private func finishUnsuccessfulStreamingRun(
-        conversationID: UUID, runID: UUID, error: Error
+        conversationID: UUID, runID: UUID, error: Error,
+        provider: ProviderConfiguration, selection: ModelSelection
     ) {
         guard isCurrentStreamingRun(conversationID, runID: runID) else { return }
         let messageID = activeStreamingMessageIDsByConversation[conversationID]
@@ -8764,7 +8888,29 @@ final class AppModel {
                     runID: messageID, partialMessage: partial?.text ?? ""
                 )
             }
-            presentError(error.localizedDescription)
+            if let cacheError = error as? OpenAIRequestPolicy.CacheConfigurationError,
+               let partial, selectedConversationID == conversationID,
+               partial.toolEvents.isEmpty, partial.attachments.isEmpty,
+               provider.isOfficialOpenAI,
+               cacheError.modelID == nil || cacheError.modelID?.lowercased() == selection.modelID.lowercased(),
+               let configuration = provider.models.first(where: { $0.id == selection.modelID }),
+               !Self.hasCustomCacheOrModelParameters(provider.customBody + configuration.customBody),
+               (configuration.openAICacheRetentionOverride ?? provider.openAICacheRetention) != .automatic {
+                let owner = assistantForRegeneration(message: partial, conversationID: conversationID)
+                pendingCacheRecovery = OpenAICacheRecoveryRequest(
+                    conversationID: conversationID, messageID: partial.id, assistantID: owner.id,
+                    context: .init(provider: provider, model: configuration)
+                )
+                errorMessage = L10n.format("当前缓存策略无法用于「%@」的这次请求。是否改为跟随官方默认，并重新生成这条回复？只调整这个模型，其他模型保持原设置。", [configuration.displayName])
+                isErrorPresented = true
+            } else {
+                var message = error.localizedDescription
+                if error is OpenAIRequestPolicy.CacheConfigurationError,
+                   Self.hasCustomCacheOrModelParameters(provider.customBody + (provider.models.first(where: { $0.id == selection.modelID })?.customBody ?? [])) {
+                    message += "\n\n" + L10n.lookup("自定义 Body 中的模型或缓存参数需要手动调整，修改缓存选项不会覆盖这些字段。")
+                }
+                presentError(message)
+            }
         }
     }
 
@@ -8877,6 +9023,8 @@ final class AppModel {
             wireMessages.insert(contentsOf: presets, at: 0)
         }
 
+        let followsImageModelDirectly = AIChatService.usesDedicatedImageAPI(provider: provider, modelID: selection.modelID)
+        let usesSelectedImageTool = assistant.usesCustomImageGeneration && !followsImageModelDirectly
         // 压缩摘要拼进系统提示词。
         var effectiveSystemPrompt = assistant.trimmedSystemPrompt
         if let filesPrompt = AssistantFileService.prompt(for: requestFiles) {
@@ -8893,7 +9041,7 @@ final class AppModel {
         if let memoryPrompt = assistant.longTermMemoryPrompt() {
             effectiveSystemPrompt = effectiveSystemPrompt.map { $0 + "\n\n" + memoryPrompt } ?? memoryPrompt
         }
-        if let imageGenerationPrompt = assistant.imageGenerationPrompt {
+        if usesSelectedImageTool, let imageGenerationPrompt = assistant.imageGenerationPrompt {
             effectiveSystemPrompt = effectiveSystemPrompt.map { $0 + "\n\n" + imageGenerationPrompt }
                 ?? imageGenerationPrompt
         }
@@ -8934,6 +9082,13 @@ final class AppModel {
         )
         PersonalContextPrompt.insert(userProfile, recentMemory: recentChatsPrompt, into: &assembled.messages)
 
+        var externalImageReferenceScope = ImageReferenceScope()
+        if usesSelectedImageTool {
+            let preparedReferences = try await ExternalImageReferencePreparation.prepare(assembled.messages)
+            assembled.messages = preparedReferences.messages
+            externalImageReferenceScope = preparedReferences.scope
+        }
+
         let hasBuiltInSearch = assistant.searchEnabled && assistant.searchMode.usesBuiltInSearch(providerType: provider.type)
         let needsClientSearch = assistant.searchEnabled && !hasBuiltInSearch
 
@@ -8960,6 +9115,11 @@ final class AppModel {
         )
 
         var finalSystemPrompt = assembled.systemPrompt
+        if usesSelectedImageTool {
+            let ids = externalImageReferenceScope.images.map(\.id).joined(separator: ", ")
+            let available = "Available image reference IDs for this request: " + (ids.isEmpty ? "none" : ids) + ". Images omitted by the image-history settings are unavailable."
+            finalSystemPrompt = finalSystemPrompt.map { $0 + "\n\n" + available } ?? available
+        }
         if usesClientSearch {
             let searchPrompt = SearchToolConstants.requestSystemPrompt(
                 preferences.searchToolPrompt, imageSearchEnabled: assistant.imageSearchEnabled
@@ -8976,6 +9136,21 @@ final class AppModel {
                 ?? ReplySegmentation.prompt
         }
 
+        // One explicit override wins. Otherwise the selected model supplies its
+        // own image output or hosted tool without a second assistant switch.
+        let useExternalImageGeneration = assistant.usesCustomImageGeneration
+        let useCurrentImageGeneration = !useExternalImageGeneration && provider.isOfficialOpenAI
+            && OpenAIRequestPolicy.supportsImageTool(selection.modelID)
+        var directImageOverride: (provider: ProviderConfiguration, modelID: String)?
+        if useExternalImageGeneration {
+            guard let target = providers.first(where: {
+                $0.id == assistant.imageGenerationProviderID && $0.enabled && $0.supportsExternalImageGeneration
+            }), let imageModelID = assistant.imageGenerationModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !imageModelID.isEmpty else {
+                throw OpenAIRequestPolicy.ConfigurationError(message: L10n.lookup("指定的生图模型不可用，请重新选择，或改为跟随聊天模型。"))
+            }
+            if followsImageModelDirectly { directImageOverride = (target, imageModelID) }
+        }
         let requestOptions = ChatRequestOptions(
             systemPrompt: finalSystemPrompt,
             temperature: assistant.temperature,
@@ -8984,11 +9159,16 @@ final class AppModel {
             thinkingBudget: assistant.thinkingBudget,
             tools: toolDefs.isEmpty ? nil : toolDefs,
             builtInSearch: hasBuiltInSearch,
+            builtInImageGeneration: useCurrentImageGeneration && provider.isOfficialOpenAI,
+            externalImageGeneration: useExternalImageGeneration,
             sessionID: conversationID.uuidString
         )
 
         let stream: AsyncThrowingStream<ChatStreamEvent, Error>
-        if !toolDefs.isEmpty || hasBuiltInSearch {
+        if let target = directImageOverride {
+            stream = AIChatService.directImageReply(provider: target.provider, modelID: target.modelID,
+                messages: assembled.messages, options: requestOptions)
+        } else if !toolDefs.isEmpty || hasBuiltInSearch {
             let assistantForHandler = fileAwareAssistant
             let userNotesAuthorized = userProfile.canAssistantEditNotes
             let fileToolRunID = streamingRunIDsByConversation[conversationID]
@@ -9002,11 +9182,14 @@ final class AppModel {
             let writableFileIDs = Set(requestFiles.filter {
                 $0.isEnabled && $0.allowsAssistantEditing
             }.map(\.id))
-            let memoryUpdater: (@Sendable (AssistantProfile) async -> Void)? = { [weak self] updated in
+            let memoryExecutor: @Sendable (MemoryToolRequest) async -> String = { [weak self] request in
                 await MainActor.run {
-                    self?.updateAssistantAfterToolCall(
-                        updated,
-                        baseline: assistantForHandler
+                    guard let self else {
+                        return ToolCallExecutor.toolError(error: "unavailable", message: "Memory is unavailable.", tool: request.toolName)
+                    }
+                    return self.executeMemoryTool(
+                        request, assistantID: assistantForHandler.id,
+                        context: toolContext
                     )
                 }
             }
@@ -9040,7 +9223,7 @@ final class AppModel {
             } : nil
             let handler = ToolCallExecutor.buildHandler(
                 assistant: assistantForHandler,
-                memoryUpdater: memoryUpdater,
+                memoryExecutor: memoryExecutor,
                 conversationSearcher: makeConversationHistorySearcher(
                     conversationID: conversationID,
                     assistantID: assistantForHandler.id
@@ -9122,13 +9305,15 @@ final class AppModel {
         }
         try Task.checkCancellation()
         let imageRequests = pendingImageRequestsByMessageID.removeValue(forKey: assistantMessage.id) ?? []
-        if !imageRequests.isEmpty {
+        if assistant.imageGenerationEnabled, assistant.imageGenerationSource == .selectedModel, !imageRequests.isEmpty {
             completed = await processExternalImageRequests(
                 imageRequests,
                 for: completed,
-                assistant: assistant
+                assistant: assistant,
+                referenceScope: externalImageReferenceScope
             )
         }
+        try Task.checkCancellation()
         let searchImageRequests = pendingSearchImageRequestsByMessageID
             .removeValue(forKey: assistantMessage.id) ?? []
         if !searchImageRequests.isEmpty {
@@ -9155,6 +9340,7 @@ final class AppModel {
             completedMessage: completed,
             notificationMessage: notificationBody
         )
+        replyBanners.receive(completed, from: assistant)
         // Optional for people who prefer a rolling per-window summary. It is
         // disabled by default; the organizer itself still reads bounded,
         // user-authored evidence directly only when its cadence is due.
@@ -9273,8 +9459,54 @@ final class AppModel {
     }
 
     func presentError(_ message: String) {
+        pendingCacheRecovery = nil
         errorMessage = message
         isErrorPresented = true
+    }
+
+    private static func hasCustomCacheOrModelParameters(_ fields: [KeyValueField]) -> Bool {
+        fields.contains { ["model", "prompt_cache_retention", "prompt_cache_options"].contains($0.name.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
+    func resolveCacheRecovery(useOfficialDefault: Bool) {
+        guard let recovery = pendingCacheRecovery else { return }
+        // Consume the action before scheduling work. Repeated taps cannot queue another retry.
+        pendingCacheRecovery = nil
+        isErrorPresented = false
+        guard useOfficialDefault else { return }
+        Task { @MainActor [weak self] in
+            // Let the native alert finish dismissing before a save/retry can present an error.
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, self.pendingCacheRecovery == nil, !self.isErrorPresented else { return }
+            self.applyCacheRecovery(recovery)
+        }
+    }
+
+    private func applyCacheRecovery(_ recovery: OpenAICacheRecoveryRequest) {
+        guard selectedConversationID == recovery.conversationID,
+              !isConversationStreaming(recovery.conversationID),
+              pendingUserBatch(for: recovery.conversationID).isEmpty,
+              let location = messageLocation(for: recovery.messageID), location.conversationID == recovery.conversationID,
+              let message = conversationMessageStore[location.conversationID]?[location.index],
+              message.role == .assistant, message.status == .failed || message.status == .interrupted,
+              message.toolEvents.isEmpty, message.attachments.isEmpty,
+              selectedMessageProjection(for: recovery.conversationID).contains(where: { $0.message.id == recovery.messageID }),
+              let assistant = assistants.first(where: { $0.id == recovery.assistantID }),
+              let active = modelContext(for: assistant, conversationID: recovery.conversationID),
+              active.selection.providerID == recovery.context.providerID,
+              active.selection.modelID == recovery.context.model.id,
+              var provider = providers.first(where: { $0.id == recovery.context.providerID && $0.enabled && $0.isOfficialOpenAI }),
+              let index = provider.models.firstIndex(where: { $0.id == recovery.context.model.id }),
+              OpenAICacheRecoveryRequest.Context(provider: provider, model: provider.models[index]) == recovery.context else {
+            presentError(L10n.lookup("对话、模型或缓存设置已变化，未修改配置或重新发送。请检查后手动重试。"))
+            return
+        }
+        provider.models[index].openAICacheRetentionOverride = .automatic
+        guard upsertProvider(provider) else {
+            presentError(L10n.lookup("缓存设置保存失败，原设置已保留，未重新发送请求。"))
+            return
+        }
+        regenerateResponse(around: recovery.messageID, preservingTrailingMessages: true)
     }
 
     private func makeConversationHistorySearcher(
@@ -9429,43 +9661,50 @@ final class AppModel {
             + (end < scalars.endIndex ? "…" : "")
     }
 
-    private func updateAssistantAfterToolCall(
-        _ updated: AssistantProfile,
-        baseline: AssistantProfile
-    ) {
-        guard updated.id == baseline.id,
-              let index = assistants.firstIndex(where: { $0.id == updated.id })
-        else { return }
+    /// Validate, mutate and persist on the MainActor without suspending. Each
+    /// invocation sees the latest profile, including earlier calls in this run.
+    private func executeMemoryTool(
+        _ request: MemoryToolRequest,
+        assistantID: UUID,
+        context: ToolInvocationContext
+    ) -> String {
+        guard isToolInvocationCurrent(context) else {
+            return ToolCallExecutor.toolError(error: "request_expired", message: "This reply has ended. No memory was changed.", tool: request.toolName)
+        }
+        guard let index = assistants.firstIndex(where: { $0.id == assistantID }),
+              assistants[index].enableMemory else {
+            return ToolCallExecutor.toolError(error: "unavailable", message: "Memory is no longer enabled.", tool: request.toolName)
+        }
         let liveLongTermContextBeforeMerge =
             Self.effectiveLongTermMemories(for: assistants[index])
-
-        let baselineByID = Dictionary(
-            uniqueKeysWithValues: baseline.memories.map { ($0.id, $0) }
-        )
-        let updatedByID = Dictionary(
-            uniqueKeysWithValues: updated.memories.map { ($0.id, $0) }
-        )
-        let deletedIDs = Set(baselineByID.keys).subtracting(updatedByID.keys)
-        var mergedMemories = assistants[index].memories.filter {
-            !deletedIDs.contains($0.id)
-        }
-
-        for memory in updated.memories {
-            let baselineMemory = baselineByID[memory.id]
-            let wasAdded = baselineMemory == nil
-            let wasEdited = baselineMemory.map {
-                $0.content != memory.content || $0.updatedAt != memory.updatedAt
-            } ?? false
-            guard wasAdded || wasEdited else { continue }
-            if let liveIndex = mergedMemories.firstIndex(where: { $0.id == memory.id }) {
-                mergedMemories[liveIndex] = memory
-            } else {
-                mergedMemories.append(memory)
-            }
-        }
-
         var candidate = assistants
-        candidate[index].memories = mergedMemories
+        // The call already contains its target ID and new content. Return only
+        // information the model does not have: the new ID or previous content.
+        var receipt: [String: Any] = ["ok": true]
+        switch request {
+        case .create(let content):
+            let memory = AssistantMemory(content: content)
+            candidate[index].memories.append(memory)
+            receipt["id"] = memory.id.uuidString
+        case .edit(let id, let content):
+            guard let memoryIndex = candidate[index].memories.firstIndex(where: { $0.id == id }) else {
+                return ToolCallExecutor.toolError(error: "memory_not_found", message: "No memory exists for this ID.", tool: request.toolName)
+            }
+            let before = candidate[index].memories[memoryIndex].content
+            guard before != content else {
+                // Avoid changing timestamps/order (and the prompt prefix) for
+                // an idempotent write.
+                return toolResultJSONString(["ok": true, "changed": false])
+            }
+            receipt["before"] = before
+            candidate[index].memories[memoryIndex].content = content
+            candidate[index].memories[memoryIndex].updatedAt = .now
+        case .delete(let id):
+            guard let memoryIndex = candidate[index].memories.firstIndex(where: { $0.id == id }) else {
+                return ToolCallExecutor.toolError(error: "memory_not_found", message: "No memory exists for this ID.", tool: request.toolName)
+            }
+            receipt["before"] = candidate[index].memories.remove(at: memoryIndex).content
+        }
         candidate[index].schemaVersion = AssistantProfile.currentSchemaVersion
         let longTermMemoryChanged =
             Self.effectiveLongTermMemories(for: candidate[index])
@@ -9486,11 +9725,14 @@ final class AppModel {
                 change: "工具更新了长期记忆，已完成本地去重并等待后续整理"
             )
         }
-        guard AssistantPersistence.saveAssistants(candidate) else { return }
+        guard AssistantPersistence.saveAssistants(candidate) else {
+            return ToolCallExecutor.toolError(error: "save_failed", message: "Memory could not be saved. No changes were applied.", tool: request.toolName)
+        }
         if groundedLongTermMemoryChanged {
-            cancelRecentMemoryRefresh(assistantID: updated.id)
+            cancelRecentMemoryRefresh(assistantID: assistantID)
         }
         assistants = candidate
+        return toolResultJSONString(receipt)
     }
 
     private static func hasVisibleStreamingText(_ text: String) -> Bool {
@@ -9518,32 +9760,17 @@ final class AppModel {
         return String(text[..<end])
     }
 
-    private static func hidingTrailingControlMarkerPrefix(in rawText: String) -> String {
-        guard let markerStart = rawText.lastIndex(of: "<") else { return rawText }
-        let trailingCandidate = rawText[markerStart...]
-        let boundedCandidate = trailingCandidate.prefix(
-            streamDisplayControlMarkerMaximumPrefixCharacterCount + 1
-        )
-        guard boundedCandidate.count <= streamDisplayControlMarkerMaximumPrefixCharacterCount else {
-            return rawText
-        }
-        let normalizedCandidate = boundedCandidate.lowercased()
-        guard streamDisplayControlMarkerPrefixes.contains(where: {
-            $0.hasPrefix(normalizedCandidate)
-        }) else {
-            return rawText
-        }
-        return String(rawText[..<markerStart])
-    }
-
     private func filteredStreamingDisplayText(
-        _ rawText: String
+        _ rawText: String, messageID: UUID
     ) -> String {
-        let safeRawText = Self.hidingTrailingControlMarkerPrefix(in: rawText)
+        let candidates = searchImageCandidatesByMessageID[messageID] ?? []
+        let prefixes = Self.streamDisplayControlMarkerPrefixes.filter {
+            $0 != "<ks-image>" || !candidates.isEmpty
+        }
+        let safeRawText = MarkdownLiteralRanges.hidingTrailingPrefix(in: rawText, prefixes: prefixes)
         let reactionDisplayText = AIMessageReactionCodec.stripForDisplay(safeRawText)
         let generatedImageDisplayText = ExternalImageGenerationCodec.stripForDisplay(reactionDisplayText)
-        let displayText = SearchImageSelectionCodec.stripForDisplay(generatedImageDisplayText)
-        return displayText
+        return SearchImageSelectionCodec.stripForDisplay(generatedImageDisplayText, candidates: candidates)
     }
 
     private func scheduleStreamingTextDisplay(
@@ -9629,7 +9856,7 @@ final class AppModel {
             return true
         }
 
-        let filtered = filteredStreamingDisplayText(rawText)
+        let filtered = filteredStreamingDisplayText(rawText, messageID: messageID)
         let targetDisplayText = filtered
         let currentDisplayText = conversationMessages[index].text
         guard currentDisplayText != targetDisplayText else { return true }
@@ -9777,7 +10004,7 @@ final class AppModel {
                 )
                 return
             }
-            let filtered = filteredStreamingDisplayText(rawText)
+            let filtered = filteredStreamingDisplayText(rawText, messageID: messageID)
             scheduleStreamingTextDisplay(
                 conversationID: conversationID,
                 messageID: messageID,
@@ -9871,7 +10098,7 @@ final class AppModel {
                 return
             }
             let rawText = rawStreamingTextByMessageID[messageID] ?? ""
-            let filtered = filteredStreamingDisplayText(rawText)
+            let filtered = filteredStreamingDisplayText(rawText, messageID: messageID)
             scheduleStreamingTextDisplay(
                 conversationID: conversationID,
                 messageID: messageID,
@@ -9894,6 +10121,9 @@ final class AppModel {
             if let value = streamUsage.promptTokens { usage.promptTokens = value }
             if let value = streamUsage.completionTokens { usage.completionTokens = value }
             if let value = streamUsage.cachedTokens { usage.cachedTokens = value }
+            if let value = streamUsage.cacheWriteTokens { usage.cacheWriteTokens = value }
+            if let value = streamUsage.cacheWrite30mTokens { usage.cacheWrite30mTokens = value }
+            if let value = streamUsage.cacheWrite12hTokens { usage.cacheWrite12hTokens = value }
             if let value = streamUsage.totalTokens {
                 usage.totalTokens = value
             } else if let prompt = usage.promptTokens, let completion = usage.completionTokens {
@@ -10084,8 +10314,10 @@ final class AppModel {
     private func processExternalImageRequests(
         _ requests: [ExternalImageGenerationRequest],
         for message: ChatMessage,
-        assistant: AssistantProfile
+        assistant: AssistantProfile,
+        referenceScope: ImageReferenceScope
     ) async -> ChatMessage {
+        guard assistant.imageGenerationEnabled, assistant.imageGenerationSource == .selectedModel else { return message }
         let provider: ProviderConfiguration? = assistant.imageGenerationProviderID.flatMap { providerID in
             providers.first(where: {
                 $0.id == providerID && $0.enabled && $0.supportsExternalImageGeneration
@@ -10094,10 +10326,13 @@ final class AppModel {
         let modelID = assistant.imageGenerationModelID?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
+        var handled = Set<ExternalImageGenerationRequest>()
         for request in requests {
+            guard !Task.isCancelled else { break }
+            guard handled.insert(request).inserted else { continue }
             let eventID = UUID()
             let argumentsData = try? JSONSerialization.data(
-                withJSONObject: ["prompt": request.prompt],
+                withJSONObject: ["prompt": request.prompt, "reference_images": request.referenceImageIDs ?? []],
                 options: [.sortedKeys]
             )
             let argumentsJSON = argumentsData.flatMap { String(data: $0, encoding: .utf8) }
@@ -10105,7 +10340,7 @@ final class AppModel {
                 target.toolEvents.append(
                     ToolEvent(
                         id: eventID,
-                        name: "生成图片",
+                        name: "生成图片 · \(modelID)",
                         argumentsJSON: argumentsJSON,
                         status: .running,
                         metadata: ["source": "external_image_generation"]
@@ -10124,11 +10359,15 @@ final class AppModel {
             }
 
             do {
+                let references = try referenceScope.resolve(request)
+                try Task.checkCancellation()
                 let payloads = try await ExternalImageGenerationService.generate(
                     provider: provider,
                     modelID: modelID,
-                    prompt: request.prompt
+                    prompt: request.prompt,
+                    references: references
                 )
+                try Task.checkCancellation()
                 var attachments: [MessageAttachment] = []
                 for payload in payloads {
                     guard var attachment = AttachmentStore.saveGeneratedImage(
@@ -10139,6 +10378,7 @@ final class AppModel {
                     attachment.metadata["provider"] = provider.name
                     attachment.metadata["model"] = modelID
                     attachment.metadata["prompt"] = request.prompt
+                    if !references.isEmpty { attachment.metadata["reference_image_ids"] = references.map(\.id).joined(separator: ",") }
                     attachments.append(attachment)
                 }
                 guard !attachments.isEmpty else { throw ExternalImageGenerationError.emptyImage }
@@ -10155,9 +10395,10 @@ final class AppModel {
                 mutateMessage(message.id) { target in
                     guard let index = target.toolEvents.firstIndex(where: { $0.id == eventID }) else { return }
                     target.toolEvents[index].status = .failed
-                    target.toolEvents[index].resultText = error.localizedDescription
+                    target.toolEvents[index].resultText = Task.isCancelled ? L10n.lookup("已停止图片生成") : error.localizedDescription
                     target.toolEvents[index].updatedAt = .now
                 }
+                if Task.isCancelled { break }
             }
         }
 
@@ -11917,14 +12158,6 @@ final class AppModel {
         )
     }
 
-    private func translationModelContext(for assistant: AssistantProfile) -> ResolvedChatModelContext? {
-        firstResolvedChatModel(
-            preferences.translationModelSelection,
-            assistant.chatModel,
-            selectedModel
-        )
-    }
-
     private func primaryReplyAssistant(for conversation: Conversation?) -> AssistantProfile? {
         assistantProfiles(for: conversation).first
     }
@@ -12045,6 +12278,7 @@ final class AppModel {
                   $0.id == messageID && $0.status == .complete
               }) == true else { throw CancellationError() }
         let saveApplication = await saveWithoutBlockingMain()
+
         try Task.checkCancellation()
         guard activeStreamingMessageIDsByConversation[conversationID] == messageID,
               let liveCompletedMessage = conversationMessageStore[conversationID]?
@@ -12194,6 +12428,7 @@ final class AppModel {
             }
         }
         conversationMessageStore[conversationID] = conversationMessages
+
         if let removedVersionGroupKey {
             reconcileVersionSelection(
                 conversationID: conversationID,
@@ -12267,18 +12502,6 @@ final class AppModel {
     {content}
     </content>
     """
-
-    private static func translationPrompt(for source: String) -> String {
-        """
-        Translate the following message into Simplified Chinese.
-        Preserve the original paragraph breaks, list structure, emoji, code, URLs, and names.
-        Reply with only the translated text. Do not add explanations.
-
-        <message>
-        \(source)
-        </message>
-        """
-    }
 
     /// 手动重新生成标题不受自动标题开关影响；只有结果返回前标题仍未被
     /// 用户改动时才落盘，避免异步请求覆盖刚刚完成的手动重命名。
@@ -12400,7 +12623,6 @@ final class AppModel {
             \UserPreferences.summaryModelSelection,
             \UserPreferences.suggestionModelSelection,
             \UserPreferences.compressionModelSelection,
-            \UserPreferences.translationModelSelection
         ]
 
         for keyPath in keyPaths {
@@ -12473,7 +12695,7 @@ final class AppModel {
             if (rawText as NSString).range(of: "<", options: .literal).location == NSNotFound {
                 message.text = ExternalImageGenerationCodec.cleanedDisplayText(rawText)
             } else {
-                let reaction = AIMessageReactionCodec.parse(rawText)
+                let reaction = AIMessageReactionCodec.parse(rawText, isStreaming: true)
                 let image = ExternalImageGenerationCodec.parse(reaction.content)
                 message.text = SearchImageSelectionCodec.parse(
                     image.displayText, candidates: searchImageCandidatesByMessageID[messageID] ?? []
@@ -12855,7 +13077,7 @@ enum NativeImageReplyPresentation {
             message.toolEvents[index].updatedAt = .now
         } else {
             message.toolEvents.append(ToolEvent(
-                name: "生成图片", resultText: stage, status: completed ? .complete : .running,
+                name: "当前模型生图", resultText: stage, status: completed ? .complete : .running,
                 metadata: ["source": source]
             ))
         }

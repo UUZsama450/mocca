@@ -37,6 +37,7 @@ struct ProviderSettingsView: View {
                 NavigationStack {
                     pageContent
                 }
+                .modifier(LegacyNavigationTintModifier())
             } else {
                 pageContent
             }
@@ -223,7 +224,10 @@ struct FirstRunModelSetupView: View {
             )
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { AppLanguagePicker() }
+                ToolbarItem(placement: .topBarLeading) {
+                    AppLanguagePicker()
+                        .modifier(LegacyNavigationTintModifier())
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(L10n.lookup("稍后")) { onContinue() }
                         .foregroundStyle(.primary)
@@ -573,6 +577,36 @@ struct ProviderEditorView: View {
                 }
             }
 
+            if configuration.isOfficialOpenAI {
+                Section {
+                    Picker(L10n.lookup("服务档位"), selection: $configuration.openAIServiceTier) {
+                        ForEach(OpenAIServiceTier.allCases) { tier in
+                            Text(L10n.lookup(tier.title)).tag(tier)
+                        }
+                    }
+                    .accessibilityIdentifier("provider.openai.serviceTier")
+                    Picker(L10n.lookup("提示缓存"), selection: $configuration.openAICacheRetention) {
+                        ForEach(OpenAICacheRetention.allCases) { retention in
+                            Text(L10n.lookup(retention.title)).tag(retention)
+                                .disabled(retention == .minimum12Hours && !configuration.useResponsesAPI)
+                        }
+                    }
+                    .accessibilityIdentifier("provider.openai.cacheRetention")
+                } header: {
+                    HStack(spacing: 5) {
+                        Text(L10n.lookup("OpenAI 官方设置"))
+                        SettingsInfoButton(title: L10n.lookup("OpenAI 官方设置"), identifier: "provider.openai.info") {
+                            SettingsInfoText(title: L10n.lookup("服务档位"), text: L10n.lookup("跟随项目会采用官网项目默认档位；标准使用正常价格。Flex 更便宜，但等待更久且可能暂时不可用；Fast 加速并提高费用。需要账号和模型支持，失败时不会自动改为更贵的档位。"))
+                            SettingsInfoText(title: L10n.lookup("提示缓存"), text: L10n.lookup("官方会自动缓存可复用的输入前缀。“最长 24 小时”是保留上限，不保证一直命中，也不是长期记忆。不同模型支持的缓存策略不同；不确定时保留官方默认。"))
+                            SettingsInfoText(title: L10n.lookup("最低有效期与写入费用"), text: L10n.lookup("新模型支持至少 30 分钟或至少 12 小时；12 小时需要 Responses。按当前官方规则，写入总价分别为普通输入的 1.25 倍和 2.5 倍，读取另按缓存价格计算。保留越久不一定越省钱。"))
+                            SettingsInfoText(title: L10n.lookup("接口与高级设置"), text: L10n.lookup("服务档位与接口独立；缓存的 12 小时选项需要 Responses。模型高级设置可覆盖缓存策略，只显示该模型支持的选项。自定义 Body 的同名参数优先；稳定缓存标识由客户端管理。"))
+                        }
+                    }
+                } footer: {
+                    Text(L10n.lookup("仅用于 OpenAI 官方地址。不同模型支持范围不同，缓存命中可在用量统计中查看。"))
+                }
+            }
+
             Section(L10n.lookup("连接")) {
                 TextField(L10n.lookup("名称"), text: $configuration.name)
                 if !configuration.multiKeyEnabled {
@@ -597,7 +631,13 @@ struct ProviderEditorView: View {
                     }
                 }
             } header: {
-                Text(L10n.lookup("图像生成"))
+                HStack(spacing: 5) {
+                    Text(L10n.lookup("图像生成"))
+                    SettingsInfoButton(title: L10n.lookup("图像生成接口"), identifier: "provider.imageGeneration.info") {
+                        SettingsInfoText(title: L10n.lookup("接口选择"), text: L10n.lookup("通常保持自动，可识别官方 OpenAI、OpenRouter 和 Gemini。其他服务按其文档选择 OpenAI 表单编辑、JSON 编辑或聊天接口生图。只有支持图片输出的模型才能用于生图。"))
+                        SettingsInfoText(title: L10n.lookup("参考图编辑"), text: L10n.lookup("原图和修改要求一起发送给所选模型。模型或接口不支持时会报错，不会丢弃图片重画，也不会自动换模型重试。不同模型的参考图数量上限不同。"))
+                    }
+                }
             } footer: {
                 Text(L10n.lookup("自动识别已支持的图像接口。其他兼容服务可手动选择接口类型；关闭后不会出现在助手的图像模型列表中。"))
             }
@@ -941,6 +981,8 @@ struct APIKeyField: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .focused($isFocused)
+            .submitLabel(.done)
+            .onSubmit { isFocused = false }
             .accessibilityIdentifier("apiKey.input")
 
             Button {
@@ -1598,73 +1640,21 @@ private struct ProviderModelCatalogGroup: Identifiable {
     }
 }
 
-/// A local tap recognizer rejects resting touches without recognizing a long
-/// press, so the enclosing scroll view can still begin panning at any time.
+/// Use tap recognition so a drag cancels activation inside the catalog sheet.
+/// Keep Button semantics without a separate duration or movement threshold.
 private struct ModelCatalogIntentButtonStyle: PrimitiveButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .allowsHitTesting(false)
-            .overlay { ModelCatalogTapSurface(action: configuration.trigger) }
-            .accessibilityAction { configuration.trigger() }
-    }
-}
-
-private struct ModelCatalogTapSurface: UIViewRepresentable {
-    var action: () -> Void
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        let tap = ShortTapRecognizer(target: context.coordinator, action: #selector(Coordinator.activate))
-        tap.cancelsTouchesInView = false
-        tap.delaysTouchesBegan = false
-        tap.delaysTouchesEnded = false
-        view.addGestureRecognizer(tap)
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.action = action
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
-
-    final class Coordinator: NSObject {
-        var action: () -> Void
-        init(action: @escaping () -> Void) { self.action = action }
-        @objc func activate() { action() }
-    }
-
-    final class ShortTapRecognizer: UITapGestureRecognizer {
-        private var startedAt: TimeInterval = 0
-        private var origin = CGPoint.zero
-
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-            if let touch = touches.first {
-                startedAt = touch.timestamp
-                origin = touch.location(in: view)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isEnabled { configuration.trigger() }
             }
-            super.touchesBegan(touches, with: event)
-        }
-
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-            if let touch = touches.first {
-                let point = touch.location(in: view)
-                let dx = point.x - origin.x, dy = point.y - origin.y
-                if dx * dx + dy * dy > 100 {
-                    state = .failed
-                    return
-                }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                if isEnabled { configuration.trigger() }
             }
-            super.touchesMoved(touches, with: event)
-        }
-
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-            guard let touch = touches.first, touch.timestamp - startedAt < 0.45 else {
-                state = .failed
-                return
-            }
-            super.touchesEnded(touches, with: event)
-        }
     }
 }
 
@@ -1785,6 +1775,7 @@ private struct ProviderModelManagerView: View {
                 .foregroundStyle(.secondary)
 
             TextField(L10n.lookup("输入模型名称或 ID 筛选"), text: $query)
+                .modifier(DefaultControlTintModifier())
                 .focused($isSearchFocused)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -1938,7 +1929,7 @@ private struct ProviderModelManagerView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ModelCatalogIntentButtonStyle())
             .accessibilityLabel(L10n.format("%@，%@ / %@ 已选", [group.localizedName, String(describing: selectedCount), String(describing: group.models.count)]))
             .accessibilityValue(isCollapsed ? L10n.lookup("已折叠") : L10n.lookup("已展开"))
 
@@ -1950,7 +1941,7 @@ private struct ProviderModelManagerView: View {
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ModelCatalogIntentButtonStyle())
             .foregroundStyle(.secondary)
             .accessibilityLabel(allSelected ? L10n.format("取消选择整个 %@ 分类", [group.localizedName]) : L10n.format("选择整个 %@ 分类", [group.localizedName]))
         }
@@ -2336,6 +2327,7 @@ struct ModelSelectorView: View {
                 .foregroundStyle(.secondary)
 
             TextField(L10n.lookup("搜索模型或服务商"), text: $query)
+                .modifier(DefaultControlTintModifier())
                 .font(.system(size: 17))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -2705,7 +2697,7 @@ struct ModelSelectorView: View {
             if capabilities.input.contains(.image) {
                 capabilityIcon(L10n.lookup("识图"), systemImage: "photo")
             }
-            if capabilities.output.contains(.image) {
+            if item.provider.supportsAutomaticImageGeneration(modelID: item.model.id) {
                 capabilityIcon(L10n.lookup("生图"), systemImage: "photo.badge.plus")
             }
             if capabilities.abilities.contains(.reasoning) {
@@ -2913,6 +2905,7 @@ private struct ModelConfigurationEditorSheet: View {
     @State private var customHeaders: [KeyValueField]
     @State private var customBody: [KeyValueField]
     @State private var enabledBuiltInTools: Set<ModelBuiltInTool>
+    @State private var openAICacheRetentionOverride: OpenAICacheRetention?
     @State private var isLeaveConfirmationPresented = false
     @State private var isSaveErrorPresented = false
     @State private var didResolve = false
@@ -2933,14 +2926,20 @@ private struct ModelConfigurationEditorSheet: View {
         _customHeaders = State(initialValue: item.model.customHeaders)
         _customBody = State(initialValue: item.model.customBody)
         _enabledBuiltInTools = State(initialValue: Set(item.model.builtInTools))
+        _openAICacheRetentionOverride = State(initialValue: item.model.openAICacheRetentionOverride)
     }
 
     private var themeAccent: Color {
-        Color(uiColor: appModel.themeAccentUIColor)
+        Color(uiColor: appModel.preferences.themePaletteID == .defaultPalette ? appModel.themeActionUIColor : appModel.themeAccentUIColor)
     }
 
     private var themeAction: Color {
         Color(uiColor: appModel.themeActionUIColor)
+    }
+
+    private var editorSwitchTint: Color {
+        Color(uiColor: appModel.preferences.themePaletteID == .defaultPalette
+              ? appModel.themeActionUIColor : appModel.themeSwitchUIColor)
     }
 
     var body: some View {
@@ -2985,6 +2984,7 @@ private struct ModelConfigurationEditorSheet: View {
             .background(Color(uiColor: .systemBackground))
         }
         .background(Color(uiColor: .systemBackground))
+        .toggleStyle(SwitchToggleStyle(tint: editorSwitchTint))
         .interactiveDismissDisabled(hasUnsavedChanges)
         .background {
             DraftDismissObserver(hasUnsavedChanges: hasUnsavedChanges, onAttempt: requestDismiss)
@@ -3031,6 +3031,8 @@ private struct ModelConfigurationEditorSheet: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(L10n.lookup("关闭"))
+            .accessibilityIdentifier("modelEditor.close")
 
             Spacer()
 
@@ -3103,6 +3105,7 @@ private struct ModelConfigurationEditorSheet: View {
 
             fieldLabel(L10n.lookup("模型名称"))
             TextField(L10n.lookup("模型名称"), text: $displayName)
+                .modifier(DefaultControlTintModifier())
                 .font(.system(size: 20))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -3113,11 +3116,13 @@ private struct ModelConfigurationEditorSheet: View {
             fieldLabel(L10n.lookup("模型类型"))
             segmentedKind
 
+            capabilityInferenceSection
+
             fieldLabel(L10n.lookup("输入模式"))
-            modalityToggles(selection: $capabilities.input)
+            modalityToggles(selection: $capabilities.input, identifier: "input")
 
             fieldLabel(L10n.lookup("输出模式"))
-            modalityToggles(selection: $capabilities.output)
+            modalityToggles(selection: $capabilities.output, identifier: "output")
 
             fieldLabel(L10n.lookup("能力"))
             abilityToggles
@@ -3141,8 +3146,41 @@ private struct ModelConfigurationEditorSheet: View {
 
     private var advancedSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
-            capabilityInferenceSection
             interfaceInformationSection
+
+            if item.provider.isOfficialOpenAI {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        Label(L10n.lookup("提示缓存"), systemImage: "clock.arrow.circlepath")
+                            .foregroundStyle(.primary)
+                            .accessibilityIdentifier("modelEditor.cache.title")
+                        Spacer(minLength: 8)
+                        Picker(L10n.lookup("缓存策略"), selection: $openAICacheRetentionOverride) {
+                            Text(L10n.lookup("跟随服务商")).tag(OpenAICacheRetention?.none)
+                            // Menu-style Picker ignores disabled on Text labels. Keep a
+                            // saved value visible, but do not offer unavailable new choices.
+                            ForEach(OpenAIRequestPolicy.cacheChoices(model: item.model.id).filter {
+                                $0 != .minimum12Hours || item.provider.useResponsesAPI || $0 == openAICacheRetentionOverride
+                            }) { value in
+                                Text(L10n.lookup(value.title)).tag(Optional(value))
+                                    .disabled(value == .minimum12Hours && !item.provider.useResponsesAPI)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .tint(themeAction)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .accessibilityIdentifier("modelEditor.cache")
+                    }
+                    .font(.system(size: 17))
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, minHeight: 64)
+                    .background(editFieldBackground)
+                    Text(L10n.lookup("只覆盖这个模型，选项按模型能力显示。12 小时最低有效期需要 Responses API，并有更高的缓存写入价格。"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
 
             keyValueEditor(
                 title: L10n.lookup("自定义 Headers"),
@@ -3172,12 +3210,13 @@ private struct ModelConfigurationEditorSheet: View {
                         Text(L10n.lookup("自动推断模型能力"))
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(.primary)
-                        Text(L10n.lookup("根据模型 ID 自动判断输入、输出及工具能力。"))
+                        Text(L10n.lookup("手动修改会关闭自动推断；重新开启会按模型 ID 重选。"))
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                     }
                 }
-                .tint(Color(uiColor: appModel.themeSwitchUIColor))
+                .tint(editorSwitchTint)
+                .accessibilityIdentifier("modelEditor.automaticCapabilities")
                 .padding(.horizontal, 16)
                 .frame(minHeight: 72)
 
@@ -3237,27 +3276,6 @@ private struct ModelConfigurationEditorSheet: View {
 
     private var builtInTools: some View {
         VStack(alignment: .leading, spacing: 16) {
-            fieldLabel(L10n.lookup("模型能力"))
-            capabilitySwitch(
-                title: ModelAbility.tool.title,
-                subtitle: "tool_calls",
-                systemImage: ModelAbility.tool.systemImage,
-                isOn: abilityBinding(.tool)
-            )
-            capabilitySwitch(
-                title: ModelAbility.reasoning.title,
-                subtitle: "reasoning",
-                systemImage: ModelAbility.reasoning.systemImage,
-                isOn: abilityBinding(.reasoning)
-            )
-
-            capabilitySwitch(
-                title: L10n.lookup("图片输出能力"),
-                subtitle: L10n.lookup("模型能力标记"),
-                systemImage: ModelModality.image.systemImage,
-                isOn: modalityBinding(.image, in: \.output)
-            )
-
             fieldLabel("OpenAI Responses API")
             Text(supportsOfficialOpenAIResponses
                  ? L10n.lookup("启用后，这个模型会使用 OpenAI 官方 Responses API。")
@@ -3266,7 +3284,10 @@ private struct ModelConfigurationEditorSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            ForEach(ModelBuiltInTool.allCases) { tool in
+            Text(L10n.lookup("支持生图的模型可直接生成图片；如需使用其他生图模型，可在助手设置中单独指定。"))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            ForEach(ModelBuiltInTool.allCases.filter { $0 != .imageGeneration }) { tool in
                 builtInToolSwitch(tool)
             }
         }
@@ -3289,7 +3310,7 @@ private struct ModelConfigurationEditorSheet: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .tint(Color(uiColor: appModel.themeSwitchUIColor))
+        .tint(editorSwitchTint)
         .disabled(!supportsOfficialOpenAIResponses)
         .opacity(supportsOfficialOpenAIResponses ? 1 : 0.5)
         .padding(.horizontal, 16)
@@ -3314,6 +3335,7 @@ private struct ModelConfigurationEditorSheet: View {
                 let row = binding(for: field.id, in: fields)
                 HStack(spacing: 8) {
                     TextField(namePlaceholder, text: row.name)
+                        .modifier(DefaultControlTintModifier())
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .frame(minWidth: 104)
@@ -3321,6 +3343,7 @@ private struct ModelConfigurationEditorSheet: View {
                     Divider().frame(height: 28)
 
                     TextField(valuePlaceholder, text: row.value)
+                        .modifier(DefaultControlTintModifier())
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
@@ -3425,7 +3448,7 @@ private struct ModelConfigurationEditorSheet: View {
         .background(editFieldBackground)
     }
 
-    private func modalityToggles(selection: Binding<[ModelModality]>) -> some View {
+    private func modalityToggles(selection: Binding<[ModelModality]>, identifier: String) -> some View {
         HStack(spacing: 0) {
             ForEach(ModelModality.allCases, id: \.self) { modality in
                 Button {
@@ -3446,6 +3469,8 @@ private struct ModelConfigurationEditorSheet: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("modelEditor.capability.\(identifier).\(modality.rawValue)")
+                .accessibilityValue(L10n.lookup(contains(selection.wrappedValue, modality) ? "已选择" : "未选择"))
             }
         }
         .padding(2)
@@ -3469,37 +3494,11 @@ private struct ModelConfigurationEditorSheet: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("modelEditor.capability.\(ability.rawValue)")
+                .accessibilityValue(L10n.lookup(capabilities.abilities.contains(ability) ? "已选择" : "未选择"))
             }
         }
         .padding(2)
-        .background(editFieldBackground)
-    }
-
-    private func capabilitySwitch(
-        title: String,
-        subtitle: String,
-        systemImage: String,
-        isOn: Binding<Bool>
-    ) -> some View {
-        Toggle(isOn: isOn) {
-            Label {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } icon: {
-                Image(systemName: systemImage)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .tint(Color(uiColor: appModel.themeSwitchUIColor))
-        .padding(.horizontal, 16)
-        .frame(height: 66)
         .background(editFieldBackground)
     }
 
@@ -3587,22 +3586,6 @@ private struct ModelConfigurationEditorSheet: View {
         )
     }
 
-    private func modalityBinding(_ modality: ModelModality, in keyPath: WritableKeyPath<ModelCapabilities, [ModelModality]>) -> Binding<Bool> {
-        Binding(
-            get: { capabilities[keyPath: keyPath].contains(modality) },
-            set: { enabled in
-                if enabled {
-                    if !capabilities[keyPath: keyPath].contains(modality) {
-                        capabilities[keyPath: keyPath].append(modality)
-                    }
-                } else if capabilities[keyPath: keyPath].count > 1 {
-                    capabilities[keyPath: keyPath].removeAll { $0 == modality }
-                }
-                usesAutomaticCapabilities = false
-            }
-        )
-    }
-
     private func toggleModality(_ modality: ModelModality, selection: Binding<[ModelModality]>) {
         withAnimation(.snappy(duration: 0.18)) {
             if selection.wrappedValue.contains(modality) {
@@ -3661,6 +3644,7 @@ private struct ModelConfigurationEditorSheet: View {
         updated.customHeaders = cleaned(customHeaders)
         updated.customBody = cleaned(customBody)
         updated.builtInTools = ModelBuiltInTool.allCases.filter { enabledBuiltInTools.contains($0) }
+        updated.openAICacheRetentionOverride = openAICacheRetentionOverride
         if let onSave {
             guard onSave(updated) else {
                 isSaveErrorPresented = true
@@ -3690,6 +3674,7 @@ private struct ModelConfigurationEditorSheet: View {
                 || customHeaders != item.model.customHeaders
                 || customBody != item.model.customBody
                 || enabledBuiltInTools != Set(item.model.builtInTools)
+                || openAICacheRetentionOverride != item.model.openAICacheRetentionOverride
         )
     }
 

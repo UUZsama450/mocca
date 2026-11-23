@@ -141,6 +141,9 @@ struct NativeChatLayoutConfiguration: Equatable {
     var alignShortContentToBottom = false
     // Space between a bottom-pinned message and the composer's upper edge.
     var bottomFollowClearance: CGFloat = 0
+    // Native split navigation can finish resizing its child after UIKit's
+    // animated bounds invalidation. Opt in only for that presentation.
+    var reconcilesContainerWidth = false
 }
 
 struct NativeChatDebugWindow {
@@ -363,7 +366,8 @@ fileprivate final class NativeChatCollectionView: UICollectionView, TextSelectio
         // the physical window point if adopting presentation changed that origin.
         let adjusted = CGPoint(x: point.x + bounds.minX - origin.x,
                                y: point.y + bounds.minY - origin.y)
-        return super.hitTest(adjusted, with: event)
+        let result = super.hitTest(adjusted, with: event)
+        return result
     }
 
     func selectionAutoscrollDidBegin() {
@@ -497,6 +501,9 @@ final class NativeChatScrollDriver {
         positionIsUserOwned = userOwned
         controller?.cancelCommand(reason: userOwned ? "userRelease" : "positionReleased")
     }
+
+    var generationTransitionView: UIView? { controller?.viewIfLoaded }
+    var generationTransitionSurface: UIView? { controller?.parent?.viewIfLoaded }
 
     /// A disclosure keeps its existing edge through self-sizing. It issues no
     /// scroll command and is released by the same request that acquired it.
@@ -643,6 +650,10 @@ struct NativeChatMutationLanding {
     // Deletion targets a surviving row; replacement targets a newly inserted row.
     let isReplacement: Bool
     let target: NativeChatScrollTarget
+    var requiresAcceptance: Bool {
+        if case .bottom = target { return true }
+        return isReplacement
+    }
     var onRejected: @MainActor () -> Void = {}
     let isCurrent: @MainActor () -> Bool
 }
@@ -1211,8 +1222,10 @@ private final class NativeChatCell: UICollectionViewCell {
     var textFramePublication: AnyHashable?
     var refreshedTextPlacement: NativeChatTextPlacement?
     private(set) var measurementHostID = UUID()
+    #if DEBUG
     private var probeIntrinsicGeneration = 0
     private var probeLastFit: (key: NativeChatRowKey, width: CGFloat, height: CGFloat, intrinsic: Int)?
+    #endif
 
     var disclosureMotionID: UUID?
     var isDisclosureHostCurrent: () -> Bool = { false }
@@ -1240,7 +1253,9 @@ private final class NativeChatCell: UICollectionViewCell {
         super.prepareForReuse()
     }
     override func invalidateIntrinsicContentSize() {
+        #if DEBUG
         if StreamLayoutWorkProbe.enabled { probeIntrinsicGeneration += 1; StreamLayoutWorkProbe.hit("cell.intrinsicInvalidation") }
+        #endif
         if disclosureMotionID != nil, isDisclosureHostCurrent() {
             super.invalidateIntrinsicContentSize()
         } else {
@@ -1262,6 +1277,7 @@ private final class NativeChatCell: UICollectionViewCell {
         let size = contentView.systemLayoutSizeFitting(
             CGSize(width: attributes.size.width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        #if DEBUG
         if StreamLayoutWorkProbe.enabled, let key = configuredKey {
             if let prior = probeLastFit, prior.key == key, prior.width == attributes.size.width {
                 StreamLayoutWorkProbe.hit("cell.fit.sameKeyWidth")
@@ -1274,6 +1290,7 @@ private final class NativeChatCell: UICollectionViewCell {
             }
             probeLastFit = (key, attributes.size.width, size.height, probeIntrinsicGeneration)
         }
+        #endif
         if size.height.isFinite, size.height > 0 {
             result.size.height = size.height
             result.measurementHostID = measurementHostID
@@ -1305,6 +1322,7 @@ fileprivate final class NativeChatTouchObserver: UIGestureRecognizer, UIGestureR
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         let first = active.isEmpty; active.formUnion(touches)
+
         // Keep the initial target, since UIKit can retarget an animated touch.
         // Multiple contacts retain UIKit's original arbitration rules.
         beganTouchView = first && touches.count == 1 ? touches.first?.view : nil
@@ -1314,6 +1332,7 @@ fileprivate final class NativeChatTouchObserver: UIGestureRecognizer, UIGestureR
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) { state = .changed }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         active.subtract(touches)
+
         if active.isEmpty { beganTouchView = nil; beganTapCount = 0; up(); state = .ended }
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -1322,6 +1341,7 @@ fileprivate final class NativeChatTouchObserver: UIGestureRecognizer, UIGestureR
     override func reset() {
         beganTouchView = nil; beganTapCount = 0
         super.reset(); active.removeAll()
+
     }
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
@@ -1516,6 +1536,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
         }
         collection.register(NativeChatCell.self, forCellWithReuseIdentifier: "native-chat")
         collection.accessibilityIdentifier = "nativeChat.transcript"
+
         collection.onAnimatedTouchHitTest = { [weak self] in
             guard let self, self.editLift != nil,
                   self.input.driver.controller === self else { return }
@@ -1613,6 +1634,14 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        if input.configuration.reconcilesContainerWidth,
+           layout.width > 0, collection.bounds.width > 0,
+           abs(layout.width - collection.bounds.width) > 0.01 {
+            // Reuse the ordinary width invalidation and its reading anchor.
+            // Keep the mounted cells/hosts; do not reload the conversation.
+            let context = layout.invalidationContext(forBoundsChange: collection.bounds)
+            layout.invalidateLayout(with: context)
+        }
         activateMountedAttachment()
         #if DEBUG
         if !didLogFirstLayout {
@@ -1768,7 +1797,7 @@ final class NativeChatTranscriptController: UIViewController, UICollectionViewDa
                   !collection.isDecelerating else { return nil }
             return accepted
         }
-        if let hint = next.mutationLanding, hint.isReplacement,
+        if let hint = next.mutationLanding, hint.requiresAcceptance,
            mutationLanding == nil, continuingMutationLanding == nil {
             // A coalesced publication or a new gesture can supersede admission.
             // Keep the model edit, but never strand its outer positioning lease.
@@ -3081,3 +3110,5 @@ import Darwin
         return counts
     }
 }
+
+

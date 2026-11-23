@@ -111,13 +111,16 @@ enum BackgroundCropImageIO {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.lookup("取消")) { dismiss() }.disabled(isSaving)
+                    Button(L10n.lookup("取消")) { dismiss() }
+                        .modifier(LegacyNavigationTintModifier())
+                        .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
                         ProgressView().accessibilityLabel(L10n.lookup("正在保存"))
                     } else {
                         Button(L10n.lookup("完成"), action: finish)
+                            .modifier(LegacyNavigationTintModifier())
                     }
                 }
             }

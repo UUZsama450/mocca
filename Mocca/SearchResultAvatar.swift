@@ -33,7 +33,7 @@ enum SearchResultAuthorResolver {
     }
 }
 
-struct SearchResultAvatarImageSource: Sendable {
+struct AvatarImageSource: Sendable {
     enum Storage: Sendable {
         case file(URL)
         case data(Data)
@@ -54,16 +54,16 @@ struct SearchResultAvatarImageSource: Sendable {
 struct SearchResultAvatarDescriptor: Sendable {
     let isUser: Bool
     let authorName: String
-    let imageSource: SearchResultAvatarImageSource?
+    let imageSource: AvatarImageSource?
     let assetName: String?
     let emoji: String?
 
-    static func user(name: String, imageSource: SearchResultAvatarImageSource?) -> Self {
+    static func user(name: String, imageSource: AvatarImageSource?) -> Self {
         Self(isUser: true, authorName: name, imageSource: imageSource, assetName: nil, emoji: nil)
     }
 
     static func assistant(name: String?, avatar: String?) -> Self {
-        var imageSource: SearchResultAvatarImageSource?
+        var imageSource: AvatarImageSource?
         var assetName: String?
         var emoji: String?
         if let avatar {
@@ -74,7 +74,7 @@ struct SearchResultAvatarDescriptor: Sendable {
                    let root = FileManager.default.urls(
                     for: .applicationSupportDirectory, in: .userDomainMask
                    ).first {
-                    imageSource = SearchResultAvatarImageSource(
+                    imageSource = AvatarImageSource(
                         key: avatar,
                         storage: .file(root.appendingPathComponent("AssistantMedia", isDirectory: true)
                             .appendingPathComponent(name))
@@ -98,21 +98,31 @@ struct SearchResultAvatarDescriptor: Sendable {
     }
 }
 
-struct SearchResultAvatarImageRequest: Sendable {
-    let source: SearchResultAvatarImageSource
+struct AvatarImageRequest: Sendable {
+    enum Sizing: Sendable { case fit, fillSquare }
+    let source: AvatarImageSource
     let maximumPixelSize: Int
+    var sizing: Sizing = .fit
 
-    var key: String { "\(source.key)#\(maximumPixelSize)" }
+    var key: String {
+        "\(source.key)#\(maximumPixelSize)" + (sizing == .fillSquare ? "#square" : "")
+    }
 }
 
 @MainActor
-enum SearchResultAvatarImageCache {
+enum AvatarImageCache {
     @MainActor
     final class Entry: NSObject {
         let image: CGImage?
+        #if canImport(UIKit)
+        let uiImage: UIImage?
+        #endif
 
         init(image: CGImage?) {
             self.image = image
+            #if canImport(UIKit)
+            self.uiImage = image.map { UIImage(cgImage: $0) }
+            #endif
         }
     }
 
@@ -123,20 +133,20 @@ enum SearchResultAvatarImageCache {
         return cache
     }()
     private static let decodingQueue = DispatchQueue(
-        label: "com.mocca.search-avatar-decoding", qos: .userInitiated
+        label: "com.mocca.avatar-decoding", qos: .userInitiated
     )
     private static var inFlight: [String: Task<Entry, Never>] = [:]
 
-    static func cachedEntry(for request: SearchResultAvatarImageRequest) -> Entry? {
+    static func cachedEntry(for request: AvatarImageRequest) -> Entry? {
         cache.object(forKey: request.key as NSString)
     }
 
-    static func entry(for request: SearchResultAvatarImageRequest) async -> Entry? {
+    static func entry(for request: AvatarImageRequest) async -> Entry? {
         guard !Task.isCancelled else { return nil }
         if let cached = cachedEntry(for: request) { return cached }
         if let pending = inFlight[request.key] { return await pending.value }
 
-        // Only mounted search rows request images. A shared decode may finish
+        // Only mounted avatars request images. A shared decode may finish
         // after a row disappears; the cancelled row cannot publish that result.
         let pending = Task { @MainActor in
             let image = await withCheckedContinuation { continuation in
@@ -158,7 +168,7 @@ enum SearchResultAvatarImageCache {
         return await pending.value
     }
 
-    nonisolated private static func decode(_ request: SearchResultAvatarImageRequest) -> CGImage? {
+    nonisolated private static func decode(_ request: AvatarImageRequest) -> CGImage? {
         guard request.maximumPixelSize > 0 else { return nil }
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         let source: CGImageSource?
@@ -169,48 +179,93 @@ enum SearchResultAvatarImageCache {
             source = CGImageSourceCreateWithData(data as CFData, options)
         }
         guard let source else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(
+        var decodeSize = request.maximumPixelSize
+        if request.sizing == .fillSquare,
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+           let height = properties[kCGImagePropertyPixelHeight] as? NSNumber {
+            let shortest = min(width.doubleValue, height.doubleValue)
+            let longest = max(width.doubleValue, height.doubleValue)
+            guard shortest > 0, longest.isFinite else { return nil }
+            // Aspect-fill needs enough pixels on the short edge. Bound the
+            // intermediate decode for extremely wide imported images.
+            decodeSize = Int(min(4096, longest, ceil(Double(decodeSize) * longest / shortest)))
+        }
+        guard let image = CGImageSourceCreateThumbnailAtIndex(
             source, 0,
             [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: request.maximumPixelSize,
+                kCGImageSourceThumbnailMaxPixelSize: decodeSize,
                 kCGImageSourceShouldCacheImmediately: true
             ] as CFDictionary
-        )
+        ) else { return nil }
+        guard request.sizing == .fillSquare else { return image }
+        let side = min(request.maximumPixelSize, image.width, image.height)
+        guard side > 0,
+              let context = CGContext(
+                data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                space: image.colorSpace?.model == .rgb ? image.colorSpace! : CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        let scale = CGFloat(side) / CGFloat(min(image.width, image.height))
+        let width = CGFloat(image.width) * scale
+        let height = CGFloat(image.height) * scale
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: (CGFloat(side) - width) / 2,
+                                      y: (CGFloat(side) - height) / 2,
+                                      width: width, height: height))
+        return context.makeImage()
     }
 }
 
 #if canImport(UIKit)
+/// Shares warm images immediately and keeps asynchronous results tied to their
+/// source and size, including when an editor replaces or removes its draft.
+struct CachedAvatarImage<Placeholder: View>: View {
+    let request: AvatarImageRequest?
+    @ViewBuilder var placeholder: () -> Placeholder
+    @State private var result: Result?
+
+    private struct Result {
+        let key: String
+        let entry: AvatarImageCache.Entry
+    }
+
+    var body: some View {
+        let currentResult = result?.key == request?.key ? result : nil
+        let entry = request.flatMap { AvatarImageCache.cachedEntry(for: $0) }
+            ?? currentResult?.entry
+        Group {
+            if let image = entry?.uiImage {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: request?.key) {
+            guard let request,
+                  let entry = await AvatarImageCache.entry(for: request),
+                  !Task.isCancelled else { return }
+            result = Result(key: request.key, entry: entry)
+        }
+    }
+}
+
 struct SearchResultAvatar: View {
     @Environment(AppModel.self) private var model
     @Environment(\.displayScale) private var displayScale
     let descriptor: SearchResultAvatarDescriptor
     var size: CGFloat = 20
 
-    @State private var result: Result?
-
-    private struct Result {
-        let key: String
-        let entry: SearchResultAvatarImageCache.Entry
-    }
-
     var body: some View {
         let request = descriptor.imageSource.map {
-            SearchResultAvatarImageRequest(
+            AvatarImageRequest(
                 source: $0, maximumPixelSize: max(1, Int((size * displayScale).rounded(.down)))
             )
         }
-        let currentResult = result?.key == request?.key ? result : nil
-        let image = request.flatMap { SearchResultAvatarImageCache.cachedEntry(for: $0)?.image }
-            ?? currentResult?.entry.image
-
-        Group {
-            if let image {
-                Image(uiImage: UIImage(cgImage: image))
-                    .resizable()
-                    .scaledToFill()
-            } else if let assetName = descriptor.assetName {
+        CachedAvatarImage(request: request) {
+            if let assetName = descriptor.assetName {
                 Image(assetName)
                     .resizable()
                     .scaledToFill()
@@ -234,12 +289,6 @@ struct SearchResultAvatar: View {
         .frame(width: size, height: size)
         .clipShape(Circle())
         .accessibilityLabel(L10n.format("%@的消息", [descriptor.authorName]))
-        .task(id: request?.key) {
-            guard let request,
-                  let entry = await SearchResultAvatarImageCache.entry(for: request),
-                  !Task.isCancelled else { return }
-            result = Result(key: request.key, entry: entry)
-        }
     }
 
     private var themeAccent: Color {

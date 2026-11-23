@@ -1746,7 +1746,6 @@ private enum LegacyKelivoSettingsDecoder {
             "display_thinking_chat_bubble_opacity_v1", "display_liquid_glass_bubble_opacity_v1",
             "display_apple_glass_bubble_opacity_v1", "display_thinking_bubble_title_v1",
             "title_model_v1", "summary_model_v1", "suggestion_model_v1", "compress_model_v1",
-            "translate_model_v1",
             "group_chat_segmented_reply_v1", "group_chat_segment_regex_v1",
             "group_chat_force_assistant_bubble_v1", "group_chat_bubble_opacity_v1",
             "group_chat_bubble_style_v1", "ocr_enabled_v1", "ocr_model_v1", "ocr_prompt_v1",
@@ -1834,11 +1833,6 @@ private enum LegacyKelivoSettingsDecoder {
         )
         preferences.compressionModelSelection = decodeModelSelection(
             string(values, "compress_model_v1"),
-            providerIDMap: providerResult.providerIDMap,
-            modelIDMap: providerResult.modelIDMap
-        )
-        preferences.translationModelSelection = decodeModelSelection(
-            string(values, "translate_model_v1"),
             providerIDMap: providerResult.providerIDMap,
             modelIDMap: providerResult.modelIDMap
         )
@@ -2351,7 +2345,6 @@ private struct LegacyKelivoBackup {
                 groupID: mappedMessageAssistantID ?? nativeID.uuidString,
                 versionGroupID: message.groupID,
                 version: message.version,
-                translation: message.translation,
                 reactions: MessageReactions(
                     assistantReaction: message.assistantReaction,
                     userReaction: message.userReaction,
@@ -2454,7 +2447,6 @@ private struct LegacyMessage {
     var reasoningText: String?
     var reasoningStartAt: Date?
     var reasoningFinishedAt: Date?
-    var translation: String?
     var groupID: String?
     var version: Int
     var promptTokens: Int?
@@ -2485,7 +2477,6 @@ private struct LegacyMessage {
         reasoningText = json["reasoningText"] as? String
         reasoningStartAt = Self.date(json["reasoningStartAt"])
         reasoningFinishedAt = Self.date(json["reasoningFinishedAt"])
-        translation = json["translation"] as? String
         groupID = json["groupId"] as? String
         version = Self.int(json["version"]) ?? 0
         promptTokens = Self.int(json["promptTokens"])

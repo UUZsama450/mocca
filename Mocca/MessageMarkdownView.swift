@@ -2953,7 +2953,10 @@ private enum CitationMarkupResolver {
         citationSources: [MessageCitationSource]
     ) -> (markdown: String, tokens: [CitationMarkupToken]) {
         let fullRange = NSRange(source.startIndex..<source.endIndex, in: source)
-        let matches = expression.matches(in: source, range: fullRange)
+        let literals = MarkdownLiteralRanges(source, isStreaming: true)
+        let matches = expression.matches(in: source, range: fullRange).filter {
+            literals.allowsMarker(at: $0.range.location)
+        }
         guard !matches.isEmpty else { return (source, []) }
 
         var markdown = source
@@ -4342,7 +4345,9 @@ private struct MarkdownCodeBlock: View {
     }
 
     private var displayCode: String {
-        code.trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+        // The parser already removes the fence lines. Remaining blank lines
+        // belong to the example and must survive both presentation and copying.
+        code
     }
 
     private var isRunnableHTML: Bool {

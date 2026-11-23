@@ -95,6 +95,7 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "应用字体", context: "偏好设置", keywords: "字体 font", systemImage: "textformat", destination: .appFont),
         .init(title: "聊天字体大小", context: "偏好设置", keywords: "字号", systemImage: "textformat.size", destination: .preferenceSheet(.chatFont)),
         .init(title: "聊天分段", context: "偏好设置 · 聊天内容", keywords: "回复 分段 流式 段数 上限 气泡 间距 连续 发送 等待", systemImage: "text.bubble", destination: .chatSegmentation),
+        .init(title: "消息操作大小", context: "偏好设置 · 消息显示", keywords: "版本 数字 箭头 操作 图标 大小", systemImage: "textformat.size", destination: .chatItemDisplay),
         .init(title: "消息显示", context: "偏好设置", keywords: "聊天项目 显示 头像 名称 时间 操作", systemImage: "message", destination: .chatItemDisplay),
         .init(title: "排版与渲染", context: "偏好设置", keywords: "Markdown 行距 间距 HTML 代码块", systemImage: "text.alignleft", destination: .rendering),
         .init(title: "助手消息行间距", context: "偏好设置", keywords: "行距", systemImage: "arrow.up.and.down.text.horizontal", destination: .preferenceSheet(.assistantLineSpacing)),
@@ -111,11 +112,11 @@ private struct SettingsSearchItem: Identifiable {
         .init(title: "权限与系统功能", context: "外观与应用", keywords: "权限 隐私 健康 日历 提醒事项 定位 相机 照片 通知", systemImage: "hand.raised", destination: .permissions),
         .init(title: "数据备份", context: "数据与存储", keywords: "备份 导入 导出 恢复", systemImage: "arrow.triangle.2.circlepath", destination: .backup),
         .init(title: "聊天记录存储", context: "数据与存储", keywords: "存储 空间 聊天记录", systemImage: "internaldrive", destination: .storage),
-        .init(title: "关于", context: "关于与支持", keywords: "版本 App", systemImage: "info.circle", destination: .about),
+        .init(title: "关于 Mocca", context: "关于与支持", keywords: "版本 App 帮助 支持 官网 网站 社区 QQ群 GitHub 仓库 源码 website community repository source support", systemImage: "info.circle", destination: .about),
         .init(title: "使用统计", context: "关于与支持", keywords: "统计 Token 消息", systemImage: "chart.bar", destination: .usage),
-        .init(title: "使用文档", context: "关于与支持", keywords: "帮助 文档", systemImage: "doc.text", destination: .documentation),
-        .init(title: "隐私政策", context: "关于与支持", keywords: "隐私 数据 权限 第三方", systemImage: "hand.raised", destination: .privacy),
-        .init(title: "关于与许可", context: "关于与支持", keywords: "关于 Mocca GitHub 仓库 源码 repository source 开源 AGPL 许可", systemImage: "doc.badge.gearshape", destination: .legal),
+        .init(title: "使用文档", context: "关于 Mocca", keywords: "帮助 文档", systemImage: "doc.text", destination: .documentation),
+        .init(title: "隐私政策", context: "关于 Mocca", keywords: "隐私 数据 权限 第三方", systemImage: "hand.raised", destination: .privacy),
+        .init(title: "开源许可与声明", context: "关于 Mocca", keywords: "关于与许可 开源 代码许可证 第三方 素材 商标 AGPL license notices", systemImage: "doc.badge.gearshape", destination: .legal),
         .init(title: "赞助", context: "关于与支持", keywords: "支持 捐赠", systemImage: "gift", destination: .sponsor)
     ]
 }
@@ -356,49 +357,22 @@ struct SettingsView: View {
                 }
                 }
 
-                if showsAboutAndSupportSection {
-                    Section {
-                    if settingsMatch("关于", keywords: "版本 App") {
-                        NavigationLink {
+                Section {
+                    NavigationLink {
                         AboutPage()
                     } label: {
-                        SettingsOverviewRowLabel(title: L10n.lookup("关于"), systemImage: "info.circle")
+                        SettingsOverviewRowLabel(title: L10n.lookup("关于 Mocca"), systemImage: "info.circle")
                     }
                     .settingsOverviewRowStyle()
-                    }
-                    if settingsMatch("使用统计", keywords: "统计 Token 消息") {
-                        NavigationLink {
+
+                    NavigationLink {
                         UsageStatisticsPage()
                     } label: {
                         SettingsOverviewRowLabel(title: L10n.lookup("使用统计"), systemImage: "chart.bar")
                     }
                     .settingsOverviewRowStyle()
-                    }
-                    if settingsMatch("使用文档", keywords: "帮助 文档") {
-                        NavigationLink {
-                            MoccaDocumentationPage()
-                        } label: {
-                            SettingsOverviewRowLabel(title: L10n.lookup("使用文档"), systemImage: "doc.text")
-                        }
-                        .settingsOverviewRowStyle()
-                    }
-                    if settingsMatch("隐私政策", keywords: "隐私 数据 权限 第三方") {
-                        NavigationLink {
-                            MoccaPrivacyPolicyPage()
-                        } label: {
-                            SettingsOverviewRowLabel(title: L10n.lookup("隐私政策"), systemImage: "hand.raised")
-                        }
-                        .settingsOverviewRowStyle()
-                    }
-                    if settingsMatch("关于与许可", keywords: "关于 Mocca GitHub 仓库 源码 repository source 开源 AGPL 许可") {
-                        NavigationLink {
-                            MoccaLegalNoticesPage()
-                        } label: {
-                            SettingsOverviewRowLabel(title: L10n.lookup("关于与许可"), systemImage: "doc.badge.gearshape")
-                        }
-                        .settingsOverviewRowStyle()
-                    }
-                    if AppBuildConfiguration.sponsorshipEnabled, settingsMatch("赞助", keywords: "支持 捐赠") {
+
+                    if AppBuildConfiguration.sponsorshipEnabled {
                         NavigationLink {
                             SponsorPage()
                         } label: {
@@ -408,7 +382,6 @@ struct SettingsView: View {
                     }
                 } header: {
                     SettingsOverviewSectionHeader(L10n.lookup("关于与支持"))
-                }
                 }
                 } else {
                     Section {
@@ -473,7 +446,7 @@ struct SettingsView: View {
                 searchDestination(destination)
             }
         }
-        .modifier(SettingsNavigationTintModifier())
+        .modifier(LegacyNavigationTintModifier())
     }
 
     private var normalizedSearchText: String {
@@ -495,6 +468,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
 
             TextField(L10n.lookup("搜索设置"), text: $searchText)
+                .modifier(DefaultControlTintModifier())
                 .focused($isSearchFocused)
                 .font(.system(size: 17))
                 .textInputAutocapitalization(.never)
@@ -686,15 +660,6 @@ struct SettingsView: View {
     private var showsDataAndStorageSection: Bool {
         settingsMatch("数据备份", keywords: "备份 导入 导出 恢复")
             || settingsMatch("聊天记录存储", keywords: "存储 空间 聊天记录")
-    }
-
-    private var showsAboutAndSupportSection: Bool {
-        settingsMatch("关于", keywords: "版本 App")
-            || settingsMatch("使用统计", keywords: "统计 Token 消息")
-            || settingsMatch("使用文档", keywords: "帮助 文档")
-            || settingsMatch("隐私政策", keywords: "隐私 数据 权限 第三方")
-            || settingsMatch("关于与许可", keywords: "关于 Mocca GitHub 仓库 源码 repository source 开源 AGPL 许可")
-            || (AppBuildConfiguration.sponsorshipEnabled && settingsMatch("赞助", keywords: "支持 捐赠"))
     }
 
     private func settingsMatch(_ title: String, keywords: String = "") -> Bool {
@@ -1276,7 +1241,6 @@ private enum DefaultModelRole: String, CaseIterable, Identifiable, Equatable {
     case title
     case summary
     case compression
-    case translation
 
     var id: String { rawValue }
 
@@ -1286,7 +1250,6 @@ private enum DefaultModelRole: String, CaseIterable, Identifiable, Equatable {
         case .title: L10n.lookup("标题总结模型")
         case .summary: L10n.lookup("摘要模型")
         case .compression: L10n.lookup("压缩模型")
-        case .translation: L10n.lookup("翻译模型")
         }
     }
 
@@ -1300,8 +1263,6 @@ private enum DefaultModelRole: String, CaseIterable, Identifiable, Equatable {
             L10n.lookup("用于自动生成跨聊天摘要与手动整理近期上下文。")
         case .compression:
             L10n.lookup("用于手动压缩对话上下文，适合选择速度较快的模型。")
-        case .translation:
-            L10n.lookup("用于翻译消息内容，适合选择快速且准确的模型。")
         }
     }
 
@@ -1311,7 +1272,6 @@ private enum DefaultModelRole: String, CaseIterable, Identifiable, Equatable {
         case .title: "text.book.closed"
         case .summary: "doc.text"
         case .compression: "archivebox"
-        case .translation: "character.book.closed"
         }
     }
 
@@ -1323,7 +1283,7 @@ private enum DefaultModelRole: String, CaseIterable, Identifiable, Equatable {
         switch self {
         case .chat:
             nil
-        case .title, .summary, .translation:
+        case .title, .summary:
             L10n.lookup("跟随当前对话模型")
         case .compression:
             L10n.lookup("按摘要、标题与对话模型回退")
@@ -1416,8 +1376,6 @@ private struct DefaultModelsOverviewView: View {
             model.preferences.summaryModelSelection
         case .compression:
             model.preferences.compressionModelSelection
-        case .translation:
-            model.preferences.translationModelSelection
         }
     }
 
@@ -1432,8 +1390,6 @@ private struct DefaultModelsOverviewView: View {
             model.updatePreferences { $0.summaryModelSelection = selection }
         case .compression:
             model.updatePreferences { $0.compressionModelSelection = selection }
-        case .translation:
-            model.updatePreferences { $0.translationModelSelection = selection }
         }
     }
 
@@ -1467,7 +1423,7 @@ private struct DefaultModelsOverviewView: View {
         }
 
         switch role {
-        case .title, .summary, .translation:
+        case .title, .summary:
             return currentConversationProvider
         case .compression:
             for fallback in [
@@ -1670,16 +1626,34 @@ private struct SettingsOverviewRowBackground: View {
     }
 }
 
-private struct SettingsNavigationTintModifier: ViewModifier {
+struct LegacyNavigationTintModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content
         } else {
             // Legacy navigation bars otherwise pick up the green AccentColor
-            // asset. Keep navigation neutral, like Liquid Glass; each settings
-            // page still supplies its own action, switch and slider colors.
+            // asset. Keep navigation neutral, like Liquid Glass; content controls
+            // continue to supply their own action, switch and slider colors.
             content.tint(.primary)
+        }
+    }
+}
+
+/// Apply to content controls, before navigation/toolbar modifiers. Custom
+/// palettes retain the caller's existing tint and accent inheritance.
+struct DefaultControlTintModifier: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if model.preferences.themePaletteID == .defaultPalette {
+            content
+                .tint(Color(uiColor: model.themeActionUIColor))
+                .accentColor(Color(uiColor: model.themeActionUIColor))
+                .toggleStyle(SwitchToggleStyle(tint: Color(uiColor: model.themeSwitchUIColor)))
+        } else {
+            content
         }
     }
 }
@@ -1691,6 +1665,7 @@ private struct SettingsSwitchThemeModifier: ViewModifier {
         let actionTint = Color(uiColor: model.themeActionUIColor)
         let switchTint = Color(uiColor: model.themeSwitchUIColor)
         content
+            .modifier(DefaultControlTintModifier())
             .tint(actionTint)
             .toggleStyle(SwitchToggleStyle(tint: switchTint))
     }
@@ -1838,27 +1813,16 @@ extension Color {
 private struct MoccaDocumentationPage: View {
     var body: some View {
         List {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label(L10n.lookup("欢迎使用 Mocca"), systemImage: "cup.and.saucer.fill")
-                        .font(.headline)
-                    Text(L10n.lookup("Mocca 是一款由你自行选择模型与服务商的原生 iOS AI 客户端。聊天默认保存在设备上，发送请求时才会把完成回答所需的内容交给你选择的服务。"))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            }
-
             Section(L10n.lookup("首次配置")) {
                 MoccaDocumentationRow(
                     number: 1,
                     title: L10n.lookup("添加服务商"),
-                    detail: L10n.lookup("前往“设置 → 供应商”，选择预设或添加兼容服务，填写自己的 API Key。密钥保存在 Apple 钥匙串中。")
+                    detail: L10n.lookup("前往“设置 → 供应商”，选择预设或添加兼容服务，填写自己的 API Key。")
                 )
                 MoccaDocumentationRow(
                     number: 2,
                     title: L10n.lookup("选择对话模型"),
-                    detail: L10n.lookup("在“设置 → 默认模型”选择聊天模型；标题、摘要、压缩和翻译模型可以单独设置或跟随当前对话。")
+                    detail: L10n.lookup("在“设置 → 默认模型”选择聊天模型；标题、摘要和压缩模型可以单独设置或跟随当前对话。")
                 )
                 MoccaDocumentationRow(
                     number: 3,
@@ -1867,101 +1831,80 @@ private struct MoccaDocumentationPage: View {
                 )
             }
 
-            Section(L10n.lookup("聊天与内容")) {
-                MoccaDocumentationFeature(
-                    icon: "paperclip",
-                    title: L10n.lookup("图片与文件"),
-                    detail: L10n.lookup("通过输入框附件入口选择照片、相机或文件。附件是否能被理解取决于所选模型的能力。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "bubble.left.and.bubble.right",
-                    title: L10n.lookup("群聊"),
-                    detail: L10n.lookup("群聊可以组合多个助手。分段回复、外观和自动标题可在群聊设置中调整。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "text.book.closed",
-                    title: L10n.lookup("记忆、世界书与指令"),
-                    detail: L10n.lookup("这些内容会参与提示词组合。加入个人或敏感信息前，请确认你信任将要接收请求的模型服务商。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "doc.richtext",
-                    title: L10n.lookup("Markdown 与代码"),
-                    detail: L10n.lookup("助手回复支持常见 Markdown、代码块、表格、复制和选择。复杂内容会按手机宽度滚动或换行。")
-                )
-            }
-
-            Section(L10n.lookup("联网服务与系统工具")) {
-                MoccaDocumentationFeature(
-                    icon: "globe",
-                    title: L10n.lookup("网页搜索"),
-                    detail: L10n.lookup("搜索词会发送给你启用的搜索服务，搜索结果可能继续交给当前 AI 服务商生成回答。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "terminal",
-                    title: L10n.lookup("MCP 与自定义工具"),
-                    detail: L10n.lookup("只连接你信任的服务器。工具可能读取或修改远端数据，执行前请检查服务器地址与权限。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "hand.raised",
-                    title: L10n.lookup("照片、相机、位置、日历与提醒事项"),
-                    detail: L10n.lookup("权限页只显示状态；Mocca 会在你实际使用对应能力时请求系统授权。工具结果可能发送给当前 AI 服务商。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "speaker.wave.2",
-                    title: L10n.lookup("语音服务"),
-                    detail: L10n.lookup("语音或文本会发送给你配置的语音服务。当前版本不采集麦克风录音。")
-                )
-            }
-
-            Section(L10n.lookup("后台生成")) {
-                Text(L10n.lookup("Mocca 可以使用通知、实时活动和 iOS 后台任务展示生成进度，但 iOS 会根据电量、温度、内存和网络情况暂停后台工作。重要回复请保持 App 在前台，或稍后回到对话确认最终结果。"))
-                    .font(.subheadline)
-            }
-
-            Section(L10n.lookup("数据、备份与迁移")) {
-                MoccaDocumentationFeature(
-                    icon: "internaldrive",
-                    title: L10n.lookup("本地存储"),
-                    detail: L10n.lookup("聊天、附件和偏好默认保存在设备上。删除 App 可能同时删除这些本地数据。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "arrow.triangle.2.circlepath",
-                    title: L10n.lookup("导出与恢复"),
-                    detail: L10n.lookup("在“设置 → 数据备份”导出 Mocca 备份。导入前会展示内容与风险；请把重要备份保存在设备之外。")
-                )
-                MoccaDocumentationFeature(
-                    icon: "lock.shield",
-                    title: L10n.lookup("保护密钥与备份"),
-                    detail: L10n.lookup("不要把 API Key、聊天备份或含个人信息的截图发布到公开 Issue、群聊或网盘分享链接。")
-                )
-            }
-
-            if AppBuildConfiguration.sponsorshipEnabled {
-            Section(L10n.lookup("赞助与纪念装扮")) {
-                Text(L10n.lookup("赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会解锁对应的纪念装扮，重复购买不会增加新装扮。"))
-                    .font(.subheadline)
-                Text(L10n.lookup("购买由 Apple App Store 处理。重复购买不会增加新的装扮副本。"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Section(L10n.lookup("功能指南")) {
+                DisclosureGroup(L10n.lookup("聊天与内容")) {
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("图片与文件"),
+                        detail: L10n.lookup("通过输入框附件入口选择照片、相机或文件。附件是否能被理解取决于所选模型的能力。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("群聊"),
+                        detail: L10n.lookup("群聊可以组合多个助手。分段回复、外观和自动标题可在群聊设置中调整。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("记忆、世界书与指令"),
+                        detail: L10n.lookup("用记忆保留对话信息，用世界书补充背景，用指令约定助手的回复方式。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("Markdown 与代码"),
+                        detail: L10n.lookup("助手回复支持常见 Markdown、代码块、表格、复制和选择。复杂内容会按手机宽度滚动或换行。")
+                    )
+                }
+                DisclosureGroup(L10n.lookup("联网服务与系统工具")) {
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("网页搜索"),
+                        detail: L10n.lookup("在“设置 → 搜索服务”配置服务，再从输入框的工具菜单打开“联网搜索”。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("MCP 与自定义工具"),
+                        detail: L10n.lookup("在“设置 → MCP”添加服务器，再从聊天工具中选择当前助手可用的服务器。执行工具前请核对服务器地址和权限。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("照片、相机、位置、日历与提醒事项"),
+                        detail: L10n.lookup("在“设置 → 权限与系统功能”查看授权状态。需要更改授权时，前往系统设置。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("语音服务"),
+                        detail: L10n.lookup("点回复下方的朗读按钮播放文字。语音相关配置在“设置 → 语音服务”，当前版本不采集麦克风录音。")
+                    )
+                }
+                DisclosureGroup(L10n.lookup("数据、备份与迁移")) {
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("本地存储"),
+                        detail: L10n.lookup("聊天、附件和偏好默认保存在设备上。删除 App 可能同时删除这些本地数据。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("导出与恢复"),
+                        detail: L10n.lookup("在“设置 → 数据备份”导出 Mocca 备份。导入前会展示内容与风险；请把重要备份保存在设备之外。")
+                    )
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("保护密钥与备份"),
+                        detail: L10n.lookup("不要把 API Key、聊天备份或含个人信息的截图发布到公开 Issue、群聊或网盘分享链接。")
+                    )
+                }
+                if AppBuildConfiguration.sponsorshipEnabled {
+                    DisclosureGroup(L10n.lookup("赞助与纪念装扮")) {
+                        Text(L10n.lookup("赞助完全自愿，不影响聊天功能，也不会自动续费。每个档位可以重复投喂；首次购买该档位会解锁对应的纪念装扮，重复购买不会增加新装扮。"))
+                            .font(.subheadline)
+                    }
+                }
             }
 
             Section(L10n.lookup("常见问题")) {
                 MoccaDocumentationFeature(
-                    icon: "exclamationmark.triangle",
                     title: L10n.lookup("无法发送或服务报错"),
                     detail: L10n.lookup("检查 API Key、模型名称、账户余额、服务地址和网络代理，再使用服务商页面的连接测试。")
                 )
                 MoccaDocumentationFeature(
-                    icon: "arrow.clockwise",
                     title: L10n.lookup("后台回来没有继续"),
-                    detail: L10n.lookup("这是 iOS 后台限制或服务连接中断的常见结果。重新打开对话，必要时再次发送或重新生成。")
+                    detail: L10n.lookup("通知和实时活动可以显示生成进度。iOS 可能因电量、温度、内存或网络暂停后台任务，服务连接也可能中断。回到对话查看结果，必要时重新生成；重要回复可保持 App 在前台。")
                 )
-                MoccaDocumentationFeature(
-                    icon: "shippingbox",
-                    title: L10n.lookup("购买项目暂不可用"),
-                    detail: L10n.lookup("确认设备已登录 App Store，并稍后重试。")
-                )
+                if AppBuildConfiguration.sponsorshipEnabled {
+                    MoccaDocumentationFeature(
+                        title: L10n.lookup("购买项目暂不可用"),
+                        detail: L10n.lookup("确认设备已登录 App Store，并稍后重试。")
+                    )
+                }
             }
         }
         .settingsGroupedPageStyle()
@@ -1983,9 +1926,9 @@ private struct MoccaDocumentationRow: View {
                 .frame(width: 24, height: 24)
                 .background(Color.accentColor, in: Circle())
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.weight(.semibold))
+                Text(title).font(.body.weight(.medium))
                 Text(detail)
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
@@ -1994,21 +1937,15 @@ private struct MoccaDocumentationRow: View {
 }
 
 private struct MoccaDocumentationFeature: View {
-    let icon: String
     let title: String
     let detail: String
 
     var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } icon: {
-            Image(systemName: icon)
-                .foregroundStyle(Color.accentColor)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.body.weight(.medium))
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
     }
@@ -2019,8 +1956,6 @@ private struct MoccaPrivacyPolicyPage: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(L10n.lookup("Mocca 隐私政策"))
-                        .font(.headline)
                     Text(L10n.lookup("生效日期：2026 年 8 月 31 日"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -2089,57 +2024,19 @@ private struct MoccaPrivacyBullet: View {
     }
 
     var body: some View {
-        Label(text, systemImage: "circle.fill")
-            .font(.subheadline)
-            .symbolRenderingMode(.hierarchical)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(verbatim: "•")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(text)
+        }
+        .font(.subheadline)
     }
 }
 
 private struct MoccaLegalNoticesPage: View {
-    private static let qqGroupNumber = "245204779"
-
-    private var qqGroupLabel: some View {
-        LabeledContent {
-            Text(verbatim: Self.qqGroupNumber)
-        } label: {
-            Label(L10n.lookup("QQ群"), systemImage: "person.2")
-        }
-        .contentShape(Rectangle())
-    }
-
     var body: some View {
         List {
-            Section("Mocca") {
-                Text(L10n.lookup("Mocca 是一款为 iPhone 打造的原生 AI 聊天客户端。你可以连接自己的模型服务，创建助手，进行单人对话或多助手群聊。"))
-                    .font(.subheadline)
-            }
-
-            Section(L10n.lookup("了解 Mocca")) {
-                Link(destination: URL(string: "https://uuzsama450.github.io/mocca-website/")!) {
-                    Label(L10n.lookup("Mocca 网站"), systemImage: "arrow.up.right.square")
-                }
-                Link(destination: URL(string: "https://github.com/UUZsama450/mocca")!) {
-                    Label(L10n.lookup("GitHub 仓库"), systemImage: "chevron.left.forwardslash.chevron.right")
-                }
-                Link(destination: URL(string: "https://uuzsama450.github.io/mocca-website/support.html")!) {
-                    Label(L10n.lookup("帮助与支持"), systemImage: "questionmark.circle")
-                }
-                Group {
-                    if let invitation = AppBuildConfiguration.qqGroupInvitationURL {
-                        Link(destination: invitation) { qqGroupLabel }
-                    } else {
-                        qqGroupLabel
-                    }
-                }
-                .contextMenu {
-                    Button {
-                        UIPasteboard.general.string = Self.qqGroupNumber
-                    } label: {
-                        Label(L10n.lookup("复制"), systemImage: "doc.on.doc")
-                    }
-                }
-            }
-
             Section(L10n.lookup("代码许可证")) {
                 Text(L10n.lookup("Mocca 源码采用 GNU Affero General Public License v3.0。许可证允许在遵守相应来源、修改说明和对应源码义务的前提下使用、研究、修改与再分发。"))
                     .font(.subheadline)
@@ -2160,7 +2057,7 @@ private struct MoccaLegalNoticesPage: View {
             }
         }
         .settingsGroupedPageStyle()
-        .navigationTitle(L10n.lookup("关于与许可"))
+        .navigationTitle(L10n.lookup("开源许可与声明"))
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -2890,30 +2787,6 @@ private struct StoredFilesPage: View {
     }
 }
 
-private enum StatsRange: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case last30 = "最近 30 天"
-    case previousMonth = "上个月"
-    case previousQuarter = "上个季度"
-    case custom = "自定义"
-    var id: String { rawValue }
-}
-
-private struct ChatHeatmapDay: Identifiable {
-    let date: Date
-    let count: Int
-    let isFuture: Bool
-
-    var id: Date { date }
-}
-
-private struct ChatHeatmapWeek: Identifiable {
-    let startDate: Date
-    let days: [ChatHeatmapDay]
-
-    var id: Date { startDate }
-}
-
 private struct ChatActivityHeatmap: View {
     @Environment(\.locale) private var locale
     let weeks: [ChatHeatmapWeek]
@@ -3124,15 +2997,18 @@ private struct UsageStatisticsPage: View {
     @State private var range: StatsRange = .all
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -29, to: .now) ?? .now
     @State private var customEnd = Date.now
+    @State private var today = Calendar.current.startOfDay(for: .now)
+    @State private var resultEntry: UsageStatisticsCache.Entry?
 
-    private var filteredMessages: [ChatMessage] {
-        model.messagesByConversation.values.flatMap { $0 }.filter { contains($0.createdAt) }
+    private var query: UsageStatisticsQuery {
+        UsageStatisticsQuery(range: range, customStart: customStart, customEnd: customEnd,
+                             today: today, calendar: Calendar.current)
     }
 
-    private var filteredConversations: [Conversation] { model.conversations.filter { contains($0.createdAt) } }
-    private var promptTokens: Int { filteredMessages.reduce(0) { $0 + ($1.tokenUsage?.promptTokens ?? 0) } }
-    private var completionTokens: Int { filteredMessages.reduce(0) { $0 + ($1.tokenUsage?.completionTokens ?? 0) } }
-    private var cachedTokens: Int { filteredMessages.reduce(0) { $0 + ($1.tokenUsage?.cachedTokens ?? 0) } }
+    private var statistics: UsageStatisticsResult? {
+        if resultEntry?.query == query { return resultEntry?.result }
+        return model.usageStatisticsCache.latest(for: query)?.result
+    }
 
     var body: some View {
         List {
@@ -3146,29 +3022,50 @@ private struct UsageStatisticsPage: View {
                 }
             }
 
-            Section(L10n.lookup("总览")) {
-                statsRow(L10n.lookup("总对话数"), value: filteredConversations.count, icon: "bubble.left.and.bubble.right")
-                statsRow(L10n.lookup("总消息数"), value: filteredMessages.count, icon: "message")
-                statsRow(L10n.lookup("输入 Tokens"), value: promptTokens, icon: "arrow.up")
-                statsRow(L10n.lookup("输出 Tokens"), value: completionTokens, icon: "arrow.down")
-                statsRow(L10n.lookup("缓存 Tokens"), value: cachedTokens, icon: "bolt.horizontal")
-                statsRow(L10n.lookup("应用启动次数"), value: UserDefaults.standard.integer(forKey: "app_launch_count_v1"), icon: "power")
+            if let statistics {
+                Section(L10n.lookup("总览")) {
+                    statsRow(L10n.lookup("总对话数"), value: statistics.conversationCount, icon: "bubble.left.and.bubble.right")
+                    statsRow(L10n.lookup("总消息数"), value: statistics.messageCount, icon: "message")
+                    statsRow(L10n.lookup("输入 Tokens"), value: statistics.promptTokens, icon: "arrow.up")
+                    statsRow(L10n.lookup("输出 Tokens"), value: statistics.completionTokens, icon: "arrow.down")
+                    statsRow(L10n.lookup("缓存读取 Tokens"), value: statistics.cachedTokens, icon: "bolt.horizontal")
+                    if statistics.cacheWriteTokens > 0 {
+                        statsRow(L10n.lookup("缓存写入 Tokens"), value: statistics.cacheWriteTokens, icon: "tray.and.arrow.down")
+                        statsRow(L10n.lookup("其中：30 分钟写入"), value: statistics.cacheWrite30mTokens, icon: "clock")
+                        statsRow(L10n.lookup("其中：12 小时写入"), value: statistics.cacheWrite12hTokens, icon: "clock")
+                    }
+                    statsRow(L10n.lookup("应用启动次数"), value: UserDefaults.standard.integer(forKey: "app_launch_count_v1"), icon: "power")
+                }
+                Section(L10n.lookup("聊天热力图（最近 12 周）")) {
+                    ChatActivityHeatmap(weeks: statistics.heatmapWeeks, accentColor: Color(uiColor: model.themeActionUIColor))
+                }
+                rankingSection(L10n.lookup("模型使用率"), values: statistics.modelRanking)
+                rankingSection(L10n.lookup("助手使用率"), values: statistics.assistantRanking)
+                rankingSection(L10n.lookup("话题内容量"), values: statistics.topicRanking)
+            } else {
+                Section {
+                    HStack { Spacer(); ProgressView(); Spacer() }
+                        .accessibilityIdentifier("usageStatistics.loading")
+                }
             }
-
-            Section(L10n.lookup("聊天热力图（最近 12 周）")) {
-                ChatActivityHeatmap(
-                    weeks: heatmapWeeks,
-                    accentColor: Color(uiColor: model.themeActionUIColor)
-                )
-            }
-
-            rankingSection(L10n.lookup("模型使用率"), values: modelRanking)
-            rankingSection(L10n.lookup("助手使用率"), values: assistantRanking)
-            rankingSection(L10n.lookup("话题内容量"), values: topicRanking)
         }
         .settingsGroupedPageStyle()
         .navigationTitle(L10n.lookup("统计"))
         .navigationBarTitleDisplayMode(.inline)
+        .background {
+            UsageStatisticsRefreshDriver(query: query, hasValue: statistics != nil) { entry in
+                if resultEntry?.query != entry.query || resultEntry?.revision != entry.revision {
+                    resultEntry = entry
+                }
+            }
+        }
+        .onAppear { today = Calendar.current.startOfDay(for: .now) }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            today = Calendar.current.startOfDay(for: .now)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+            today = Calendar.current.startOfDay(for: .now)
+        }
     }
 
     private func statsRow(_ title: String, value: Int, icon: String) -> some View {
@@ -3179,120 +3076,73 @@ private struct UsageStatisticsPage: View {
         }
     }
 
-    private func rankingSection(_ title: String, values: [(String, Int)]) -> some View {
+    private func rankingSection(_ title: String, values: [UsageStatisticsRanking]) -> some View {
         Section(title) {
             if values.isEmpty {
                 Text(L10n.lookup("暂无统计数据")).foregroundStyle(.secondary)
             } else {
-                ForEach(Array(values.prefix(10).enumerated()), id: \.offset) { index, item in
+                ForEach(Array(values.enumerated()), id: \.offset) { index, item in
                     HStack {
                         Text("\(index + 1)").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 20)
-                        Text(item.0).lineLimit(1)
+                        Text(item.name).lineLimit(1)
                         Spacer()
-                        Text(item.1.formatted()).foregroundStyle(.secondary).monospacedDigit()
+                        Text(item.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
                     }
                 }
             }
         }
     }
+}
 
-    private var modelRanking: [(String, Int)] {
-        sortedCounts(filteredMessages.filter { $0.role == .assistant }.compactMap(\.modelID))
+/// Only this zero-size driver observes message revisions. Streaming mutations
+/// neither rebuild the statistics list nor trigger a persistent polling timer.
+private struct UsageStatisticsRefreshDriver: View {
+    @Environment(AppModel.self) private var model
+    let query: UsageStatisticsQuery
+    let hasValue: Bool
+    let onReady: (UsageStatisticsCache.Entry) -> Void
+
+    private struct Request: Hashable {
+        let query: UsageStatisticsQuery
+        let revision: UsageStatisticsRevision?
+    }
+    private var revision: UsageStatisticsRevision {
+        UsageStatisticsRevision(messages: model.conversationMessageStore.snapshotRevision,
+                                metadata: model.usageStatisticsMetadataRevision)
+    }
+    private var request: Request {
+        // Let a cold initial snapshot finish even while a reply is streaming.
+        // Subsequent revisions coalesce while the existing result stays visible.
+        Request(query: query, revision: hasValue ? revision : nil)
     }
 
-    private var assistantRanking: [(String, Int)] {
-        let names = Dictionary(uniqueKeysWithValues: model.assistants.map { ($0.id.uuidString, $0.name) })
-        let ids = filteredMessages.filter { $0.role == .assistant }.compactMap(\.groupID)
-        return sortedCounts(ids).map { (names[$0.0] ?? AssistantProfile.defaultName, $0.1) }
-    }
-
-    private var topicRanking: [(String, Int)] {
-        filteredConversations.map { conversation in
-            (conversation.title, model.conversationMessageStore[conversation.id, default: []].filter { contains($0.createdAt) }.count)
-        }.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }
-    }
-
-    private var heatmapWeeks: [ChatHeatmapWeek] {
-        var calendar = Calendar.current
-        calendar.firstWeekday = 2
-        calendar.minimumDaysInFirstWeek = 4
-        let today = calendar.startOfDay(for: .now)
-        let weekdayOffset = (
-            calendar.component(.weekday, from: today)
-                - calendar.firstWeekday
-                + 7
-        ) % 7
-        guard let currentWeekStart = calendar.date(
-            byAdding: .day,
-            value: -weekdayOffset,
-            to: today
-        ), let firstWeekStart = calendar.date(
-            byAdding: .weekOfYear,
-            value: -11,
-            to: currentWeekStart
-        ) else {
-            return []
-        }
-
-        let counts = Dictionary(grouping: filteredMessages) {
-            calendar.startOfDay(for: $0.createdAt)
-        }.mapValues(\.count)
-
-        return (0..<12).compactMap { weekOffset in
-            guard let weekStart = calendar.date(
-                byAdding: .weekOfYear,
-                value: weekOffset,
-                to: firstWeekStart
-            ) else {
-                return nil
-            }
-            let days = (0..<7).compactMap { dayOffset -> ChatHeatmapDay? in
-                guard let date = calendar.date(
-                    byAdding: .day,
-                    value: dayOffset,
-                    to: weekStart
-                ) else {
-                    return nil
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .task(id: request) {
+                do {
+                    if let cached = model.usageStatisticsCache.latest(for: query), cached.revision == revision {
+                        onReady(cached)
+                        return
+                    }
+                    if hasValue { try await Task.sleep(for: .milliseconds(250)) }
+                    try Task.checkCancellation()
+                    let capturedRevision = revision
+                    let snapshot = UsageStatisticsSnapshot(
+                        conversations: model.conversations,
+                        messagesByConversation: model.messagesByConversation,
+                        assistantNames: Dictionary(model.assistants.map { ($0.id.uuidString, $0.name) }, uniquingKeysWith: { first, _ in first }),
+                        defaultAssistantName: AssistantProfile.defaultName
+                    )
+                    let value = try await UsageStatisticsCalculator.compute(snapshot, query: query)
+                    try Task.checkCancellation()
+                    model.usageStatisticsCache.store(value, query: query, revision: capturedRevision)
+                    onReady(UsageStatisticsCache.Entry(query: query, revision: capturedRevision, result: value))
+                } catch is CancellationError {
+                    // A different range or a closed page owns subsequent work.
+                } catch {
+                    assertionFailure("Unexpected statistics calculation failure: \(error)")
                 }
-                return ChatHeatmapDay(
-                    date: date,
-                    count: counts[date, default: 0],
-                    isFuture: date > today
-                )
             }
-            return ChatHeatmapWeek(startDate: weekStart, days: days)
-        }
-    }
-
-    private func sortedCounts(_ values: [String]) -> [(String, Int)] {
-        Dictionary(grouping: values, by: { $0 }).map { ($0.key, $0.value.count) }.sorted { $0.1 > $1.1 }
-    }
-
-    private func contains(_ date: Date) -> Bool {
-        let calendar = Calendar.current
-        let day = calendar.startOfDay(for: date)
-        let today = calendar.startOfDay(for: .now)
-        let bounds: (Date?, Date?) = {
-            switch range {
-            case .all: return (nil, nil)
-            case .last30: return (calendar.date(byAdding: .day, value: -29, to: today), today)
-            case .previousMonth:
-                let thisMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: today))!
-                let end = calendar.date(byAdding: .day, value: -1, to: thisMonth)!
-                return (calendar.date(from: calendar.dateComponents([.year, .month], from: end)), end)
-            case .previousQuarter:
-                let components = calendar.dateComponents([.year, .month], from: today)
-                let month = components.month ?? 1
-                let quarterStartMonth = ((month - 1) / 3) * 3 + 1
-                let thisQuarter = calendar.date(from: DateComponents(year: components.year, month: quarterStartMonth, day: 1))!
-                let end = calendar.date(byAdding: .day, value: -1, to: thisQuarter)!
-                return (calendar.date(byAdding: .month, value: -2, to: calendar.date(from: calendar.dateComponents([.year, .month], from: end))!), end)
-            case .custom: return (calendar.startOfDay(for: customStart), calendar.startOfDay(for: customEnd))
-            }
-        }()
-        if let start = bounds.0, day < start { return false }
-        if let end = bounds.1, day > end { return false }
-        return true
     }
 }
 
@@ -3313,55 +3163,42 @@ struct AssistantManagementView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                ForEach(model.assistants) { assistant in
-                    Button {
-                        if editMode == .active {
-                            if !selectedAssistantIDs.insert(assistant.id).inserted {
-                                selectedAssistantIDs.remove(assistant.id)
-                            }
-                        } else {
-                            editingAssistant = assistant
-                        }
-                    } label: {
-                        HStack(spacing: 12) {
-                            if editMode == .active {
-                                Image(systemName: selectedAssistantIDs.contains(assistant.id) ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 22))
-                                    .foregroundStyle(selectedAssistantIDs.contains(assistant.id) ? Color.accentColor : Color.secondary)
-                                    .accessibilityHidden(true)
-                            }
-                            AssistantSummaryRow(
-                                assistant: assistant,
-                                isCurrent: assistant.id == model.currentAssistantID,
-                                accessorySystemImage: editMode == .active ? nil : "chevron.right"
-                            )
-                        }
-                        .contentShape(Rectangle())
+        AssistantProfileList(
+            model: model, assistants: model.assistants, isEditing: editMode == .active,
+            showsDeleteControls: false,
+            footer: L10n.lookup("点按进入编辑；点击右上角“编辑”可以多选删除或调整顺序。至少保留一个助手。"),
+            onDelete: { pendingDeletionIDs = [$0.id] }
+        ) { assistant in
+            Button {
+                if editMode == .active {
+                    if !selectedAssistantIDs.insert(assistant.id).inserted {
+                        selectedAssistantIDs.remove(assistant.id)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityValue(editMode == .active
-                        ? L10n.lookup(selectedAssistantIDs.contains(assistant.id) ? "已选择" : "未选择") : "")
-                    .accessibilityIdentifier("assistantManagement.row.\(assistant.id.uuidString)")
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if editMode != .active && model.assistants.count > 1 {
-                            Button { pendingDeletionIDs = [assistant.id] } label: {
-                                Label(L10n.lookup("删除"), systemImage: "trash")
-                            }
-                            .tint(.red)
-                        }
-                    }
+                } else {
+                    editingAssistant = assistant
                 }
-                .onMove(perform: model.moveAssistants)
-            } header: {
-                Text(L10n.lookup("助手列表")).textCase(nil)
-            } footer: {
-                Text(L10n.lookup("点按进入编辑；点击右上角“编辑”可以多选删除或调整顺序。至少保留一个助手。"))
+            } label: {
+                HStack(spacing: 12) {
+                    if editMode == .active {
+                        Image(systemName: selectedAssistantIDs.contains(assistant.id) ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 22))
+                            .foregroundStyle(selectedAssistantIDs.contains(assistant.id) ? Color.accentColor : Color.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    AssistantSummaryRow(
+                        assistant: assistant,
+                        isCurrent: assistant.id == model.currentAssistantID,
+                        accessorySystemImage: editMode == .active ? nil : "chevron.right"
+                    )
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityValue(editMode == .active
+                ? L10n.lookup(selectedAssistantIDs.contains(assistant.id) ? "已选择" : "未选择") : "")
+            .accessibilityIdentifier("assistantManagement.row.\(assistant.id.uuidString)")
         }
         .settingsGroupedPageStyle()
-        .environment(\.editMode, $editMode)
         .navigationTitle(L10n.lookup("助手"))
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -4777,6 +4614,24 @@ private struct ChatItemDisplayPreferencesPage: View {
                 Text(L10n.lookup("日历仍可从助手编辑页顶部的“日历”入口打开；选择助手不受影响。"))
             }
 
+            Section {
+                Stepper(value: Binding(
+                    get: { model.preferences.messageActionSizePercent },
+                    set: { percent in
+                        model.updatePreferences { $0.messageActionSizePercent = percent }
+                    }
+                ), in: UserPreferences.messageActionSizeRange, step: 5) {
+                    LabeledContent {
+                        Text(verbatim: "\(model.preferences.messageActionSizePercent)%")
+                            .monospacedDigit()
+                    } label: {
+                        SettingsRowLabel(title: L10n.lookup("消息操作大小"), systemImage: "textformat.size")
+                    }
+                }
+            } footer: {
+                Text(L10n.lookup("调整回复下方的操作图标，以及提问和回复的版本数字与箭头。"))
+            }
+
             Section(L10n.lookup("用户消息")) {
                 PreferenceToggle(title: L10n.lookup("显示用户头像"), systemImage: "person.crop.circle", keyPath: \.showUserAvatar)
                 PreferenceToggle(title: L10n.lookup("显示用户名称"), systemImage: "person.text.rectangle", keyPath: \.showUserName)
@@ -4847,16 +4702,17 @@ private struct AssistantMessageActionsPreferencesPage: View {
             }
 
             Section {
-                ForEach(model.preferences.assistantMessageMoreActionItems) { item in
-                    Toggle(isOn: moreVisibilityBinding(for: item)) {
-                        SettingsRowLabel(title: L10n.lookup(item.title), systemImage: item.systemImage)
-                    }
+                ForEach(model.preferences.reorderableAssistantMessageMoreActions) { action in
+                    moreVisibilityToggle(.standard(action))
                 }
                 .onMove(perform: moveMoreActions)
+                ForEach(AssistantMessageMoreActionItem.deletionItems) { item in
+                    moreVisibilityToggle(item)
+                }
             } header: {
                 Text(L10n.lookup("“更多”菜单"))
             } footer: {
-                Text(L10n.lookup("这里单独控制点开助手回答“更多”后出现的项目及顺序。“完全删除”只会在同一回答存在多个版本时出现。用户消息操作请长按用户气泡的空白处打开；回复版本选择器只会在产生多个回复时自动出现，不属于可配置操作。"))
+                Text(L10n.lookup("点“编辑”可调整常用操作的顺序。删除操作固定在“消息详情”下方，可分别开关。有多个版本时才会出现“完全删除”和版本选择器。长按用户气泡的空白处可打开提问操作。"))
             }
         }
         .settingsGroupedPageStyle()
@@ -4925,6 +4781,12 @@ private struct AssistantMessageActionsPreferencesPage: View {
         }
     }
 
+    private func moreVisibilityToggle(_ item: AssistantMessageMoreActionItem) -> some View {
+        Toggle(isOn: moreVisibilityBinding(for: item)) {
+            SettingsRowLabel(title: L10n.lookup(item.title), systemImage: item.systemImage)
+        }
+    }
+
     private func moreVisibilityBinding(
         for item: AssistantMessageMoreActionItem
     ) -> Binding<Bool> {
@@ -4957,16 +4819,11 @@ private struct AssistantMessageActionsPreferencesPage: View {
 
     private func moveMoreActions(from offsets: IndexSet, to destination: Int) {
         model.performListItemHaptic()
-        var items = model.preferences.assistantMessageMoreActionItems
-        items.move(fromOffsets: offsets, toOffset: destination)
+        var actions = model.preferences.reorderableAssistantMessageMoreActions
+        actions.move(fromOffsets: offsets, toOffset: destination)
         model.updatePreferences { preferences in
-            preferences.assistantMessageMoreActionOrder = items.compactMap { item in
-                guard case .standard(let action) = item else { return nil }
-                return action
-            }
-            preferences.deleteAllMessageVersionsActionIndex =
-                items.firstIndex(of: .deleteAllVersions)
-                    ?? preferences.assistantMessageMoreActionOrder.count
+            preferences.assistantMessageMoreActionOrder = actions + [.delete]
+            preferences.deleteAllMessageVersionsActionIndex = preferences.assistantMessageMoreActionOrder.count
         }
     }
 }
@@ -6712,6 +6569,17 @@ private struct BackupPage: View {
 }
 
 private struct AboutPage: View {
+    private static let qqGroupNumber = "245204779"
+
+    private var qqGroupLabel: some View {
+        LabeledContent {
+            Text(verbatim: Self.qqGroupNumber)
+        } label: {
+            Label(L10n.lookup("QQ群"), systemImage: "person.2")
+        }
+        .contentShape(Rectangle())
+    }
+
     private var aboutAppIconImage: UIImage? {
         guard let iconURL = Bundle.main.url(
             forResource: "AboutAppIcon",
@@ -6731,47 +6599,66 @@ private struct AboutPage: View {
     var body: some View {
         List {
             Section {
-                VStack(spacing: 12) {
+                HStack(spacing: 16) {
                     Group {
                         if let aboutAppIconImage {
-                            Image(uiImage: aboutAppIconImage)
-                                .resizable()
-                                .scaledToFill()
+                            Image(uiImage: aboutAppIconImage).resizable()
                         } else {
-                            Image("AssistantAvatar")
-                                .resizable()
-                                .scaledToFill()
+                            Image("AssistantAvatar").resizable()
                         }
                     }
-                        .frame(width: 76, height: 76)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    Text("Mocca")
-                        .font(.system(size: 21, weight: .bold, design: .rounded))
-                    Text(L10n.lookup("原生 SwiftUI AI 客户端"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .scaledToFill()
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(verbatim: "Mocca").font(.title2.bold())
+                        Text(L10n.lookup("原生 SwiftUI AI 客户端")).font(.subheadline)
+                        Text(L10n.format("版本 %@", [version]))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .padding(.vertical, 4)
                 .listRowBackground(Color.clear)
             }
 
-            Section {
-                HStack {
-                    Text(L10n.lookup("版本"))
-                    Spacer()
-                    Text(version)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-
-            Section(L10n.lookup("帮助与政策")) {
+            Section(L10n.lookup("使用帮助")) {
                 NavigationLink {
                     MoccaDocumentationPage()
                 } label: {
-                    Label(L10n.lookup("使用文档"), systemImage: "doc.text")
+                    Label(L10n.lookup("使用文档"), systemImage: "book")
                 }
+                Link(destination: URL(string: "https://uuzsama450.github.io/mocca-website/support.html")!) {
+                    Label(L10n.lookup("联系支持"), systemImage: "questionmark.circle")
+                }
+            }
+
+            Section(L10n.lookup("项目与社区")) {
+                Link(destination: URL(string: "https://uuzsama450.github.io/mocca-website/")!) {
+                    Label(L10n.lookup("Mocca 网站"), systemImage: "arrow.up.right.square")
+                }
+                Link(destination: URL(string: "https://github.com/UUZsama450/mocca")!) {
+                    Label(L10n.lookup("GitHub 仓库"), systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+                Group {
+                    if let invitation = AppBuildConfiguration.qqGroupInvitationURL {
+                        Link(destination: invitation) { qqGroupLabel }
+                    } else {
+                        qqGroupLabel
+                    }
+                }
+                .contextMenu {
+                    Button {
+                        UIPasteboard.general.string = Self.qqGroupNumber
+                    } label: {
+                        Label(L10n.lookup("复制"), systemImage: "doc.on.doc")
+                    }
+                }
+            }
+
+            Section(L10n.lookup("隐私与许可")) {
                 NavigationLink {
                     MoccaPrivacyPolicyPage()
                 } label: {
@@ -6780,12 +6667,12 @@ private struct AboutPage: View {
                 NavigationLink {
                     MoccaLegalNoticesPage()
                 } label: {
-                    Label(L10n.lookup("关于与许可"), systemImage: "doc.badge.gearshape")
+                    Label(L10n.lookup("开源许可与声明"), systemImage: "doc.text")
                 }
             }
         }
         .settingsGroupedPageStyle()
-        .navigationTitle(L10n.lookup("关于"))
+        .navigationTitle(L10n.lookup("关于 Mocca"))
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -6948,6 +6835,7 @@ struct SearchServiceSettingsView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .modifier(LegacyNavigationTintModifier())
                     .accessibilityLabel(L10n.lookup("添加搜索服务"))
                 }
             }
@@ -7888,3 +7776,4 @@ private func searchServiceIcon(for kind: SearchServiceKind) -> String {
     }
     return nil
 }
+
